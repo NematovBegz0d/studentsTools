@@ -240,6 +240,33 @@ function Processing({
   }, t.sheetProcessing));
 }
 
+// ─── Shared: send blob to bot ────────────────────────────────────
+async function sendToBot(blob, filename, onToast) {
+  const userId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+  const backendUrl = window.BACKEND_URL;
+  if (!userId) {
+    onToast('❌ Telegram orqali kirish kerak');
+    return false;
+  }
+  if (!backendUrl) {
+    onToast('❌ Backend ulanmagan');
+    return false;
+  }
+  const form = new FormData();
+  form.append('user_id', String(userId));
+  form.append('filename', filename);
+  form.append('file', blob, filename);
+  const r = await fetch(`${backendUrl}/api/send-file`, {
+    method: 'POST',
+    body: form
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    throw new Error(d.detail || r.statusText);
+  }
+  return true;
+}
+
 // ─── Result: file download ───────────────────────────────────────
 function ResultFile({
   t,
@@ -255,15 +282,27 @@ function ResultFile({
   const ext = (result.filename || 'result').split('.').pop();
   const base = (result.filename || 'result').replace(/\.[^.]+$/, '');
   const [name, setName] = uS2(base);
+  const [sending, setSending] = uS2(false);
+  const finalName = () => (name.trim() || base) + '.' + ext;
   const download = () => {
-    const finalName = (name.trim() || base) + '.' + ext;
     const url = URL.createObjectURL(result.blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = finalName;
+    a.download = finalName();
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     onToast(t.sheetReady);
+  };
+  const handleSendToBot = async () => {
+    setSending(true);
+    try {
+      await sendToBot(result.blob, finalName(), onToast);
+      onToast('✅ Fayl botga yuborildi!');
+    } catch (e) {
+      onToast('❌ ' + e.message);
+    } finally {
+      setSending(false);
+    }
   };
   const sizeMB = (result.blob.size / 1024 / 1024).toFixed(2);
   return /*#__PURE__*/React.createElement("div", {
@@ -370,7 +409,7 @@ function ResultFile({
   }, sizeMB, " MB"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      gap: 10,
+      gap: 8,
       width: '100%'
     }
   }, /*#__PURE__*/React.createElement(Button, {
@@ -378,6 +417,11 @@ function ResultFile({
     full: true,
     onClick: onAgain
   }, t.sheetAgain), /*#__PURE__*/React.createElement(Button, {
+    variant: "secondary",
+    full: true,
+    onClick: handleSendToBot,
+    disabled: sending
+  }, sending ? '⏳' : '📨'), /*#__PURE__*/React.createElement(Button, {
     variant: "primary",
     accent: accent,
     full: true,
@@ -457,12 +501,27 @@ function ResultImage({
   const ext = (result.filename || 'result.png').split('.').pop();
   const base = (result.filename || 'result').replace(/\.[^.]+$/, '');
   const [name, setName] = uS3(base);
+  const [sending, setSending] = uS3(false);
+  const finalName = () => (name.trim() || base) + '.' + ext;
   const download = () => {
     const a = document.createElement('a');
     a.href = result.dataUrl;
-    a.download = (name.trim() || base) + '.' + ext;
+    a.download = finalName();
     a.click();
     onToast(t.sheetReady);
+  };
+  const handleSendToBot = async () => {
+    setSending(true);
+    try {
+      const res = await fetch(result.dataUrl);
+      const blob = await res.blob();
+      await sendToBot(blob, finalName(), onToast);
+      onToast('✅ Rasm botga yuborildi!');
+    } catch (e) {
+      onToast('❌ ' + e.message);
+    } finally {
+      setSending(false);
+    }
   };
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -475,7 +534,7 @@ function ResultImage({
     src: result.dataUrl,
     style: {
       maxWidth: '100%',
-      maxHeight: 240,
+      maxHeight: 220,
       borderRadius: 12,
       border: '0.5px solid rgba(255,255,255,0.1)'
     }
@@ -514,7 +573,7 @@ function ResultImage({
   }, ".", ext)), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      gap: 10,
+      gap: 8,
       width: '100%'
     }
   }, /*#__PURE__*/React.createElement(Button, {
@@ -522,6 +581,11 @@ function ResultImage({
     full: true,
     onClick: onAgain
   }, t.sheetAgain), /*#__PURE__*/React.createElement(Button, {
+    variant: "secondary",
+    full: true,
+    onClick: handleSendToBot,
+    disabled: sending
+  }, sending ? '⏳' : '📨'), /*#__PURE__*/React.createElement(Button, {
     variant: "primary",
     accent: accent,
     full: true,

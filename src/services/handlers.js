@@ -636,4 +636,4 @@ const SERVICE_HANDLERS = {
   text2audio: premiumStub, deepl: premiumStub, image: premiumStub, pptx: premiumStub,
 };
 
-Object.assign(window, { SERVICE_HANDLERS });
+Object.assign(window, { SERVICE_HANDLERS, BACKEND_URL });

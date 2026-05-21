@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 import io
@@ -96,6 +96,30 @@ async def webhook(request: Request):
 @app.get("/")
 def health():
     return {"status": "ok", "service": "EduBot Backend"}
+
+
+# ─── Send file to user via bot ───────────────────────────────────
+
+@app.post("/api/send-file")
+async def send_file_to_user(
+    user_id: str = Form(...),
+    filename: str = Form(...),
+    file: UploadFile = File(...),
+):
+    if not BOT_TOKEN:
+        raise HTTPException(status_code=503, detail="Bot sozlanmagan")
+    data = await file.read()
+    mime = file.content_type or "application/octet-stream"
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+            data={"chat_id": user_id, "caption": f"📎 {filename}\n\n🤖 EduBot"},
+            files={"document": (filename, data, mime)},
+        )
+    result = r.json()
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result.get("description", "Xatolik"))
+    return {"ok": True}
 
 
 # ─── File processing endpoints ───────────────────────────────────

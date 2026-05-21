@@ -1057,5 +1057,6 @@ const SERVICE_HANDLERS = {
   pptx: premiumStub
 };
 Object.assign(window, {
-  SERVICE_HANDLERS
+  SERVICE_HANDLERS,
+  BACKEND_URL
 });
