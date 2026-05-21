@@ -1,9 +1,13 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 import io
 import os
 import tempfile
+import httpx
+
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+APP_URL = os.environ.get("APP_URL", "https://nematovbegz0d.github.io/studentsTools/EduBot.html")
 
 app = FastAPI(title="EduBot Backend", version="1.0.0")
 
@@ -15,10 +19,86 @@ app.add_middleware(
 )
 
 
+# ─── Webhook setup ───────────────────────────────────────────────
+
+@app.on_event("startup")
+async def set_webhook():
+    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    if not BOT_TOKEN or not domain:
+        return
+    webhook_url = f"https://{domain}/webhook"
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
+            json={"url": webhook_url, "drop_pending_updates": True},
+        )
+
+
+async def tg_send(chat_id: int, text: str, reply_markup: dict = None):
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json=payload,
+        )
+
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    if not BOT_TOKEN:
+        return {"ok": False}
+
+    update = await request.json()
+    message = update.get("message") or update.get("edited_message")
+    if not message:
+        return {"ok": True}
+
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text", "")
+    user = message.get("from", {})
+    first_name = user.get("first_name", "Do'st")
+
+    if text.startswith("/start"):
+        await tg_send(
+            chat_id,
+            f"Salom, <b>{first_name}</b>! 👋\n\n"
+            f"📚 <b>EduBot</b> — talabalar uchun 28+ ta bepul xizmat:\n\n"
+            f"• 📄 PDF birlashtirish, bo'lish, himoyalash\n"
+            f"• 🖼 Rasm → PDF, siqish, fon olib tashlash\n"
+            f"• 🌐 Tarjima, Wikipedia, kitob qidirish\n"
+            f"• 📊 Formula, grafik, statistika\n"
+            f"• 🎓 Sertifikat, jadval, QR kod\n\n"
+            f"Quyidagi tugmani bosib ilovani oching 👇",
+            reply_markup={
+                "inline_keyboard": [[
+                    {"text": "📱 Ilovani ochish", "web_app": {"url": APP_URL}}
+                ]]
+            },
+        )
+    else:
+        await tg_send(
+            chat_id,
+            "📱 Barcha xizmatlar ilovada mavjud:",
+            reply_markup={
+                "inline_keyboard": [[
+                    {"text": "📱 Ilovani ochish", "web_app": {"url": APP_URL}}
+                ]]
+            },
+        )
+
+    return {"ok": True}
+
+
+# ─── Health ──────────────────────────────────────────────────────
+
 @app.get("/")
 def health():
     return {"status": "ok", "service": "EduBot Backend"}
 
+
+# ─── File processing endpoints ───────────────────────────────────
 
 @app.post("/api/bgremove")
 async def bgremove(file: UploadFile = File(...)):
@@ -43,7 +123,6 @@ async def ocr(file: UploadFile = File(...)):
 
         data = await file.read()
         img = Image.open(io.BytesIO(data))
-        # rus+eng+uzb — Railway Dockerfile'da o'rnatiladi
         text = pytesseract.image_to_string(img, lang="rus+eng+uzb")
         return JSONResponse({"text": text.strip() or "Matn topilmadi"})
     except Exception as e:
