@@ -349,6 +349,7 @@ const I18N = {
     sheetReady: 'Tayyor!',
     sheetDownload: 'Yuklab olish',
     sheetAgain: 'Yana ishlash',
+    sheetCopy: 'Nusxalash',
     sheetLockedTitle: 'Premium xizmat',
     sheetLockedSub: 'Bu xizmatdan foydalanish uchun obuna bo\'ling',
     // Premium page
@@ -610,6 +611,7 @@ const I18N = {
     sheetReady: 'Готово!',
     sheetDownload: 'Скачать',
     sheetAgain: 'Ещё раз',
+    sheetCopy: 'Копировать',
     sheetLockedTitle: 'Premium услуга',
     sheetLockedSub: 'Оформите подписку, чтобы использовать',
     premiumLocked: 'Нужен Premium',
@@ -864,6 +866,7 @@ const I18N = {
     sheetReady: 'Ready!',
     sheetDownload: 'Download',
     sheetAgain: 'Run again',
+    sheetCopy: 'Copy',
     sheetLockedTitle: 'Premium service',
     sheetLockedSub: 'Subscribe to use this service',
     premiumLocked: 'Premium required',

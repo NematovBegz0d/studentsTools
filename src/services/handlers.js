@@ -117,26 +117,19 @@ async function pdflock({ file, text: password }) {
   if (!password || !password.trim()) {
     return { type: 'text', content: '❌ Parolni kiriting (matn maydonida)' };
   }
-  await loadScript(JSPDF_CDN);
-  const pdfjsLib = await getPdfjsLib();
-  const buf = await readAsArrayBuffer(file);
-  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  for (let i = 1; i <= pdf.numPages; i++) {
-    if (i > 1) doc.addPage();
-    const page = await pdf.getPage(i);
-    const vp = page.getViewport({ scale: 1.5 });
-    const canvas = document.createElement('canvas');
-    canvas.width = vp.width; canvas.height = vp.height;
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-    const imgData = canvas.toDataURL('image/jpeg', 0.85);
-    const pw = doc.internal.pageSize.getWidth();
-    const ph = doc.internal.pageSize.getHeight();
-    doc.addImage(imgData, 'JPEG', 0, 0, pw, ph);
-  }
-  const blob = doc.output('blob', { password: password.trim() });
-  return { type: 'file', blob, filename: 'locked.pdf' };
+  // jsPDF password encryption qo'llab-quvvatlamaydi.
+  // pdf-lib ham hozircha encryption API chiqarmagan.
+  // Foydalanuvchiga muqobil tavsiya beramiz:
+  return {
+    type: 'text',
+    content:
+      '⚠️ PDF parol himoyasi hozircha mavjud emas.\n\n' +
+      'Muqobil variantlar:\n' +
+      '• ilovepdf.com/protect-pdf\n' +
+      '• smallpdf.com/protect-pdf\n' +
+      '• Adobe Acrobat (offline)\n\n' +
+      '🔧 Bu funksiya keyingi versiyada backend orqali qo\'shiladi.',
+  };
 }
 
 async function watermark({ file, text: wmText }) {
@@ -236,14 +229,18 @@ async function xlsx2pdf({ file }) {
 async function pdf2docx({ file }) {
   if (!file) return { type: 'text', content: '❌ PDF faylini yuklang' };
   if (BACKEND_URL) {
-    const form = new FormData();
-    form.append('file', file);
-    const r = await fetch(`${BACKEND_URL}/api/pdf2docx`, { method: 'POST', body: form });
-    if (!r.ok) throw new Error(await r.text());
-    const blob = await r.blob();
-    return { type: 'file', blob, filename: 'converted.docx', info: "Word formatiga o'tkazildi" };
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const r = await fetch(`${BACKEND_URL}/api/pdf2docx`, { method: 'POST', headers: getUserIdHeader(), body: form });
+      if (!r.ok) throw new Error(await r.text());
+      const blob = await r.blob();
+      return { type: 'file', blob, filename: 'converted.docx', info: "Word formatiga o'tkazildi" };
+    } catch (_) {
+      // Backend mavjud emas — matn fallback'ga o'tiladi
+    }
   }
-  // Fallback: matn sifatida eksport (BACKEND_URL bo'lmasa)
+  // Fallback: matn sifatida eksport
   const pdfjsLib = await getPdfjsLib();
   const buf = await readAsArrayBuffer(file);
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
@@ -288,24 +285,40 @@ async function imgcompress({ file }) {
   return new Promise(resolve => {
     canvas.toBlob(blob => {
       const saved = Math.round((1 - blob.size / file.size) * 100);
-      resolve({ type: 'file', blob, filename: 'compressed.jpg', info: `${saved}% kichiklashdi` });
+      const info = saved > 0
+        ? `${saved}% kichiklashdi`
+        : 'Rasm allaqachon optimallashgan';
+      resolve({ type: 'file', blob, filename: 'compressed.jpg', info });
     }, 'image/jpeg', 0.72);
   });
 }
 
+function getUserIdHeader() {
+  const uid = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+  return uid ? { 'X-User-Id': String(uid) } : {};
+}
+
 async function postToBackend(endpoint, file) {
+  const userHeaders = getUserIdHeader();
   const form = new FormData();
   form.append('file', file);
   try {
-    const r = await fetch(`${BACKEND_URL}${endpoint}`, { method: 'POST', body: form });
+    const r = await fetch(`${BACKEND_URL}${endpoint}`, {
+      method: 'POST',
+      headers: userHeaders,
+      body: form,
+    });
     if (r.ok) return r;
   } catch (_) {}
   // JSON fallback (base64) — Telegram mobile WebView uchun
   const buf = await readAsArrayBuffer(file);
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const b64 = btoa(binary);
   const r2 = await fetch(`${BACKEND_URL}${endpoint}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...userHeaders },
     body: JSON.stringify({ data: b64 }),
   });
   return r2;

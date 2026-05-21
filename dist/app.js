@@ -41,6 +41,22 @@ function App() {
     TG.expand();
   }, []);
 
+  // Serverdan haqiqiy plan'ni olish
+  uE(() => {
+    const uid = TG_USER?.id;
+    const backendUrl = window.BACKEND_URL;
+    if (!uid || !backendUrl) return;
+    fetch(`${backendUrl}/api/me`, {
+      headers: {
+        'X-User-Id': String(uid)
+      }
+    }).then(r => r.ok ? r.json() : null).then(data => {
+      if (data?.plan && data.plan !== 'free') {
+        setCurrentPlan(data.is_premium ? data.plan : 'free');
+      }
+    }).catch(() => {});
+  }, []);
+
   // BackButton: sheet ochiq bo'lsa ko'rsat, yopilganda yashir
   uE(() => {
     if (!TG) return;

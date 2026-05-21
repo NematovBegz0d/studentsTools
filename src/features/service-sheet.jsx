@@ -182,8 +182,8 @@ function ResultFile({ t, accent, result, onAgain, onClose, onToast }) {
   const handleSendToBot = async () => {
     setSending(true);
     try {
-      await sendToBot(result.blob, finalName(), onToast);
-      onToast('✅ Fayl botga yuborildi!');
+      const ok = await sendToBot(result.blob, finalName(), onToast);
+      if (ok) onToast('✅ Fayl botga yuborildi!');
     } catch (e) {
       onToast('❌ ' + e.message);
     } finally {
@@ -263,7 +263,7 @@ function ResultText({ t, accent, result, onAgain, onClose, onToast }) {
       }}>{result.content}</div>
       <div style={{ display: 'flex', gap: 10, width: '100%' }}>
         <Button variant="secondary" full onClick={onAgain}>{t.sheetAgain}</Button>
-        <Button variant="primary" accent={accent} full onClick={copy}>Nusxalash</Button>
+        <Button variant="primary" accent={accent} full onClick={copy}>{t.sheetCopy}</Button>
       </div>
     </div>
   );
@@ -292,8 +292,8 @@ function ResultImage({ t, accent, result, onAgain, onToast }) {
     try {
       const res = await fetch(result.dataUrl);
       const blob = await res.blob();
-      await sendToBot(blob, finalName(), onToast);
-      onToast('✅ Rasm botga yuborildi!');
+      const ok = await sendToBot(blob, finalName(), onToast);
+      if (ok) onToast('✅ Rasm botga yuborildi!');
     } catch (e) {
       onToast('❌ ' + e.message);
     } finally {

@@ -296,8 +296,8 @@ function ResultFile({
   const handleSendToBot = async () => {
     setSending(true);
     try {
-      await sendToBot(result.blob, finalName(), onToast);
-      onToast('✅ Fayl botga yuborildi!');
+      const ok = await sendToBot(result.blob, finalName(), onToast);
+      if (ok) onToast('✅ Fayl botga yuborildi!');
     } catch (e) {
       onToast('❌ ' + e.message);
     } finally {
@@ -484,7 +484,7 @@ function ResultText({
     accent: accent,
     full: true,
     onClick: copy
-  }, "Nusxalash")));
+  }, t.sheetCopy)));
 }
 
 // ─── Result: image display ───────────────────────────────────────
@@ -515,8 +515,8 @@ function ResultImage({
     try {
       const res = await fetch(result.dataUrl);
       const blob = await res.blob();
-      await sendToBot(blob, finalName(), onToast);
-      onToast('✅ Rasm botga yuborildi!');
+      const ok = await sendToBot(blob, finalName(), onToast);
+      if (ok) onToast('✅ Rasm botga yuborildi!');
     } catch (e) {
       onToast('❌ ' + e.message);
     } finally {
