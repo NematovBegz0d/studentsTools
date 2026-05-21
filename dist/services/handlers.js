@@ -439,6 +439,30 @@ async function imgcompress({
     }, 'image/jpeg', 0.72);
   });
 }
+async function postToBackend(endpoint, file) {
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const r = await fetch(`${BACKEND_URL}${endpoint}`, {
+      method: 'POST',
+      body: form
+    });
+    if (r.ok) return r;
+  } catch (_) {}
+  // JSON fallback (base64) — Telegram mobile WebView uchun
+  const buf = await readAsArrayBuffer(file);
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const r2 = await fetch(`${BACKEND_URL}${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      data: b64
+    })
+  });
+  return r2;
+}
 async function bgremove({
   file
 }) {
@@ -450,12 +474,7 @@ async function bgremove({
     type: 'text',
     content: '⚠️ Backend hali ulanmagan.\n\nHozircha: remove.bg saytidan foydalaning.'
   };
-  const form = new FormData();
-  form.append('file', file);
-  const r = await fetch(`${BACKEND_URL}/api/bgremove`, {
-    method: 'POST',
-    body: form
-  });
+  const r = await postToBackend('/api/bgremove', file);
   if (!r.ok) throw new Error(await r.text());
   const blob = await r.blob();
   return {
@@ -982,12 +1001,7 @@ async function ocr({
     type: 'text',
     content: '⚠️ Backend hali ulanmagan.\n\nHozircha: Google Lens yoki i2OCR.com dan foydalaning.'
   };
-  const form = new FormData();
-  form.append('file', file);
-  const r = await fetch(`${BACKEND_URL}/api/ocr`, {
-    method: 'POST',
-    body: form
-  });
+  const r = await postToBackend('/api/ocr', file);
   if (!r.ok) throw new Error(await r.text());
   const {
     text

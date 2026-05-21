@@ -125,10 +125,18 @@ async def send_file_to_user(
 # ─── File processing endpoints ───────────────────────────────────
 
 @app.post("/api/bgremove")
-async def bgremove(file: UploadFile = File(...)):
+async def bgremove(request: Request):
     try:
         from rembg import remove
-        data = await file.read()
+        import base64
+        ct = request.headers.get("content-type", "")
+        if "multipart" in ct:
+            form = await request.form()
+            file = form.get("file")
+            data = await file.read()
+        else:
+            body = await request.json()
+            data = base64.b64decode(body["data"])
         result = remove(data)
         return Response(
             content=result,
@@ -140,12 +148,19 @@ async def bgremove(file: UploadFile = File(...)):
 
 
 @app.post("/api/ocr")
-async def ocr(file: UploadFile = File(...)):
+async def ocr(request: Request):
     try:
         import pytesseract
         from PIL import Image
-
-        data = await file.read()
+        import base64
+        ct = request.headers.get("content-type", "")
+        if "multipart" in ct:
+            form = await request.form()
+            file = form.get("file")
+            data = await file.read()
+        else:
+            body = await request.json()
+            data = base64.b64decode(body["data"])
         img = Image.open(io.BytesIO(data))
         text = pytesseract.image_to_string(img, lang="rus+eng+uzb")
         return JSONResponse({"text": text.strip() or "Matn topilmadi"})
