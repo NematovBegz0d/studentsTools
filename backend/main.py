@@ -124,6 +124,15 @@ async def send_file_to_user(
 
 # ─── File processing endpoints ───────────────────────────────────
 
+_rembg_session = None
+
+def get_rembg_session():
+    global _rembg_session
+    if _rembg_session is None:
+        from rembg import new_session
+        _rembg_session = new_session("u2netp")  # 4MB, Railway memory-safe
+    return _rembg_session
+
 @app.post("/api/bgremove")
 async def bgremove(request: Request):
     try:
@@ -137,7 +146,7 @@ async def bgremove(request: Request):
         else:
             body = await request.json()
             data = base64.b64decode(body["data"])
-        result = remove(data)
+        result = remove(data, session=get_rembg_session())
         return Response(
             content=result,
             media_type="image/png",
