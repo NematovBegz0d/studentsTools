@@ -249,11 +249,18 @@ function ResultFile({
   onClose,
   onToast
 }) {
+  const {
+    useState: uS2
+  } = React;
+  const ext = (result.filename || 'result').split('.').pop();
+  const base = (result.filename || 'result').replace(/\.[^.]+$/, '');
+  const [name, setName] = uS2(base);
   const download = () => {
+    const finalName = (name.trim() || base) + '.' + ext;
     const url = URL.createObjectURL(result.blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = result.filename || 'result';
+    a.download = finalName;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     onToast(t.sheetReady);
@@ -329,17 +336,36 @@ function ResultFile({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 4
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: name,
+    onChange: e => setName(e.target.value),
+    style: {
+      flex: 1,
+      background: 'transparent',
+      border: 'none',
+      outline: 'none',
       color: '#fff',
       fontSize: 13,
       fontWeight: 600,
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap'
+      minWidth: 0,
+      borderBottom: '1px solid rgba(255,255,255,0.2)',
+      paddingBottom: 1
     }
-  }, result.filename), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'rgba(255,255,255,0.4)',
+      fontSize: 13,
+      flexShrink: 0
+    }
+  }, ".", ext)), /*#__PURE__*/React.createElement("div", {
     style: {
       color: 'rgba(255,255,255,0.45)',
-      fontSize: 11
+      fontSize: 11,
+      marginTop: 3
     }
   }, sizeMB, " MB"))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -425,10 +451,16 @@ function ResultImage({
   onAgain,
   onToast
 }) {
+  const {
+    useState: uS3
+  } = React;
+  const ext = (result.filename || 'result.png').split('.').pop();
+  const base = (result.filename || 'result').replace(/\.[^.]+$/, '');
+  const [name, setName] = uS3(base);
   const download = () => {
     const a = document.createElement('a');
     a.href = result.dataUrl;
-    a.download = result.filename || 'result.png';
+    a.download = (name.trim() || base) + '.' + ext;
     a.click();
     onToast(t.sheetReady);
   };
@@ -443,11 +475,43 @@ function ResultImage({
     src: result.dataUrl,
     style: {
       maxWidth: '100%',
-      maxHeight: 260,
+      maxHeight: 240,
       borderRadius: 12,
       border: '0.5px solid rgba(255,255,255,0.1)'
     }
   }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: '100%',
+      padding: '10px 14px',
+      borderRadius: 12,
+      background: 'rgba(255,255,255,0.03)',
+      border: '0.5px solid rgba(255,255,255,0.08)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: name,
+    onChange: e => setName(e.target.value),
+    style: {
+      flex: 1,
+      background: 'transparent',
+      border: 'none',
+      outline: 'none',
+      color: '#fff',
+      fontSize: 13,
+      fontWeight: 600,
+      minWidth: 0,
+      borderBottom: '1px solid rgba(255,255,255,0.2)',
+      paddingBottom: 1
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'rgba(255,255,255,0.4)',
+      fontSize: 13,
+      flexShrink: 0
+    }
+  }, ".", ext)), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 10,

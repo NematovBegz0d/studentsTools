@@ -147,10 +147,16 @@ function Processing({ t, accent }) {
 
 // ─── Result: file download ───────────────────────────────────────
 function ResultFile({ t, accent, result, onAgain, onClose, onToast }) {
+  const { useState: uS2 } = React;
+  const ext = (result.filename || 'result').split('.').pop();
+  const base = (result.filename || 'result').replace(/\.[^.]+$/, '');
+  const [name, setName] = uS2(base);
+
   const download = () => {
+    const finalName = (name.trim() || base) + '.' + ext;
     const url = URL.createObjectURL(result.blob);
     const a = document.createElement('a');
-    a.href = url; a.download = result.filename || 'result';
+    a.href = url; a.download = finalName;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     onToast(t.sheetReady);
@@ -183,8 +189,19 @@ function ResultFile({ t, accent, result, onAgain, onClose, onToast }) {
           </svg>
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ color: '#fff', fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{result.filename}</div>
-          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{sizeMB} MB</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              style={{
+                flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                color: '#fff', fontSize: 13, fontWeight: 600, minWidth: 0,
+                borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: 1,
+              }}
+            />
+            <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, flexShrink: 0 }}>.{ext}</span>
+          </div>
+          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 3 }}>{sizeMB} MB</div>
         </div>
       </div>
       <div style={{ display: 'flex', gap: 10, width: '100%' }}>
@@ -221,9 +238,15 @@ function ResultText({ t, accent, result, onAgain, onClose, onToast }) {
 
 // ─── Result: image display ───────────────────────────────────────
 function ResultImage({ t, accent, result, onAgain, onToast }) {
+  const { useState: uS3 } = React;
+  const ext = (result.filename || 'result.png').split('.').pop();
+  const base = (result.filename || 'result').replace(/\.[^.]+$/, '');
+  const [name, setName] = uS3(base);
+
   const download = () => {
     const a = document.createElement('a');
-    a.href = result.dataUrl; a.download = result.filename || 'result.png';
+    a.href = result.dataUrl;
+    a.download = (name.trim() || base) + '.' + ext;
     a.click();
     onToast(t.sheetReady);
   };
@@ -231,8 +254,24 @@ function ResultImage({ t, accent, result, onAgain, onToast }) {
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
       <img
         src={result.dataUrl}
-        style={{ maxWidth: '100%', maxHeight: 260, borderRadius: 12, border: '0.5px solid rgba(255,255,255,0.1)' }}
+        style={{ maxWidth: '100%', maxHeight: 240, borderRadius: 12, border: '0.5px solid rgba(255,255,255,0.1)' }}
       />
+      <div style={{
+        width: '100%', padding: '10px 14px', borderRadius: 12,
+        background: 'rgba(255,255,255,0.03)', border: '0.5px solid rgba(255,255,255,0.08)',
+        display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <input
+          value={name}
+          onChange={e => setName(e.target.value)}
+          style={{
+            flex: 1, background: 'transparent', border: 'none', outline: 'none',
+            color: '#fff', fontSize: 13, fontWeight: 600, minWidth: 0,
+            borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: 1,
+          }}
+        />
+        <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, flexShrink: 0 }}>.{ext}</span>
+      </div>
       <div style={{ display: 'flex', gap: 10, width: '100%' }}>
         <Button variant="secondary" full onClick={onAgain}>{t.sheetAgain}</Button>
         <Button variant="primary" accent={accent} full onClick={download}>{t.sheetDownload}</Button>
