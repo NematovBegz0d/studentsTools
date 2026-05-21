@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EduBot — Telegram Mini App</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body, #root {
+    margin: 0; padding: 0; height: 100%;
+    background: #06060a;
+    font-family: -apple-system, "SF Pro Display", "SF Pro", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior: none;
+  }
+  body { overflow: hidden; }
+
+  /* Hide scrollbars on horizontal scroll strips */
+  .hide-scroll::-webkit-scrollbar { display: none; }
+  .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Inner page scroll: thin track */
+  .page-scroll::-webkit-scrollbar { width: 0; }
+
+  /* Press / tap micro-animation */
+  .press {
+    transition: transform 0.13s cubic-bezier(0.3, 0.7, 0.4, 1), opacity 0.13s;
+  }
+  .press:active {
+    transform: scale(0.96);
+    opacity: 0.88;
+  }
+
+  /* Page fade-in on tab switch */
+  .page-fade {
+    animation: pageFade 0.32s cubic-bezier(0.3, 0.7, 0.4, 1);
+  }
+  @keyframes pageFade {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Skeleton */
+  @keyframes skel {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Pulse for success ring */
+  @keyframes pulse {
+    0%   { transform: scale(0.85); opacity: 0.7; }
+    100% { transform: scale(1.35); opacity: 0; }
+  }
+
+  /* Spinner */
+  .spinner {
+    width: 44px; height: 44px; border-radius: 50%;
+    border: 3.5px solid rgba(255,255,255,0.08);
+    border-top-color: #8b5cf6;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Inputs */
+  textarea, input { font-family: inherit; }
+
+  /* Selection */
+  ::selection { background: rgba(139,92,246,0.4); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
+<script src="dist/data/data.js"></script>
+
+<script src="dist/utils/ios-frame.js"></script>
+<script src="dist/components/icons.js"></script>
+<script src="dist/components/components.js"></script>
+<script src="dist/services/handlers.js"></script>
+<script src="dist/features/service-sheet.js"></script>
+<script src="dist/pages/pages-1.js"></script>
+<script src="dist/pages/pages-2.js"></script>
+<script src="dist/app.js"></script>
+</body>
+</html>

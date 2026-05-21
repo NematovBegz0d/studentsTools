@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+
+# Backend cache
+backend/__pycache__/
+backend/*.pyc
+backend/u2net.onnx
+backend/u2net_human_seg.onnx
