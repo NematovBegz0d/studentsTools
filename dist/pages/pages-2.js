@@ -652,108 +652,29 @@ function PaymentSheet({
   onClose,
   onSuccess
 }) {
-  const [step, setStep] = u_S2('choose'); // choose → processing → waiting → success | error
+  const [step, setStep] = u_S2('choose'); // choose → processing → success
   const [method, setMethod] = u_S2('payme');
-  const [errMsg, setErrMsg] = u_S2('');
-  const paymentIdRef = React.useRef(null);
-  const pollRef = React.useRef(null);
   const planMeta = {
     free: {
       name: t.planFree,
       price: 0,
-      color: '#4ade80',
-      backendId: null
+      color: '#4ade80'
     },
     standard: {
       name: t.planStandard,
       price: 29900,
-      color: '#a78bfa',
-      backendId: 'monthly'
+      color: '#a78bfa'
     },
     premium: {
       name: t.planPremium,
       price: 99900,
-      color: '#fbbf24',
-      backendId: 'yearly'
+      color: '#fbbf24'
     }
   }[planId];
   if (!planMeta) return null;
-  const backendUrl = window.BACKEND_URL || '';
-  const userId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
-
-  // To'lov tugagach polling ni to'xtatamiz
-  u_E2(() => () => {
-    if (pollRef.current) clearInterval(pollRef.current);
-  }, []);
-  const startPolling = paymentId => {
-    let attempts = 0;
-    const MAX = 60; // 3 daqiqa (60 × 3s)
-    pollRef.current = setInterval(async () => {
-      attempts++;
-      if (attempts > MAX) {
-        clearInterval(pollRef.current);
-        setErrMsg("To'lov vaqti tugadi. Qayta urinib ko'ring.");
-        setStep('error');
-        return;
-      }
-      try {
-        const r = await fetch(`${backendUrl}/api/payment/status/${paymentId}`, {
-          headers: {
-            'X-User-Id': String(userId)
-          }
-        });
-        if (!r.ok) return;
-        const data = await r.json();
-        if (data.status === 'paid') {
-          clearInterval(pollRef.current);
-          setStep('success');
-        } else if (data.status === 'cancelled') {
-          clearInterval(pollRef.current);
-          setErrMsg("To'lov bekor qilindi.");
-          setStep('error');
-        }
-      } catch (_) {}
-    }, 3000);
-  };
-  const pay = async () => {
-    if (!backendUrl || !userId) {
-      setErrMsg('Telegram orqali kirish kerak');
-      setStep('error');
-      return;
-    }
-    if (method !== 'payme') {
-      setErrMsg(`${method.charAt(0).toUpperCase() + method.slice(1)} tez orada qo'shiladi.`);
-      setStep('error');
-      return;
-    }
+  const pay = () => {
     setStep('processing');
-    try {
-      const r = await fetch(`${backendUrl}/api/payment/create`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': String(userId)
-        },
-        body: JSON.stringify({
-          plan: planMeta.backendId
-        })
-      });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error(d.detail || 'Server xatosi');
-      }
-      const data = await r.json();
-      paymentIdRef.current = data.payment_id;
-
-      // Payme checkout sahifasini ochamiz
-      const tg = window.Telegram?.WebApp;
-      if (tg?.openLink) tg.openLink(data.checkout_url);else window.open(data.checkout_url, '_blank');
-      setStep('waiting');
-      startPolling(data.payment_id);
-    } catch (e) {
-      setErrMsg(e.message || "To'lov yaratishda xatolik");
-      setStep('error');
-    }
+    setTimeout(() => setStep('success'), 2400);
   };
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -900,7 +821,7 @@ function PaymentSheet({
     accent: accent,
     full: true,
     onClick: pay
-  }, t.paymentPay))), (step === 'processing' || step === 'waiting') && /*#__PURE__*/React.createElement("div", {
+  }, t.paymentPay))), step === 'processing' && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '20px 0',
       display: 'flex',
@@ -916,87 +837,7 @@ function PaymentSheet({
       fontSize: 15,
       fontWeight: 600
     }
-  }, step === 'processing' ? t.paymentProcessing : "To'lov kutilmoqda..."), step === 'waiting' && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '10px 16px',
-      borderRadius: 12,
-      background: 'rgba(139,92,246,0.10)',
-      border: '0.5px solid rgba(139,92,246,0.25)',
-      color: 'rgba(255,255,255,0.7)',
-      fontSize: 12,
-      textAlign: 'center',
-      lineHeight: 1.5,
-      maxWidth: 260
-    }
-  }, "Payme sahifasida to'lovni amalga oshiring \u2014 natija avtomatik ko'rinadi"), step === 'waiting' && /*#__PURE__*/React.createElement(Button, {
-    variant: "secondary",
-    onClick: () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      onClose();
-    }
-  }, "Bekor qilish")), step === 'error' && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '14px 0',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: 14
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 72,
-      height: 72,
-      borderRadius: '50%',
-      background: 'rgba(239,68,68,0.15)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("svg", {
-    width: "34",
-    height: "34",
-    viewBox: "0 0 24 24",
-    fill: "none"
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-    stroke: "#f87171",
-    strokeWidth: "2",
-    strokeLinecap: "round"
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      textAlign: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#fff',
-      fontSize: 16,
-      fontWeight: 700
-    }
-  }, "Xatolik"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: 'rgba(255,255,255,0.55)',
-      fontSize: 13,
-      marginTop: 6
-    }
-  }, errMsg)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 10,
-      width: '100%'
-    }
-  }, /*#__PURE__*/React.createElement(Button, {
-    variant: "secondary",
-    full: true,
-    onClick: onClose
-  }, t.sheetCancel), /*#__PURE__*/React.createElement(Button, {
-    variant: "primary",
-    accent: accent,
-    full: true,
-    onClick: () => {
-      setStep('choose');
-      setErrMsg('');
-    }
-  }, "Qayta urinish"))), step === 'success' && /*#__PURE__*/React.createElement("div", {
+  }, t.paymentProcessing)), step === 'success' && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '14px 0 0',
       display: 'flex',
