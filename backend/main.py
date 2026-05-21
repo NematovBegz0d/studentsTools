@@ -36,14 +36,17 @@ _start_time          = time.time()
 
 logger.remove()
 logger.add(sys.stdout, format="{time:HH:mm:ss} | {level:<7} | {message}", level="INFO")
-logger.add(
-    "logs/error.log",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
-    level="ERROR",
-    rotation="10 MB",
-    retention="30 days",
-    create=True,
-)
+try:
+    os.makedirs("logs", exist_ok=True)
+    logger.add(
+        "logs/error.log",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+        level="ERROR",
+        rotation="10 MB",
+        retention="30 days",
+    )
+except Exception:
+    pass  # Railway read-only filesystem bo'lsa ham server ishlayveradi
 
 # ─── Rate limiter ─────────────────────────────────────────────────────────────
 

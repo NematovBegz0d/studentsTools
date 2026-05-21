@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import aiosqlite
 import os
 from datetime import datetime, timezone
+from typing import Optional
 
 DB_PATH = os.environ.get("DB_PATH", "edubot.db")
 

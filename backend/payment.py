@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Payme (paycom.uz) Merchant API — JSON-RPC 2.0
 Docs: https://developer.paycom.uz/docs
