@@ -6,7 +6,7 @@
 
 // Railway/Render'ga deploy qilgandan keyin bu URL ni yangilang
 // Misol: 'https://edubot-backend.up.railway.app'
-const BACKEND_URL = "studentstools-backend.up.railway.app";
+const BACKEND_URL = "https://studentstools-backend.up.railway.app";
 
 // ─── Helpers ────────────────────────────────────────────────────
 
