@@ -8,3 +8,5 @@ Pillow==10.3.0
 pdf2docx==0.5.8
 slowapi==0.1.9
 loguru==0.7.2
+mammoth==1.8.0
+weasyprint==62.3

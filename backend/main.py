@@ -263,6 +263,44 @@ async def ocr(request: Request):
         logger.error(f"ocr xato: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ─── DOCX → PDF ───────────────────────────────────────────────────────────────
+
+@app.post("/api/docx2pdf")
+@limiter.limit("10/minute")
+async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
+    t0 = time.time()
+    try:
+        import mammoth
+        from weasyprint import HTML
+
+        data = await file.read()
+        check_size(data, "/api/docx2pdf")
+
+        with io.BytesIO(data) as docx_buf:
+            result = mammoth.convert_to_html(docx_buf)
+
+        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+            body{{font-family:'DejaVu Sans',Arial,sans-serif;font-size:12pt;margin:2cm;line-height:1.6;color:#111}}
+            h1{{font-size:20pt;margin:16pt 0 8pt}}h2{{font-size:16pt;margin:12pt 0 6pt}}h3{{font-size:14pt;margin:10pt 0 4pt}}
+            p{{margin:0 0 8pt}}ul,ol{{margin:0 0 8pt;padding-left:20pt}}li{{margin-bottom:3pt}}
+            table{{border-collapse:collapse;width:100%;margin-bottom:8pt}}
+            td,th{{border:1pt solid #ccc;padding:4pt 8pt}}th{{background:#f0f0f0;font-weight:bold}}
+            strong{{font-weight:bold}}em{{font-style:italic}}
+        </style></head><body>{result.value}</body></html>"""
+
+        pdf_bytes = HTML(string=html).write_pdf()
+        logger.info(f"docx2pdf: {len(data)//1024}KB → {len(pdf_bytes)//1024}KB  {time.time()-t0:.1f}s")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=document.pdf"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"docx2pdf xato: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ─── PDF → DOCX ───────────────────────────────────────────────────────────────
 
 @app.post("/api/pdf2docx")
