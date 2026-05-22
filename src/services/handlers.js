@@ -256,19 +256,140 @@ async function pdf2docx({ file }) {
 
 async function docx2pdf({ file }) {
   await loadScript(MAMMOTH_CDN);
-  await loadScript(JSPDF_CDN);
+  await loadScript(PDF_LIB_CDN);
+
   const buf = await readAsArrayBuffer(file);
-  const result = await mammoth.extractRawText({ arrayBuffer: buf });
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  const lines = doc.splitTextToSize(result.value, 180);
-  let y = 20;
-  for (const line of lines) {
-    if (y > 280) { doc.addPage(); y = 20; }
-    doc.text(line, 15, y);
-    y += 7;
+  const result = await mammoth.convertToHtml({ arrayBuffer: buf });
+
+  const { PDFDocument } = PDFLib;
+  const W = 794, H = 1123;
+  const mX = 70, mY = 60, contentW = W - mX * 2;
+
+  const pages = [];
+  let canvas, ctx, y;
+
+  function newPage() {
+    canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+    y = mY;
+    pages.push(canvas);
   }
-  return { type: 'file', blob: doc.output('blob'), filename: 'document.pdf' };
+  newPage();
+
+  function drawWrapped(text, x, fontSize, bold = false, color = '#111111') {
+    if (!text.trim()) return;
+    const fontDef = `${bold ? 'bold ' : ''}${fontSize}px Arial, sans-serif`;
+    ctx.font = fontDef;
+    ctx.fillStyle = color;
+    const maxW = contentW - (x - mX);
+    const lineH = Math.round(fontSize * 1.45);
+    const words = text.split(/\s+/);
+    let line = '';
+    for (const word of words) {
+      const test = line ? line + ' ' + word : word;
+      if (ctx.measureText(test).width > maxW && line) {
+        if (y + lineH > H - mY) newPage();
+        ctx.font = fontDef;
+        ctx.fillText(line, x, y);
+        y += lineH;
+        line = word;
+      } else {
+        line = test;
+      }
+    }
+    if (line) {
+      if (y + lineH > H - mY) newPage();
+      ctx.font = fontDef;
+      ctx.fillText(line, x, y);
+      y += lineH;
+    }
+  }
+
+  function processNode(node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const t = node.textContent.replace(/\s+/g, ' ').trim();
+      if (t) drawWrapped(t, mX, 14);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const tag = node.tagName.toLowerCase();
+
+    if (tag === 'h1') {
+      y += 10;
+      drawWrapped(node.textContent.trim(), mX, 22, true);
+      y += 6;
+    } else if (tag === 'h2') {
+      y += 8;
+      drawWrapped(node.textContent.trim(), mX, 18, true);
+      y += 4;
+    } else if (tag === 'h3') {
+      y += 6;
+      drawWrapped(node.textContent.trim(), mX, 15, true);
+      y += 3;
+    } else if (tag === 'p') {
+      const t = node.textContent.trim();
+      if (t) { drawWrapped(t, mX, 14); y += 5; }
+      else y += 8;
+    } else if (tag === 'li') {
+      drawWrapped('• ' + node.textContent.trim(), mX + 18, 14);
+      y += 2;
+    } else if (tag === 'ul' || tag === 'ol') {
+      node.childNodes.forEach(processNode);
+      y += 4;
+    } else if (tag === 'br') {
+      y += 10;
+    } else if (tag === 'hr') {
+      y += 6;
+      ctx.strokeStyle = '#cccccc'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(mX, y); ctx.lineTo(W - mX, y); ctx.stroke();
+      y += 6;
+    } else if (tag === 'table') {
+      const rows = [...node.querySelectorAll('tr')];
+      if (!rows.length) return;
+      const colCount = Math.max(...rows.map(r => r.querySelectorAll('td,th').length));
+      const colW = contentW / colCount;
+      const rowH = 24;
+      rows.forEach(row => {
+        if (y + rowH > H - mY) newPage();
+        const cells = [...row.querySelectorAll('td,th')];
+        const isHead = cells.some(c => c.tagName.toLowerCase() === 'th');
+        ctx.fillStyle = isHead ? '#f0f0f0' : '#ffffff';
+        ctx.fillRect(mX, y - 16, contentW, rowH);
+        cells.forEach((cell, ci) => {
+          ctx.font = `${isHead ? 'bold ' : ''}13px Arial, sans-serif`;
+          ctx.fillStyle = '#111111';
+          const txt = cell.textContent.trim().substring(0, 45);
+          ctx.fillText(txt, mX + ci * colW + 5, y);
+          ctx.strokeStyle = '#cccccc'; ctx.lineWidth = 0.5;
+          ctx.strokeRect(mX + ci * colW, y - 16, colW, rowH);
+        });
+        y += rowH;
+      });
+      y += 8;
+    } else {
+      node.childNodes.forEach(processNode);
+    }
+  }
+
+  const div = document.createElement('div');
+  div.innerHTML = result.value;
+  div.childNodes.forEach(processNode);
+
+  const outDoc = await PDFDocument.create();
+  for (const pg of pages) {
+    const jpegData = pg.toDataURL('image/jpeg', 0.92).split(',')[1];
+    const jpegBytes = Uint8Array.from(atob(jpegData), c => c.charCodeAt(0));
+    const jpgImg = await outDoc.embedJpg(jpegBytes);
+    const pdfPage = outDoc.addPage([595.28, 841.89]);
+    pdfPage.drawImage(jpgImg, { x: 0, y: 0, width: 595.28, height: 841.89 });
+  }
+
+  const outBytes = await outDoc.save();
+  const blob = new Blob([outBytes], { type: 'application/pdf' });
+  return { type: 'file', blob, filename: 'document.pdf', info: `${pages.length} sahifa` };
 }
 
 // ─── PDF Compress ────────────────────────────────────────────────
