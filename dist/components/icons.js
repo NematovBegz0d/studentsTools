@@ -212,6 +212,28 @@ const ICON_PATHS = {
   'unzip': /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
     d: "M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7 M16 3h6v6 M9 14L22 3"
   })),
+  'compresspdf': /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+    x: "4",
+    y: "3",
+    width: "16",
+    height: "18",
+    rx: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M9 8h6 M9 12h6 M9 16h4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M17 19l2 2 2-2 M19 21v-5"
+  })),
+  'compresspptx': /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+    x: "2",
+    y: "3",
+    width: "20",
+    height: "14",
+    rx: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M8 21h8 M12 17v4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M17 14l2 2 2-2 M19 16v-5"
+  })),
   // ── Services: Premium ─────────────────────────────────────
   'referat': /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
     x: "4",

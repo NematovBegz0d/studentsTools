@@ -31,6 +31,9 @@ const ICON_PATHS = {
   'zip':      (<><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M12 4v3 M12 9v2 M12 13v2 M11 17h2v3h-2z"/></>),
   'unzip':    (<><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7 M16 3h6v6 M9 14L22 3"/></>),
 
+  'compresspdf':  (<><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 8h6 M9 12h6 M9 16h4"/><path d="M17 19l2 2 2-2 M19 21v-5"/></>),
+  'compresspptx': (<><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8 M12 17v4"/><path d="M17 14l2 2 2-2 M19 16v-5"/></>),
+
   // ── Services: Premium ─────────────────────────────────────
   'referat':    (<><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8 M8 12h8 M8 16h5"/></>),
   'amaliy':     (<><path d="M9 3v6L4 19a2 2 0 0 0 2 3h12a2 2 0 0 0 2-3L15 9V3 M8 3h8 M7 14h10"/></>),

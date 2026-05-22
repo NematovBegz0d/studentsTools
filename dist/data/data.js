@@ -78,6 +78,20 @@ const FREE_SERVICES = [
 },
 // PDF Ishlash (4)
 {
+  id: 'compresspdf',
+  cat: 'pdf',
+  icon: '🗜️',
+  new: true,
+  ai: false,
+  accept: '.pdf'
+}, {
+  id: 'compresspptx',
+  cat: 'file',
+  icon: '📉',
+  new: true,
+  ai: false,
+  accept: '.pptx,.ppt'
+}, {
   id: 'pdflock',
   cat: 'pdf',
   icon: '🔒',
@@ -425,6 +439,14 @@ const I18N = {
         name: 'OCR rasmdan matn',
         desc: 'Rasmdagi yozuvni matnga aylantirish'
       },
+      compresspdf: {
+        name: 'PDF siqish',
+        desc: 'PDF hajmini 30-70% ga kichraytirish'
+      },
+      compresspptx: {
+        name: 'PPTX siqish',
+        desc: 'Taqdimot hajmini kichraytirish'
+      },
       pdflock: {
         name: 'PDF ga parol',
         desc: 'PDF ni parol bilan himoyalash'
@@ -682,6 +704,14 @@ const I18N = {
         name: 'OCR с фото',
         desc: 'Распознать текст с изображения'
       },
+      compresspdf: {
+        name: 'Сжать PDF',
+        desc: 'Уменьшить PDF на 30–70%'
+      },
+      compresspptx: {
+        name: 'Сжать PPTX',
+        desc: 'Уменьшить размер презентации'
+      },
       pdflock: {
         name: 'Пароль на PDF',
         desc: 'Защитить PDF паролем'
@@ -936,6 +966,14 @@ const I18N = {
       ocr: {
         name: 'OCR image',
         desc: 'Recognize text from image'
+      },
+      compresspdf: {
+        name: 'Compress PDF',
+        desc: 'Reduce PDF size by 30–70%'
+      },
+      compresspptx: {
+        name: 'Compress PPTX',
+        desc: 'Reduce presentation file size'
       },
       pdflock: {
         name: 'Password PDF',

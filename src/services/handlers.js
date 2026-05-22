@@ -271,6 +271,120 @@ async function docx2pdf({ file }) {
   return { type: 'file', blob: doc.output('blob'), filename: 'document.pdf' };
 }
 
+// ─── PDF Compress ────────────────────────────────────────────────
+
+async function compresspdf({ file }) {
+  if (!file) return { type: 'text', content: '❌ PDF faylini yuklang' };
+
+  await loadScript(PDF_LIB_CDN);
+  const pdfjsLib = await getPdfjsLib();
+  const { PDFDocument } = PDFLib;
+
+  const buf = await readAsArrayBuffer(file);
+  const srcPdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const outDoc = await PDFDocument.create();
+
+  for (let i = 1; i <= srcPdf.numPages; i++) {
+    const page = await srcPdf.getPage(i);
+    const origVp = page.getViewport({ scale: 1 });
+
+    // 1.5x scale — sifat va hajm balansi
+    const vp = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement('canvas');
+    canvas.width = vp.width;
+    canvas.height = vp.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+
+    // JPEG 65% sifat — rasm-ko'p PDFlarda 40-70% tejash
+    const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.65);
+    const jpegBase64 = jpegDataUrl.split(',')[1];
+    const jpegBytes = Uint8Array.from(atob(jpegBase64), c => c.charCodeAt(0));
+
+    const jpgImage = await outDoc.embedJpg(jpegBytes);
+    const outPage = outDoc.addPage([origVp.width, origVp.height]);
+    outPage.drawImage(jpgImage, { x: 0, y: 0, width: origVp.width, height: origVp.height });
+  }
+
+  const outBytes = await outDoc.save();
+  const blob = new Blob([outBytes], { type: 'application/pdf' });
+  const saved = Math.round((1 - blob.size / file.size) * 100);
+  const info = saved > 0
+    ? `${saved}% kichiklashdi · ${srcPdf.numPages} sahifa · Matn rasm sifatida saqlanadi`
+    : 'PDF allaqachon optimallashgan (matn-only fayllar kam siqiladi)';
+  return { type: 'file', blob, filename: 'compressed.pdf', info };
+}
+
+// ─── PPTX Compress ───────────────────────────────────────────────
+
+async function compresspptx({ file }) {
+  if (!file) return { type: 'text', content: '❌ PPTX faylini yuklang' };
+  await loadScript(JSZIP_CDN);
+
+  const buf = await readAsArrayBuffer(file);
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(buf);
+  } catch {
+    return { type: 'text', content: '❌ PPTX fayl o\'qilmadi. To\'g\'ri .pptx faylini yuklang.' };
+  }
+
+  const mediaFiles = Object.keys(zip.files).filter(name => {
+    const ext = name.split('.').pop().toLowerCase();
+    return ['jpg', 'jpeg', 'png'].includes(ext) && name.includes('media/');
+  });
+
+  if (!mediaFiles.length) {
+    // Rasmlar yo'q — faqat DEFLATE bilan qayta siq
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+    const saved = Math.round((1 - blob.size / file.size) * 100);
+    return {
+      type: 'file', blob, filename: 'compressed.pptx',
+      info: saved > 0 ? `${saved}% kichiklashdi (rasm topilmadi)` : 'Allaqachon optimallashgan',
+    };
+  }
+
+  // Har bir rasmni canvas orqali siqamiz
+  const MAX_DIM = 1920;
+  for (const imgPath of mediaFiles) {
+    const imgBuf = await zip.files[imgPath].async('arraybuffer');
+    const ext = imgPath.split('.').pop().toLowerCase();
+    const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
+
+    const blobUrl = URL.createObjectURL(new Blob([imgBuf], { type: mimeType }));
+    try {
+      const img = await loadImage(blobUrl);
+      const ratio = Math.min(1, MAX_DIM / img.width, MAX_DIM / img.height);
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(img.width  * ratio);
+      canvas.height = Math.round(img.height * ratio);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      // PNG → JPEG'ga aylantirish (katta tejash)
+      const outMime = 'image/jpeg';
+      const outExt  = 'jpg';
+      const compressed = await new Promise(res => canvas.toBlob(res, outMime, 0.72));
+      const compressedBuf = await compressed.arrayBuffer();
+
+      // ZIP ichida nom o'zgarishi — .png → .jpg o'zgartirib bo'lmaydi (XML munosabati)
+      // Shuning uchun bir xil nom, faqat mazmunni almashtiramiz
+      zip.file(imgPath, compressedBuf);
+    } finally {
+      URL.revokeObjectURL(blobUrl);
+    }
+  }
+
+  const blob = await zip.generateAsync({
+    type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+  const saved = Math.round((1 - blob.size / file.size) * 100);
+  const info = saved > 0
+    ? `${saved}% kichiklashdi · ${mediaFiles.length} ta rasm siqildi`
+    : 'Allaqachon optimallashgan';
+  return { type: 'file', blob, filename: 'compressed.pptx', info };
+}
+
 // ─── Image Operations ────────────────────────────────────────────
 
 async function imgcompress({ file }) {
@@ -645,6 +759,7 @@ const SERVICE_HANDLERS = {
   // PDF
   mergepdf, splitpdf, pdftext, pdflock, watermark, pdf2img,
   img2pdf, imgs2pdf, xlsx2pdf, pdf2docx, docx2pdf,
+  compresspdf, compresspptx,
   // Image
   imgcompress, bgremove,
   // Text
