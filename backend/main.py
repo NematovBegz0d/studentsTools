@@ -1607,50 +1607,88 @@ async def xlsx_to_pdf(request: Request, file: UploadFile = File(...)):
 
 # ─── PPTX Compress (ZIP approach) ────────────────────────────────────────────
 
+_PPTX_IMG_EXTS = {"jpg", "jpeg", "png", "bmp", "webp", "gif", "tiff"}
+_PPTX_MAX_DIM  = 1920
+
+
+def _do_compresspptx(data: bytes) -> tuple:
+    from PIL import Image, ImageOps
+
+    orig_size = len(data)
+    compressed = 0
+    out_buf = io.BytesIO()
+
+    with zipfile.ZipFile(io.BytesIO(data), "r") as zin, \
+         zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zout:
+        for item in zin.infolist():
+            item_data = zin.read(item.filename)
+            ext = item.filename.rsplit(".", 1)[-1].lower() if "." in item.filename else ""
+            if "media/" in item.filename and ext in _PPTX_IMG_EXTS:
+                try:
+                    img = Image.open(io.BytesIO(item_data))
+                    img = ImageOps.exif_transpose(img)
+                    ratio = min(1.0, _PPTX_MAX_DIM / max(img.width, img.height))
+                    if ratio < 1.0:
+                        img = img.resize(
+                            (int(img.width * ratio), int(img.height * ratio)),
+                            Image.LANCZOS,
+                        )
+                    if img.mode not in ("RGB",):
+                        img = img.convert("RGB")
+                    # adaptive quality: larger embedded image → more aggressive
+                    if len(item_data) > 2 * 1024 * 1024:
+                        quality = 65
+                    elif len(item_data) > 512 * 1024:
+                        quality = 72
+                    else:
+                        quality = 82
+                    cb = io.BytesIO()
+                    img.save(cb, format="JPEG", quality=quality, optimize=True)
+                    candidate = cb.getvalue()
+                    if len(candidate) < len(item_data):
+                        item_data = candidate
+                        compressed += 1
+                except Exception:
+                    pass
+            zout.writestr(item, item_data)
+
+    out_bytes = out_buf.getvalue()
+    # Never return larger than original
+    if len(out_bytes) >= orig_size:
+        out_bytes = data
+    saved = max(0, round((1 - len(out_bytes) / orig_size) * 100))
+    info = f"{compressed} ta rasm siqildi, {saved}% kichiklashdi"
+    return out_bytes, info, saved
+
+
 @app.post("/api/compresspptx")
 @limiter.limit("10/minute")
 async def compress_pptx(request: Request, file: UploadFile = File(...)):
-    t0 = time.time()
     try:
-        from PIL import Image
         data = await file.read()
         check_size(data, "/api/compresspptx")
-        MAX_DIM = 1920
-        compressed = 0
-        out_buf = io.BytesIO()
-        with zipfile.ZipFile(io.BytesIO(data), 'r') as zin, \
-             zipfile.ZipFile(out_buf, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zout:
-            for item in zin.infolist():
-                item_data = zin.read(item.filename)
-                ext = item.filename.rsplit('.', 1)[-1].lower()
-                if 'media/' in item.filename and ext in ('jpg', 'jpeg', 'png', 'bmp'):
-                    try:
-                        img = Image.open(io.BytesIO(item_data))
-                        ratio = min(1.0, MAX_DIM / max(img.width, img.height))
-                        if ratio < 1.0:
-                            img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
-                        if img.mode not in ('RGB',):
-                            img = img.convert('RGB')
-                        cb = io.BytesIO()
-                        img.save(cb, format='JPEG', quality=72, optimize=True)
-                        item_data = cb.getvalue()
-                        compressed += 1
-                    except Exception:
-                        pass
-                zout.writestr(item, item_data)
-        out_bytes = out_buf.getvalue()
-        saved = max(0, round((1 - len(out_bytes) / len(data)) * 100))
-        logger.info(f"compresspptx: {compressed} rasm, {saved}%, {time.time()-t0:.1f}s")
+        loop = asyncio.get_event_loop()
+        try:
+            out_bytes, info, saved = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_compresspptx, data),
+                timeout=45.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="PPTX compression timed out")
+        logger.info(f"compresspptx: {info}")
         return Response(
             content=out_bytes,
             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            headers={"Content-Disposition": "attachment; filename=compressed.pptx",
-                     "X-Saved-Percent": str(saved)},
+            headers={
+                "Content-Disposition": "attachment; filename=compressed.pptx",
+                "X-Info": info,
+                "X-Saved-Percent": str(saved),
+            },
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="PPTX compression failed")
 
 # ─── Image compress ───────────────────────────────────────────────────────────
 
@@ -2129,79 +2167,189 @@ async def stats(request: Request):
 
 # ─── QR Code ──────────────────────────────────────────────────────────────────
 
+# EduBot accent palette
+_QR_FILL  = (79, 70, 229)   # indigo-600
+_QR_BACK  = (238, 242, 255) # indigo-50
+
+
+def _do_qr(text: str) -> bytes:
+    import qrcode
+    from PIL import Image
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(text)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color=_QR_FILL, back_color=_QR_BACK).convert("RGB")
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
 @app.post("/api/qr")
 @limiter.limit("30/minute")
 async def make_qr(request: Request):
     try:
-        import qrcode
         body = await request.json()
-        text = body.get("text", "EduBot").strip() or "EduBot"
-        qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M,
-                            box_size=10, border=4)
-        qr.add_data(text)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        return Response(content=buf.read(), media_type="image/png")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        text = (body.get("text") or "EduBot").strip() or "EduBot"
+        if len(text) > 2000:
+            raise HTTPException(status_code=400, detail="Matn 2000 belgidan oshmasligi kerak")
+        loop = asyncio.get_event_loop()
+        try:
+            png = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_qr, text),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="QR generation timed out")
+        return Response(
+            content=png,
+            media_type="image/png",
+            headers={"Content-Disposition": "attachment; filename=qrcode.png"},
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="QR yaratishda xato")
 
 # ─── Certificate ──────────────────────────────────────────────────────────────
+
+def _do_cert(name: str, course: str, issuer: str) -> bytes:
+    from PIL import Image, ImageDraw, ImageFont
+
+    W, H = 900, 620
+    img = Image.new("RGB", (W, H))
+    draw = ImageDraw.Draw(img)
+
+    # Deep navy → indigo gradient background
+    for i in range(H):
+        t = i / H
+        r = int(10  + t * 25)
+        g = int(8   + t * 12)
+        b = int(45  + t * 30)
+        draw.line([(0, i), (W, i)], fill=(r, g, b))
+
+    GOLD   = (251, 191, 36)
+    GOLD2  = (180, 140, 30)
+    WHITE  = (255, 255, 255)
+    SILVER = (190, 190, 200)
+    PURPLE = (167, 139, 250)
+
+    # Outer + inner border
+    draw.rectangle([(16, 16), (W - 16, H - 16)], outline=GOLD,  width=3)
+    draw.rectangle([(26, 26), (W - 26, H - 26)], outline=GOLD2, width=1)
+
+    # Corner ornaments (simple cross-hatch)
+    for cx_, cy_ in [(42, 42), (W - 42, 42), (42, H - 42), (W - 42, H - 42)]:
+        draw.ellipse([(cx_ - 8, cy_ - 8), (cx_ + 8, cy_ + 8)], outline=GOLD, width=2)
+        draw.line([(cx_ - 14, cy_), (cx_ + 14, cy_)], fill=GOLD2, width=1)
+        draw.line([(cx_, cy_ - 14), (cx_, cy_ + 14)], fill=GOLD2, width=1)
+
+    # Decorative horizontal rules
+    draw.line([(60, 90), (W - 60, 90)],   fill=GOLD2, width=1)
+    draw.line([(60, 92), (W - 60, 92)],   fill=GOLD,  width=1)
+    draw.line([(60, H - 90), (W - 60, H - 90)], fill=GOLD,  width=1)
+    draw.line([(60, H - 88), (W - 60, H - 88)], fill=GOLD2, width=1)
+
+    def load_fonts():
+        try:
+            return (
+                ImageFont.truetype(FONT_BOLD,    48),  # title
+                ImageFont.truetype(FONT_BOLD,    44),  # name
+                ImageFont.truetype(FONT_REGULAR, 22),  # course
+                ImageFont.truetype(FONT_REGULAR, 15),  # sub
+                ImageFont.truetype(FONT_REGULAR, 13),  # small
+            )
+        except Exception:
+            d = ImageFont.load_default()
+            return d, d, d, d, d
+
+    fn_title, fn_name, fn_course, fn_sub, fn_sm = load_fonts()
+
+    def center_x(text, font):
+        try:
+            bb = draw.textbbox((0, 0), text, font=font)
+            return (W - (bb[2] - bb[0])) // 2
+        except Exception:
+            return W // 4
+
+    # Title
+    draw.text((center_x("SERTIFIKAT", fn_title), 108), "SERTIFIKAT",
+              font=fn_title, fill=GOLD)
+
+    # Subtitle
+    sub = "ushbu kurs muvaffaqiyatli yakunlanganligi tasdiqlanganligi uchun beriladi"
+    draw.text((center_x(sub, fn_sm), 168), sub, font=fn_sm, fill=SILVER)
+
+    # Recipient name (Unicode-safe — DejaVu covers Latin + Cyrillic)
+    draw.text((center_x(name, fn_name), 230), name, font=fn_name, fill=WHITE)
+
+    # Divider below name
+    draw.line([(W // 2 - 200, 295), (W // 2 + 200, 295)], fill=GOLD2, width=1)
+
+    # Course label + value
+    label = "kurs:"
+    draw.text((center_x(label, fn_sm), 308), label, font=fn_sm, fill=SILVER)
+    draw.text((center_x(course, fn_course), 328), course, font=fn_course, fill=PURPLE)
+
+    # Seal circle (watermark-style)
+    sc, sr = W // 2, H - 140
+    draw.ellipse([(sc - 46, sr - 46), (sc + 46, sr + 46)], outline=GOLD2, width=2)
+    draw.ellipse([(sc - 38, sr - 38), (sc + 38, sr + 38)], outline=GOLD,  width=1)
+    seal_text = "✓"
+    draw.text((center_x(seal_text, fn_sub), sr - 14), seal_text, font=fn_sub, fill=GOLD)
+
+    # Issuer + date columns
+    date_str = datetime.now().strftime("%d.%m.%Y")
+    draw.text((70,  H - 75), issuer,   font=fn_sm, fill=SILVER)
+    draw.text((70,  H - 58), "Mudir",  font=fn_sm, fill=SILVER)
+    draw.line([(70, H - 50), (200, H - 50)], fill=GOLD2, width=1)
+
+    draw.text((W - 200, H - 75), date_str,    font=fn_sm, fill=SILVER)
+    draw.text((W - 200, H - 58), "Sana",      font=fn_sm, fill=SILVER)
+    draw.line([(W - 200, H - 50), (W - 70, H - 50)], fill=GOLD2, width=1)
+
+    draw.text((center_x("EduBot", fn_sm), H - 40), "EduBot",
+              font=fn_sm, fill=(100, 100, 120))
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
 
 @app.post("/api/cert")
 @limiter.limit("20/minute")
 async def make_cert(request: Request):
     try:
-        from PIL import Image, ImageDraw, ImageFont
         body = await request.json()
-        lines = body.get("text", "Ism Familiya\nKurs nomi").strip().split("\n")
+        lines  = (body.get("text") or "Ism Familiya\nKurs nomi").strip().split("\n")
         name   = lines[0].strip() if lines else "Ism Familiya"
         course = lines[1].strip() if len(lines) > 1 else "Kurs nomi"
-
-        W, H = 800, 560
-        img = Image.new("RGB", (W, H))
-        draw = ImageDraw.Draw(img)
-        for i in range(H):
-            t = i / H
-            draw.line([(0, i), (W, i)], fill=(
-                int(15 + t * 21), int(12 + t * 15), int(41 + t * 21)
-            ))
+        issuer = lines[2].strip() if len(lines) > 2 else "EduBot"
+        if not name:
+            raise HTTPException(status_code=400, detail="Ism bo'sh bo'lmasligi kerak")
+        loop = asyncio.get_event_loop()
         try:
-            fn_sm  = ImageFont.truetype(FONT_REGULAR, 14)
-            fn_med = ImageFont.truetype(FONT_REGULAR, 20)
-            fn_bold= ImageFont.truetype(FONT_BOLD, 36)
-            fn_big = ImageFont.truetype(FONT_BOLD, 42)
-        except Exception:
-            fn_sm = fn_med = fn_bold = fn_big = ImageFont.load_default()
-
-        draw.rectangle([(18, 18), (W-18, H-18)], outline=(251, 191, 36), width=3)
-        draw.rectangle([(28, 28), (W-28, H-28)], outline=(180, 140, 30), width=1)
-
-        def cx(text, font):
-            try:
-                bb = draw.textbbox((0, 0), text, font=font)
-                return (W - (bb[2] - bb[0])) // 2
-            except Exception:
-                return W // 4
-
-        draw.text((cx("SERTIFIKAT", fn_bold), 100), "SERTIFIKAT", font=fn_bold, fill=(251, 191, 36))
-        sub = "quyidagi kurs muvaffaqiyatli yakunlanganligi uchun beriladi"
-        draw.text((cx(sub, fn_sm), 148), sub, font=fn_sm, fill=(180, 180, 180))
-        draw.text((cx(name, fn_big), 235), name, font=fn_big, fill=(255, 255, 255))
-        draw.text((cx(course, fn_med), 295), course, font=fn_med, fill=(167, 139, 250))
-        draw.line([(W//2-180, 340), (W//2+180, 340)], fill=(180, 140, 30), width=1)
-        date_str = datetime.now().strftime("%d.%m.%Y")
-        draw.text((cx(date_str, fn_sm), 465), date_str, font=fn_sm, fill=(150, 150, 150))
-        draw.text((cx("EduBot", fn_sm), 490), "EduBot", font=fn_sm, fill=(150, 150, 150))
-
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        return Response(content=buf.read(), media_type="image/png")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            png = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_cert, name, course, issuer),
+                timeout=20.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="Certificate generation timed out")
+        return Response(
+            content=png,
+            media_type="image/png",
+            headers={"Content-Disposition": "attachment; filename=certificate.png"},
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Sertifikat yaratishda xato")
 
 # ─── Schedule ─────────────────────────────────────────────────────────────────
 
