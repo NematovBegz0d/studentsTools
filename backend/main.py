@@ -397,49 +397,94 @@ async def lock_pdf(request: Request, file: UploadFile = File(...),
 
 # ─── PDF: Watermark ───────────────────────────────────────────────────────────
 
+def _make_wm_page(pw: float, ph: float, text: str):
+    """Create a ReportLab watermark overlay for one (pw×ph) page size."""
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.lib.colors import Color
+    from pypdf import PdfReader as _PR
+
+    font_size = max(20, min(56, int(pw * 0.07)))
+    spacing = max(pw, ph) * 0.38
+
+    wm_buf = io.BytesIO()
+    c = rl_canvas.Canvas(wm_buf, pagesize=(pw, ph))
+    c.saveState()
+    c.translate(pw / 2, ph / 2)
+    c.rotate(42)
+    c.setFillColor(Color(0.5, 0.5, 0.5, alpha=0.22))
+    c.setFont("Helvetica-Bold", font_size)
+    # Three diagonal strips for full-page coverage
+    for offset in (-spacing, 0, spacing):
+        c.drawCentredString(0, offset, text)
+    c.restoreState()
+    c.save()
+    return _PR(io.BytesIO(wm_buf.getvalue())).pages[0]
+
+def _do_watermark(data: bytes, wm_text: str) -> tuple:
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(io.BytesIO(data))
+    if reader.is_encrypted:
+        raise ValueError("Himoyalangan PDF ga watermark qo'yib bo'lmaydi.")
+    n = len(reader.pages)
+    if n == 0:
+        raise ValueError("PDF bo'sh (0 sahifa).")
+    if n > 200:
+        raise ValueError(f"PDF {n} sahifa. Maksimal 200 sahifa qabul qilinadi.")
+
+    text = wm_text.strip()[:60] or "EduBot"
+
+    writer = PdfWriter()
+    wm_cache: dict = {}
+
+    for page in reader.pages:
+        pw = float(page.mediabox.width)
+        ph = float(page.mediabox.height)
+        key = (round(pw), round(ph))
+        if key not in wm_cache:
+            wm_cache[key] = _make_wm_page(pw, ph, text)
+        page.merge_page(wm_cache[key])
+        writer.add_page(page)
+
+    out = io.BytesIO()
+    writer.write(out)
+    info = f"{n} sahifa • \"{text}\" watermark"
+    return out.getvalue(), info
+
 @app.post("/api/watermark")
 @limiter.limit("15/minute")
-async def watermark_pdf(request: Request, file: UploadFile = File(...)):
+async def watermark_pdf(request: Request, file: UploadFile = File(...),
+                        text: str = Form("")):
     t0 = time.time()
     try:
-        from pypdf import PdfReader, PdfWriter
-        from reportlab.pdfgen import canvas as rl_canvas
-        from reportlab.lib.colors import Color
-
         data = await file.read()
         check_size(data, "/api/watermark")
-        reader = PdfReader(io.BytesIO(data))
-        page0 = reader.pages[0]
-        pw = float(page0.mediabox.width)
-        ph = float(page0.mediabox.height)
-
-        wm_buf = io.BytesIO()
-        c = rl_canvas.Canvas(wm_buf, pagesize=(pw, ph))
-        c.saveState()
-        c.translate(pw / 2, ph / 2)
-        c.rotate(45)
-        c.setFillColor(Color(0.6, 0.6, 0.6, alpha=0.22))
-        c.setFont("Helvetica-Bold", 52)
-        c.drawCentredString(0, 0, "EduBot")
-        c.restoreState()
-        c.save()
-
-        from pypdf import PdfReader as PR2
-        wm_page = PR2(io.BytesIO(wm_buf.getvalue())).pages[0]
-        writer = PdfWriter()
-        for page in reader.pages:
-            page.merge_page(wm_page)
-            writer.add_page(page)
-        out = io.BytesIO()
-        writer.write(out)
-        logger.info(f"watermark: {time.time()-t0:.1f}s")
-        return Response(content=out.getvalue(), media_type="application/pdf",
-                        headers={"Content-Disposition": "attachment; filename=watermarked.pdf"})
+        if data[:4] != b'%PDF':
+            raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+        loop = asyncio.get_event_loop()
+        try:
+            out_bytes, info = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_watermark, data, text),
+                timeout=45.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail="Watermark qo'yish 45 soniyadan oshdi. Kichikroq fayl tanlang.")
+        logger.info(f"watermark: {len(data)//1024}KB, {info}, {time.time()-t0:.1f}s")
+        return Response(
+            content=out_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=watermarked.pdf",
+                "X-Info": info,
+            },
+        )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"watermark xato: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500,
+            detail="Watermark qo'yishda xato. Fayl buzilgan yoki himoyalangan bo'lishi mumkin.")
 
 # ─── PDF: To image ────────────────────────────────────────────────────────────
 

@@ -351,10 +351,24 @@ async function watermark({
   text
 }) {
   validateFile(file, ".pdf");
-  // ✅ FIX: Sanitize watermark text
   const form = buildFormData("file", file);
-  if (text) form.append("text", sanitizeText(text, 100));
-  return apiFile("/api/watermark", form, "watermarked.pdf");
+  if (text && text.trim()) form.append("text", sanitizeText(text.trim(), 60));
+  const response = await fetchWithTimeout(`${BACKEND_URL}/api/watermark`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: form
+  }, 45000);
+  await handleResponseError(response);
+  const blob = await response.blob();
+  const info = response.headers.get("X-Info");
+  return {
+    type: "file",
+    blob,
+    filename: "watermarked.pdf",
+    ...(info ? {
+      info
+    } : {})
+  };
 }
 async function pdf2img({
   file
