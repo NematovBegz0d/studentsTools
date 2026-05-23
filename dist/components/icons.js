@@ -1,3 +1,5 @@
+"use strict";
+
 // EduBot — Icon library (Lucide-style line SVGs)
 
 const ICON_PATHS = {
