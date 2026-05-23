@@ -496,10 +496,16 @@ async function bgremove({ file }) {
 
 async function ocr({ file }) {
   if (!file) throw new Error("Rasm yoki PDF faylini yuklang.");
-  validateFile(file, ".jpg,.png,.pdf");
+  validateFile(file, ".jpg,.png,.pdf,.jpeg,.webp,.bmp,.tiff,.tif");
   if (!BACKEND_URL) return { type: "text", content: "⚠️ Backend ulanmagan." };
 
-  const response = await postWithFallback("/api/ocr", file);
+  const form = buildFormData("file", file);
+  // Tesseract + PDF render 90s gacha olishi mumkin
+  const response = await fetchWithTimeout(
+    `${BACKEND_URL}/api/ocr`,
+    { method: "POST", headers: getAuthHeaders(), body: form },
+    90000,
+  );
   await handleResponseError(response);
   const { text } = await response.json();
   return { type: "text", content: text || "Matn topilmadi." };

@@ -1505,6 +1505,145 @@ async def bgremove(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ─── OCR helpers ──────────────────────────────────────────────────────────────
+
+def _preprocess_for_ocr(img):
+    """
+    Prepare image for Tesseract:
+      1. EXIF rotation fix
+      2. Grayscale
+      3. Scale: minimum 1800px long edge (Tesseract needs ~300 DPI)
+      4. Cap at 4000px (prevent OOM + slow OCR)
+      5. Auto-contrast (stretch histogram)
+      6. Moderate contrast boost + sharpen
+    Keeps preprocessing moderate — LSTM engine works well without
+    aggressive binarization.
+    """
+    from PIL import Image, ImageFilter, ImageEnhance, ImageOps
+
+    img = ImageOps.exif_transpose(img)
+    gray = img.convert('L')
+    w, h = gray.size
+
+    # Scale up if image is too small for accurate OCR
+    MIN_EDGE = 1800
+    if max(w, h) < MIN_EDGE:
+        scale = MIN_EDGE / max(w, h)
+        gray = gray.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        w, h = gray.size
+
+    # Cap resolution to prevent memory/speed issues
+    MAX_EDGE = 4000
+    if max(w, h) > MAX_EDGE:
+        scale = MAX_EDGE / max(w, h)
+        gray = gray.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    # Stretch histogram (handles under/over-exposed photos)
+    gray = ImageOps.autocontrast(gray, cutoff=2)
+    # Moderate contrast boost
+    gray = ImageEnhance.Contrast(gray).enhance(1.4)
+    # Light sharpening (helps with slightly blurry scans)
+    gray = gray.filter(ImageFilter.SHARPEN)
+
+    return gray
+
+
+def _clean_ocr_text(text: str) -> str:
+    """Remove Tesseract noise: stray chars, excessive blank lines."""
+    # Collapse 3+ consecutive blank lines → 2
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    lines = text.split('\n')
+    result = []
+    for line in lines:
+        s = line.strip()
+        if s and len(s) >= 2:          # keep lines with ≥2 real chars
+            result.append(s)
+        elif not s and result and result[-1]:
+            result.append('')          # keep at most one blank separator
+    # Strip leading/trailing blanks
+    while result and not result[0]:
+        result.pop(0)
+    while result and not result[-1]:
+        result.pop()
+    return '\n'.join(result)
+
+
+def _do_ocr(data: bytes, is_pdf: bool) -> str:
+    """
+    Full OCR pipeline — runs in _converter_pool (CPU-bound).
+
+    PDF path:
+      • Has extractable text → direct fitz.get_text() (fast, accurate)
+      • Scanned PDF         → render 200 DPI + Tesseract (up to 8 pages)
+
+    Image path:
+      • Preprocess → Tesseract LSTM
+    """
+    import pytesseract
+    from PIL import Image
+
+    LANGS  = 'rus+eng+uzb'
+    CONFIG = '--oem 3 --psm 6'   # LSTM engine, single uniform text block
+
+    if is_pdf:
+        import fitz
+        doc         = fitz.open(stream=data, filetype='pdf')
+        total_pages = doc.page_count
+
+        if total_pages == 0:
+            doc.close()
+            return 'PDF bo\'sh (0 sahifa).'
+
+        # ── Does the PDF already contain text? ────────────────────
+        sample = ''.join(doc[i].get_text() for i in range(min(3, total_pages)))
+        if len(sample.strip()) > 50:
+            # Text-based PDF: direct extraction (no OCR needed)
+            MAX_P = 15
+            parts = []
+            for i in range(min(total_pages, MAX_P)):
+                t = doc[i].get_text().strip()
+                if t:
+                    if total_pages > 1:
+                        parts.append(f'── Sahifa {i + 1} ──')
+                    parts.append(t)
+            doc.close()
+            result = _clean_ocr_text('\n\n'.join(parts))
+            if total_pages > MAX_P:
+                result += f'\n\n⚠️ Faqat {MAX_P} sahifa o\'qildi (PDF jami {total_pages} sahifa).'
+            return result or 'Matn topilmadi.'
+
+        # ── Scanned PDF: render each page + Tesseract ─────────────
+        zoom    = 200 / 72      # 200 DPI — better accuracy than 150 for OCR
+        mat     = fitz.Matrix(zoom, zoom)
+        MAX_P   = 8             # OCR is ~3–5 s/page; cap for fast response
+        parts   = []
+
+        for i in range(min(total_pages, MAX_P)):
+            pix  = doc[i].get_pixmap(matrix=mat, alpha=False)
+            img  = Image.frombytes('RGB', [pix.width, pix.height], pix.samples)
+            del pix
+            img  = _preprocess_for_ocr(img)
+            text = pytesseract.image_to_string(img, lang=LANGS, config=CONFIG)
+            cleaned = _clean_ocr_text(text)
+            if cleaned:
+                if total_pages > 1:
+                    parts.append(f'── Sahifa {i + 1} ──')
+                parts.append(cleaned)
+
+        doc.close()
+        result = '\n\n'.join(parts)
+        if total_pages > MAX_P:
+            result += (f'\n\n⚠️ Faqat {MAX_P} sahifa OCR qilindi '
+                       f'(PDF jami {total_pages} sahifali).')
+        return result or 'Matn topilmadi.'
+
+    # ── Image ─────────────────────────────────────────────────────
+    img  = Image.open(io.BytesIO(data))
+    img  = _preprocess_for_ocr(img)
+    text = pytesseract.image_to_string(img, lang=LANGS, config=CONFIG)
+    return _clean_ocr_text(text) or 'Matn topilmadi.'
+
+
 # ─── OCR ──────────────────────────────────────────────────────────────────────
 
 @app.post("/api/ocr")
@@ -1512,26 +1651,42 @@ async def bgremove(request: Request):
 async def ocr(request: Request):
     t0 = time.time()
     try:
-        import pytesseract
-        from PIL import Image
         import base64
         ct = request.headers.get("content-type", "")
         if "multipart" in ct:
-            form = await request.form()
-            f = form.get("file")
-            data = await f.read()
+            form  = await request.form()
+            f     = form.get("file")
+            fname = (f.filename or "").lower()
+            data  = await f.read()
         else:
-            body = await request.json()
-            data = base64.b64decode(body["data"])
+            body  = await request.json()
+            data  = base64.b64decode(body["data"])
+            fname = body.get("filename", "").lower()
+
         check_size(data, "/api/ocr")
-        img = Image.open(io.BytesIO(data))
-        text = pytesseract.image_to_string(img, lang="rus+eng+uzb")
-        logger.info(f"ocr: {len(data)//1024}KB → {len(text)} belgi, {time.time()-t0:.1f}s")
-        return JSONResponse({"text": text.strip() or "Matn topilmadi"})
+
+        # Detect file type: filename OR magic bytes (%PDF)
+        is_pdf = fname.endswith('.pdf') or data[:4] == b'%PDF'
+
+        loop = asyncio.get_event_loop()
+        try:
+            text = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_ocr, data, is_pdf),
+                timeout=90.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail="OCR 90 soniyadan oshdi. Rasmni kichiklashtiring yoki PDF'ni qisqartiring.")
+
+        logger.info(f"ocr: {len(data)//1024}KB {'pdf' if is_pdf else 'img'} → {len(text)} belgi, {time.time()-t0:.1f}s")
+        return JSONResponse({"text": text})
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"ocr xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="OCR xatosi. Tiniq JPG/PNG rasm yoki skanerlangan PDF yuklang.")
 
 # ─── Translit ─────────────────────────────────────────────────────────────────
 
