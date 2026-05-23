@@ -340,70 +340,19 @@
       </div>
     </noscript>
 
-    <!-- Telegram SDK — synchronous (must be first) -->
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
-    <!-- ✅ FIX: Early theme detection — FOUC oldini olish uchun -->
-    <script>
-      (function () {
-        try {
-          var tg = window.Telegram && window.Telegram.WebApp;
-          var scheme = tg && tg.colorScheme;
-          // Telegram scheme yoki system preference
-          var dark = scheme
-            ? scheme === "dark"
-            : window.matchMedia("(prefers-color-scheme: dark)").matches;
-          document.documentElement.setAttribute(
-            "data-theme",
-            dark ? "dark" : "light",
-          );
-          // Update meta theme-color
-          var meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.content = dark ? "#0a0a0f" : "#f8f7ff";
-        } catch (e) {}
-      })();
-    </script>
-
-    <!-- React (production) -->
-    <script
-      src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
-      defer
-    ></script>
-    <script
-      src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
-      defer
-    ></script>
-
-    <!-- App scripts (defer for non-blocking load) -->
-    <script src="dist/data/data.js" defer></script>
-    <script src="dist/utils/ios-frame.js" defer></script>
-    <script src="dist/components/icons.js" defer></script>
-    <script src="dist/components/components.js" defer></script>
-    <script src="dist/services/handlers.js" defer></script>
-    <script src="dist/features/service-sheet.js" defer></script>
-    <script src="dist/pages/pages-1.js" defer></script>
-    <script src="dist/pages/pages-2.js" defer></script>
-    <script src="dist/app.js" defer></script>
-
-    <!-- ✅ NEW: Dev indicator (only shown outside Telegram) -->
-    <script>
-      window.addEventListener("DOMContentLoaded", function () {
-        var inTg = !!(
-          window.Telegram &&
-          window.Telegram.WebApp &&
-          window.Telegram.WebApp.initData
-        );
-        if (!inTg) {
-          var badge = document.createElement("div");
-          badge.innerHTML = "⚡ DEV";
-          badge.style.cssText =
-            "position:fixed;top:8px;left:50%;transform:translateX(-50%);" +
-            "background:rgba(139,92,246,0.9);color:#fff;padding:3px 10px;border-radius:99px;" +
-            "font-size:10px;font-weight:700;z-index:99999;letter-spacing:1px;" +
-            "backdrop-filter:blur(8px);pointer-events:none;";
-          document.body.appendChild(badge);
-        }
-      });
-    </script>
   </body>
+
+  <!-- Scripts — body pastida, defer yo'q (Telegram WebView bilan mos) -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
+  <script src="dist/data/data.js"></script>
+  <script src="dist/utils/ios-frame.js"></script>
+  <script src="dist/components/icons.js"></script>
+  <script src="dist/components/components.js"></script>
+  <script src="dist/services/handlers.js"></script>
+  <script src="dist/features/service-sheet.js"></script>
+  <script src="dist/pages/pages-1.js"></script>
+  <script src="dist/pages/pages-2.js"></script>
+  <script src="dist/app.js"></script>
 </html>
