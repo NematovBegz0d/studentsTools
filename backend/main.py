@@ -2050,25 +2050,86 @@ async def make_schedule(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ─── Translate (proxy) ────────────────────────────────────────────────────────
+# ─── Translate ────────────────────────────────────────────────────────────────
+
+# Common 3-letter ISO → 2-letter codes Google Translate accepts
+_LANG_ALIASES = {
+    "uzb": "uz", "rus": "ru", "eng": "en", "tur": "tr",
+    "deu": "de", "fra": "fr", "zho": "zh-CN", "jpn": "ja",
+    "kor": "ko", "ara": "ar", "kaz": "kk", "kir": "ky",
+    "spa": "es", "por": "pt", "ita": "it", "pol": "pl",
+    "nld": "nl", "swe": "sv", "nor": "no", "dan": "da",
+    "fin": "fi", "hin": "hi", "ben": "bn", "tha": "th",
+    "vie": "vi", "ind": "id", "fas": "fa", "ukr": "uk",
+}
+
+def _do_translate(query: str, lang: str) -> str:
+    """Translate query → lang.  Primary: Google (deep-translator). Fallback: MyMemory."""
+    import httpx as _httpx
+
+    # ── Primary: Google Translate (unofficial) ──────────────────────
+    try:
+        from deep_translator import GoogleTranslator
+        result = GoogleTranslator(source="auto", target=lang).translate(query)
+        if result and result.strip():
+            return result.strip()
+    except Exception as google_err:
+        logger.warning(f"translate google xato: {google_err}")
+
+    # ── Fallback: MyMemory (500-char limit per request) ─────────────
+    try:
+        chunk = query[:500]
+        r = _httpx.get(
+            "https://api.mymemory.translated.net/get",
+            params={"q": chunk, "langpair": f"auto|{lang}"},
+            timeout=15,
+        )
+        d = r.json()
+        if d.get("responseStatus") == 200:
+            txt = d["responseData"]["translatedText"]
+            suffix = "\n⚠️ Faqat 500 belgi tarjima qilindi (MyMemory chegarasi)" if len(query) > 500 else ""
+            return txt + suffix
+        raise ValueError(d.get("responseMessage", "MyMemory xatosi"))
+    except Exception as mm_err:
+        logger.error(f"translate mymemory xato: {mm_err}")
+        raise RuntimeError("Tarjima amalga oshmadi. Keyinroq urinib ko'ring.")
 
 @app.post("/api/translate")
 @limiter.limit("20/minute")
 async def translate(request: Request):
     body = await request.json()
-    lines = body.get("text", "").strip().split("\n")
-    query = lines[0].strip()
-    lang  = lines[1].strip() if len(lines) > 1 else "en"
+    raw = body.get("text", "").strip()
+    if not raw:
+        return JSONResponse({"result": "❌ Matn kiriting.\n\nFormat:\nTarjima qilinadigan matn\nen  (til kodi — ixtiyoriy, default: en)"})
+
+    lines = raw.split("\n")
+    # If last line is a short token without spaces → treat as lang code
+    last = lines[-1].strip()
+    if len(lines) >= 2 and last and len(last) <= 7 and " " not in last:
+        lang = _LANG_ALIASES.get(last.lower(), last.lower())
+        query = "\n".join(lines[:-1]).strip()
+    else:
+        lang = "en"
+        query = raw
+
+    if not query:
+        return JSONResponse({"result": "❌ Matn kiriting."})
+
+    if len(query) > 4500:
+        query = query[:4500]
+
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get("https://api.mymemory.translated.net/get",
-                                  params={"q": query, "langpair": f"uz|{lang}"})
-            d = r.json()
-            if d.get("responseStatus") == 200:
-                return JSONResponse({"result": f"🌐 uz → {lang}\n\n{d['responseData']['translatedText']}"})
-            raise Exception(d.get("responseMessage", "Xatolik"))
+        loop = asyncio.get_event_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _do_translate, query, lang),
+            timeout=20.0,
+        )
+        logger.info(f"translate: {len(query)} belgi → {lang}")
+        return JSONResponse({"result": f"🌐 → {lang}\n\n{result}"})
+    except asyncio.TimeoutError:
+        return JSONResponse({"result": "❌ Tarjima vaqti tugadi (20s). Matnni qisqartiring."})
     except Exception as e:
-        return JSONResponse({"result": f"❌ {str(e)}\n\nFormat: 1-qatorda matn, 2-qatorda til (en, ru, tr...)"})
+        return JSONResponse({"result": f"❌ {e}"})
 
 # ─── Wikipedia (proxy) ────────────────────────────────────────────────────────
 

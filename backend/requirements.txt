@@ -16,3 +16,4 @@ reportlab
 openpyxl
 qrcode[pil]
 python-dateutil
+deep-translator
