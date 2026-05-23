@@ -10,7 +10,7 @@
 
 "use strict";
 
-const { useState: u_S2, useEffect: u_E2, useCallback: u_C2 } = React;
+const { useState: u_S2, useCallback: u_C2 } = React;
 
 // ─── Plan Configuration ───────────────────────────────────────────
 // ✅ FIX: Single source of truth — fixes price mismatch bug!
@@ -779,7 +779,7 @@ function ProfilePage({ t, accent, lang, setLang, currentPlan, onGoTo, user }) {
                 {t.upgradeToPremium}
               </div>
               <div style={{ fontSize: 11.5, opacity: 0.9, marginTop: 1 }}>
-                Cheksiz AI · Rasm · Audio
+                {t.cheksizAI}
               </div>
             </div>
             <svg
@@ -1086,7 +1086,7 @@ function PaymentSheet({ t, planId, accent, onClose, onSuccess }) {
               textAlign: "center",
             }}
           >
-            {method} orqali to'lov amalga oshirilmoqda...
+            {t.paymentProcessMethod ? t.paymentProcessMethod.replace("{method}", method) : `${method} orqali to'lov amalga oshirilmoqda...`}
           </div>
         </div>
       )}

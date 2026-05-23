@@ -12,7 +12,6 @@
 
 const {
   useState: u_S2,
-  useEffect: u_E2,
   useCallback: u_C2
 } = React;
 
@@ -673,7 +672,7 @@ function ProfilePage({
       opacity: 0.9,
       marginTop: 1
     }
-  }, "Cheksiz AI \xB7 Rasm \xB7 Audio")), /*#__PURE__*/React.createElement("svg", {
+  }, t.cheksizAI)), /*#__PURE__*/React.createElement("svg", {
     "aria-hidden": "true",
     width: "14",
     height: "14",
@@ -931,7 +930,7 @@ function PaymentSheet({
       fontSize: 12,
       textAlign: "center"
     }
-  }, method, " orqali to'lov amalga oshirilmoqda...")), step === "success" && /*#__PURE__*/React.createElement("div", {
+  }, t.paymentProcessMethod ? t.paymentProcessMethod.replace("{method}", method) : `${method} orqali to'lov amalga oshirilmoqda...`)), step === "success" && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: "14px 0 0",
       display: "flex",

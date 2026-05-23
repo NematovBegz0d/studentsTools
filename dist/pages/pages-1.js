@@ -1,10 +1,11 @@
+"use strict";
+
 // EduBot — Pages
 // HomePage, FreePage, PremiumPage, PlansPage, ProfilePage, PaymentSheet
 
 const {
   useState: u_S,
   useEffect: u_E,
-  useRef: u_R,
   useMemo: u_M
 } = React;
 
@@ -95,6 +96,7 @@ function HomePage({
     }
   }, firstName, " \uD83D\uDC4B")), /*#__PURE__*/React.createElement("button", {
     className: "press",
+    type: "button",
     style: {
       width: 40,
       height: 40,
@@ -444,9 +446,13 @@ function HomePage({
     }
   }, t.activities.map((a, i) => {
     const fIdx = FREE_SERVICES.findIndex(s => s.id === a.id);
-    const svc = FREE_SERVICES[fIdx];
-    const meta = t.s[a.id];
+    const isPremium = fIdx < 0;
+    const svc = isPremium ? PREMIUM_SERVICES.find(s => s.id === a.id) : FREE_SERVICES[fIdx];
+    const meta = isPremium ? t.p[a.id] : t.s[a.id];
     if (!svc || !meta) return null;
+    const catColor = isPremium ? PREMIUM_COLOR : CAT_COLOR[svc.cat] || '#a78bfa';
+    const bg = isPremium ? 'rgba(245,158,11,0.16)' : `${catColor}1f`;
+    const border = isPremium ? '0.5px solid rgba(245,158,11,0.30)' : `0.5px solid ${catColor}33`;
     return /*#__PURE__*/React.createElement("div", {
       key: i,
       style: {
@@ -463,8 +469,8 @@ function HomePage({
         width: 36,
         height: 36,
         borderRadius: 10,
-        background: `${CAT_COLOR[svc.cat] || '#a78bfa'}1f`,
-        border: `0.5px solid ${CAT_COLOR[svc.cat] || '#a78bfa'}33`,
+        background: bg,
+        border: border,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center'
@@ -472,7 +478,7 @@ function HomePage({
     }, /*#__PURE__*/React.createElement(Icon, {
       name: svc.id,
       size: 18,
-      color: CAT_COLOR[svc.cat] || '#a78bfa',
+      color: catColor,
       strokeWidth: 1.8
     })), /*#__PURE__*/React.createElement("div", {
       style: {

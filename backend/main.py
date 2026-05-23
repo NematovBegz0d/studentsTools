@@ -18,6 +18,9 @@ import httpx
 import sys
 from datetime import datetime
 
+import database as db
+import payment as pay
+
 # ─── Config ──────────────────────────────────────────────────────────────────
 
 BOT_TOKEN   = os.environ.get("BOT_TOKEN", "")
@@ -67,6 +70,14 @@ def get_rembg_session():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("EduBot Backend ishga tushmoqda...")
+
+    # ── Ma'lumotlar bazasini ishga tushirish ──
+    try:
+        await db.init_db()
+        logger.info("SQLite DB ishga tushdi")
+    except Exception as e:
+        logger.error(f"DB init xatosi: {e}")
+
     domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
     if BOT_TOKEN and domain:
         webhook_url = f"https://{domain}/webhook"
@@ -162,6 +173,17 @@ async def webhook(request: Request):
     text       = message.get("text", "")
     first_name = message.get("from", {}).get("first_name", "Do'st")
     logger.info(f"Webhook: chat={chat_id} text={text[:30]!r}")
+
+    # Foydalanuvchini DBga saqlash
+    from_user = message.get("from", {})
+    try:
+        await db.upsert_user(
+            user_id=from_user.get("id"),
+            username=from_user.get("username"),
+            first_name=from_user.get("first_name"),
+        )
+    except Exception as e:
+        logger.warning(f"upsert_user xatosi: {e}")
 
     if text.startswith("/start"):
         await tg_send(
@@ -1158,3 +1180,130 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Payment: Create ─────────────────────────────────────────────────────────
+
+@app.post("/api/payment/create")
+@limiter.limit("10/minute")
+async def payment_create(request: Request):
+    """
+    Body: { user_id: int, plan: "monthly" | "yearly" }
+    Returns: { payment_id, checkout_url, amount }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="JSON format noto'g'ri")
+
+    user_id = body.get("user_id")
+    plan    = body.get("plan", "")
+
+    if not user_id or plan not in pay.PLAN_PRICES:
+        raise HTTPException(status_code=400, detail="user_id va plan (monthly/yearly) kerak")
+
+    amount     = pay.PLAN_PRICES[plan]
+    payment_id = pay.new_payment_id()
+
+    try:
+        await db.create_payment(payment_id, int(user_id), plan, amount)
+    except Exception as e:
+        logger.error(f"DB create_payment xatosi: {e}")
+        raise HTTPException(status_code=500, detail="To'lov yaratishda xatolik")
+
+    checkout_url = pay.build_checkout_url(payment_id, plan)
+    logger.info(f"To'lov yaratildi: {payment_id} user={user_id} plan={plan}")
+    return {"payment_id": payment_id, "checkout_url": checkout_url, "amount": amount}
+
+
+# ─── Payment: Payme RPC callback ──────────────────────────────────────────────
+
+@app.post("/api/payment/payme")
+async def payment_payme(request: Request):
+    """Payme JSON-RPC 2.0 callback endpoint."""
+    authorization = request.headers.get("Authorization", "")
+    if not pay.verify_payme_auth(authorization):
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"code": -32504, "message": {"uz": "Ruxsat yo'q", "ru": "Доступ запрещён", "en": "Unauthorized"}}},
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            content={"error": {"code": pay.PaymeError.PARSE_ERROR, "message": {"uz": "JSON xatosi", "ru": "Ошибка JSON", "en": "Parse error"}}}
+        )
+
+    rpc_id = body.get("id", 1)
+    method = body.get("method", "")
+    params = body.get("params", {})
+
+    db_fns = {
+        "get_payment":          db.get_payment,
+        "get_payment_by_payme": db.get_payment_by_payme,
+        "confirm_payment":      db.confirm_payment,
+        "cancel_payment":       db.cancel_payment,
+    }
+
+    result = await pay.handle_rpc(method, params, db_fns)
+    return JSONResponse({"jsonrpc": "2.0", "id": rpc_id, **result})
+
+
+# ─── Payment: Status ──────────────────────────────────────────────────────────
+
+@app.get("/api/payment/status/{payment_id}")
+@limiter.limit("30/minute")
+async def payment_status(request: Request, payment_id: str):
+    """
+    Returns: { status: "pending" | "paid" | "cancelled", plan, amount }
+    """
+    payment = await db.get_payment(payment_id)
+    if not payment:
+        raise HTTPException(status_code=404, detail="To'lov topilmadi")
+    return {
+        "status":   payment["status"],
+        "plan":     payment["plan"],
+        "amount":   payment["amount"],
+        "paid_at":  payment.get("completed_at"),
+    }
+
+
+# ─── User: Plan info ──────────────────────────────────────────────────────────
+
+@app.get("/api/user/{user_id}/plan")
+@limiter.limit("30/minute")
+async def user_plan(request: Request, user_id: int):
+    """
+    Returns: { plan, plan_until, is_premium, usage_count }
+    """
+    user = await db.get_user(user_id)
+    if not user:
+        # Yangi foydalanuvchi — free plan
+        return {"plan": "free", "plan_until": None, "is_premium": False, "usage_count": 0}
+    premium = await db.is_premium(user_id)
+    return {
+        "plan":        user["plan"],
+        "plan_until":  user["plan_until"],
+        "is_premium":  premium,
+        "usage_count": user["usage_count"],
+    }
+
+
+# ─── Admin: Stats ─────────────────────────────────────────────────────────────
+
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+
+@app.get("/api/stats")
+async def admin_stats(request: Request):
+    """
+    Bearer token bilan himoyalangan admin statistikasi.
+    Header: Authorization: Bearer <ADMIN_TOKEN>
+    """
+    if ADMIN_TOKEN:
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer ") or auth[7:] != ADMIN_TOKEN:
+            raise HTTPException(status_code=403, detail="Ruxsat yo'q")
+    stats = await db.get_stats()
+    stats["uptime_seconds"] = int(time.time() - _start_time)
+    return stats

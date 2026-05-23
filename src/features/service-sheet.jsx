@@ -453,7 +453,7 @@ async function copyToClipboard(text) {
     document.execCommand("copy");
     document.body.removeChild(el);
     return true;
-  } catch {
+  } catch (e) {
     return false;
   }
 }

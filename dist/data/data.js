@@ -1,3 +1,5 @@
+"use strict";
+
 // EduBot — services catalog + i18n strings
 // 28 free services + 10 premium AI services
 
@@ -389,11 +391,13 @@ const I18N = {
     settingsHelp: 'Yordam',
     upgradeToPremium: 'Premiumga o\'tish',
     logout: 'Chiqish',
+    cheksizAI: 'Cheksiz AI · Rasm · Audio',
     // Payment flow
     paymentTitle: 'To\'lov',
     paymentChoose: 'To\'lov usulini tanlang',
     paymentPay: 'To\'lash',
     paymentProcessing: 'To\'lov amalga oshirilmoqda...',
+    paymentProcessMethod: '{method} orqali to\'lov amalga oshirilmoqda...',
     paymentSuccess: 'To\'lov muvaffaqiyatli!',
     paymentSuccessSub: 'Premium tarif faollashtirildi',
     paymentDone: 'Tayyor',
@@ -656,10 +660,12 @@ const I18N = {
     settingsHelp: 'Помощь',
     upgradeToPremium: 'Перейти на Premium',
     logout: 'Выйти',
+    cheksizAI: 'Безлимитный AI · Фото · Аудио',
     paymentTitle: 'Оплата',
     paymentChoose: 'Выберите способ оплаты',
     paymentPay: 'Оплатить',
     paymentProcessing: 'Идёт оплата...',
+    paymentProcessMethod: 'Оплата производится через {method}...',
     paymentSuccess: 'Оплата прошла!',
     paymentSuccessSub: 'Premium активирован',
     paymentDone: 'Готово',
@@ -919,10 +925,12 @@ const I18N = {
     settingsHelp: 'Help',
     upgradeToPremium: 'Upgrade to Premium',
     logout: 'Log out',
+    cheksizAI: 'Unlimited AI · Image · Audio',
     paymentTitle: 'Payment',
     paymentChoose: 'Choose payment method',
     paymentPay: 'Pay',
     paymentProcessing: 'Processing payment...',
+    paymentProcessMethod: 'Payment is being processed via {method}...',
     paymentSuccess: 'Payment successful!',
     paymentSuccessSub: 'Premium plan activated',
     paymentDone: 'Done',

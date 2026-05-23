@@ -16,3 +16,4 @@ openpyxl
 qrcode[pil]
 matplotlib
 numpy
+python-dateutil

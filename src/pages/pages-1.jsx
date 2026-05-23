@@ -1,7 +1,7 @@
 // EduBot — Pages
 // HomePage, FreePage, PremiumPage, PlansPage, ProfilePage, PaymentSheet
 
-const { useState: u_S, useEffect: u_E, useRef: u_R, useMemo: u_M } = React;
+const { useState: u_S, useEffect: u_E, useMemo: u_M } = React;
 
 // ─────────────────────────────────────────────────────────────
 // HOME
@@ -48,7 +48,7 @@ function HomePage({ t, accent, cardStyle, onOpenService, onGoTo, user }) {
           </div>
         </div>
         {/* notif bell */}
-        <button className="press" style={{
+        <button className="press" type="button" style={{
           width: 40, height: 40, borderRadius: 12,
           background: 'rgba(255,255,255,0.05)',
           border: '0.5px solid rgba(255,255,255,0.08)',
@@ -238,9 +238,17 @@ function HomePage({ t, accent, cardStyle, onOpenService, onGoTo, user }) {
       <div style={{ padding: '0 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {t.activities.map((a, i) => {
           const fIdx = FREE_SERVICES.findIndex(s => s.id === a.id);
-          const svc = FREE_SERVICES[fIdx];
-          const meta = t.s[a.id];
+          const isPremium = fIdx < 0;
+          const svc = isPremium
+            ? PREMIUM_SERVICES.find(s => s.id === a.id)
+            : FREE_SERVICES[fIdx];
+          const meta = isPremium ? t.p[a.id] : t.s[a.id];
           if (!svc || !meta) return null;
+
+          const catColor = isPremium ? PREMIUM_COLOR : (CAT_COLOR[svc.cat] || '#a78bfa');
+          const bg = isPremium ? 'rgba(245,158,11,0.16)' : `${catColor}1f`;
+          const border = isPremium ? '0.5px solid rgba(245,158,11,0.30)' : `0.5px solid ${catColor}33`;
+
           return (
             <div key={i} style={{
               display: 'flex', alignItems: 'center', gap: 12,
@@ -250,11 +258,11 @@ function HomePage({ t, accent, cardStyle, onOpenService, onGoTo, user }) {
             }}>
               <div style={{
                 width: 36, height: 36, borderRadius: 10,
-                background: `${CAT_COLOR[svc.cat] || '#a78bfa'}1f`,
-                border: `0.5px solid ${(CAT_COLOR[svc.cat] || '#a78bfa')}33`,
+                background: bg,
+                border: border,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
-                <Icon name={svc.id} size={18} color={CAT_COLOR[svc.cat] || '#a78bfa'} strokeWidth={1.8} />
+                <Icon name={svc.id} size={18} color={catColor} strokeWidth={1.8} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ color: '#fff', fontSize: 13.5, fontWeight: 600 }}>{meta.name}</div>

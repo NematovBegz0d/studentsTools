@@ -58,14 +58,37 @@ class TxState:
 
 def verify_payme_auth(authorization: str) -> bool:
     """Basic auth: Paycom:<key>"""
+    if not authorization or not authorization.strip():
+        return False
     try:
-        encoded = authorization.split(" ", 1)[1]
+        parts = authorization.split(" ", 1)
+        if len(parts) < 2:
+            return False
+        encoded = parts[1].strip()
         decoded = base64.b64decode(encoded).decode()
+        if ":" not in decoded:
+            return False
         _, key = decoded.split(":", 1)
         expected = PAYME_TEST_KEY if PAYME_TEST else PAYME_KEY
+        if not expected:
+            return False
         return key == expected
     except Exception:
         return False
+
+
+def _parse_dt_ms(dt_str: str) -> int:
+    """Safely parse SQLite datetime string to milliseconds timestamp.
+    Handles both 'YYYY-MM-DD HH:MM:SS' (SQLite default) and 'YYYY-MM-DDTHH:MM:SS' (ISO 8601)."""
+    if not dt_str:
+        return int(time.time() * 1000)
+    try:
+        # Normalize: replace T separator with space for uniform parsing
+        normalized = dt_str[:19].replace("T", " ")
+        parsed = time.strptime(normalized, "%Y-%m-%d %H:%M:%S")
+        return int(time.mktime(parsed) * 1000)
+    except Exception:
+        return int(time.time() * 1000)
 
 
 # ─── Checkout URL ─────────────────────────────────────────────────────────────
@@ -240,7 +263,7 @@ async def _check_transaction(params: dict, db_fns: dict) -> dict:
     }
     state    = status_map.get(payment["status"], TxState.PENDING)
     now_ms   = int(time.time() * 1000)
-    created  = int(time.mktime(time.strptime(payment["created_at"][:19], "%Y-%m-%dT%H:%M:%S")) * 1000)
+    created  = _parse_dt_ms(payment["created_at"])
     performed = now_ms if payment["status"] == "paid"      else 0
     cancelled  = now_ms if payment["status"] == "cancelled" else 0
 
