@@ -19,6 +19,7 @@ import zipfile
 import tempfile
 import httpx
 import sys
+from urllib.parse import quote as url_quote
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
@@ -256,60 +257,120 @@ async def send_file(
 
 # ─── PDF: Merge ───────────────────────────────────────────────────────────────
 
+_MERGEPDF_MAX_FILES = 30
+
+
+def _do_mergepdf(data_list: list) -> tuple:
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    page_count = 0
+    for data in data_list:
+        if data[:4] != b"%PDF":
+            raise ValueError("Faqat PDF fayllar qabul qilinadi")
+        reader = PdfReader(io.BytesIO(data))
+        for page in reader.pages:
+            writer.add_page(page)
+            page_count += 1
+    out = io.BytesIO()
+    writer.write(out)
+    info = f"{len(data_list)} fayl, {page_count} sahifa"
+    return out.getvalue(), info, page_count
+
+
 @app.post("/api/mergepdf")
 @limiter.limit("10/minute")
 async def merge_pdf(request: Request, files: List[UploadFile] = File(...)):
-    t0 = time.time()
     try:
-        from pypdf import PdfReader, PdfWriter
-        writer = PdfWriter()
+        if len(files) > _MERGEPDF_MAX_FILES:
+            raise HTTPException(status_code=400, detail=f"Maksimal {_MERGEPDF_MAX_FILES} fayl")
+        data_list = []
         total = 0
         for f in files:
             data = await f.read()
             total += len(data)
             if total > MAX_FILE_BYTES * 3:
                 raise HTTPException(status_code=413, detail="Fayllar jami hajmi juda katta")
-            reader = PdfReader(io.BytesIO(data))
-            for page in reader.pages:
-                writer.add_page(page)
-        out = io.BytesIO()
-        writer.write(out)
-        logger.info(f"mergepdf: {len(files)} fayl, {time.time()-t0:.1f}s")
-        return Response(content=out.getvalue(), media_type="application/pdf",
-                        headers={"Content-Disposition": "attachment; filename=merged.pdf"})
+            data_list.append(data)
+        loop = asyncio.get_event_loop()
+        try:
+            out_bytes, info, _ = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_mergepdf, data_list),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="PDF birlashtirish vaqti tugadi")
+        logger.info(f"mergepdf: {info}")
+        return Response(
+            content=out_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=merged.pdf",
+                "X-Info": info,
+            },
+        )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"mergepdf xato: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="PDF birlashtirish xato")
 
 # ─── PDF: Split ───────────────────────────────────────────────────────────────
+
+_SPLITPDF_MAX_PAGES = 200
+
+
+def _do_splitpdf(data: bytes) -> tuple:
+    from pypdf import PdfReader, PdfWriter
+
+    if data[:4] != b"%PDF":
+        raise ValueError("PDF fayl emas")
+    reader = PdfReader(io.BytesIO(data))
+    n = len(reader.pages)
+    if n == 0:
+        raise ValueError("PDF sahifasiz")
+    if n > _SPLITPDF_MAX_PAGES:
+        raise ValueError(f"PDF {n} sahifa — maksimal {_SPLITPDF_MAX_PAGES}")
+    zf_buf = io.BytesIO()
+    with zipfile.ZipFile(zf_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, page in enumerate(reader.pages, 1):
+            w = PdfWriter()
+            w.add_page(page)
+            pb = io.BytesIO()
+            w.write(pb)
+            zf.writestr(f"page_{i:03d}.pdf", pb.getvalue())
+    return zf_buf.getvalue(), n
+
 
 @app.post("/api/splitpdf")
 @limiter.limit("10/minute")
 async def split_pdf(request: Request, file: UploadFile = File(...)):
-    t0 = time.time()
     try:
-        from pypdf import PdfReader, PdfWriter
         data = await file.read()
         check_size(data, "/api/splitpdf")
-        reader = PdfReader(io.BytesIO(data))
-        zf_buf = io.BytesIO()
-        with zipfile.ZipFile(zf_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for i, page in enumerate(reader.pages, 1):
-                w = PdfWriter()
-                w.add_page(page)
-                pb = io.BytesIO()
-                w.write(pb)
-                zf.writestr(f"page_{i}.pdf", pb.getvalue())
-        logger.info(f"splitpdf: {len(reader.pages)} sahifa, {time.time()-t0:.1f}s")
-        return Response(content=zf_buf.getvalue(), media_type="application/zip",
-                        headers={"Content-Disposition": "attachment; filename=pages.zip"})
+        loop = asyncio.get_event_loop()
+        try:
+            zip_bytes, n = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_splitpdf, data),
+                timeout=45.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="PDF ajratish vaqti tugadi")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        info = f"{n} sahifa → {n} fayl"
+        logger.info(f"splitpdf: {info}")
+        return Response(
+            content=zip_bytes,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": "attachment; filename=pages.zip",
+                "X-Info": info,
+            },
+        )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"splitpdf xato: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="PDF ajratish xato")
 
 # ─── PDF: Text extraction ─────────────────────────────────────────────────────
 
@@ -2110,11 +2171,22 @@ async def translit(request: Request):
 @limiter.limit("60/minute")
 async def readtime(request: Request):
     body = await request.json()
-    text = body.get("text", "")
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"result": "❌ Matn kiriting"})
     words = len(text.split())
     chars = len(text.replace(" ", ""))
-    mins = max(1, round(words / 200))
-    return JSONResponse({"result": f"📖 {words} so'z · {chars} belgi\n⏱ O'qish vaqti: ~{mins} daqiqa\n(200 so'z/daqiqa hisobida)"})
+    sentences = len(re.findall(r'[.!?]+', text)) or 1
+    paragraphs = len([p for p in text.split("\n") if p.strip()])
+    # O'zbek o'qish tezligi: ~160 so'z/daqiqa
+    wpm = 160
+    mins = max(1, round(words / wpm))
+    return JSONResponse({"result": (
+        f"📖 {words} so'z · {chars} belgi\n"
+        f"📝 {sentences} gap · {paragraphs} paragraf\n"
+        f"⏱ O'qish vaqti: ~{mins} daqiqa\n"
+        f"({wpm} so'z/daqiqa hisobida)"
+    )})
 
 # ─── Deadline ─────────────────────────────────────────────────────────────────
 
@@ -2599,17 +2671,23 @@ async def translate(request: Request):
 @limiter.limit("20/minute")
 async def wiki(request: Request):
     body = await request.json()
-    q = body.get("text", "").strip()
+    q = (body.get("text") or "").strip()
+    if not q:
+        return JSONResponse({"result": "❌ Qidiruv so'zini kiriting"})
+    encoded = url_quote(q, safe="")
     async with httpx.AsyncClient(timeout=15) as client:
         for lang in ["uz", "ru", "en"]:
             try:
-                r = await client.get(f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{q}")
+                r = await client.get(
+                    f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}"
+                )
                 if r.status_code == 200:
                     d = r.json()
                     if d.get("extract"):
                         url = d.get("content_urls", {}).get("desktop", {}).get("page", "")
                         result = f"📖 {d['title']}\n\n{d['extract']}"
-                        if url: result += f"\n\n🔗 {url}"
+                        if url:
+                            result += f"\n\n🔗 {url}"
                         return JSONResponse({"result": result})
             except Exception:
                 continue
@@ -2621,23 +2699,30 @@ async def wiki(request: Request):
 @limiter.limit("20/minute")
 async def books(request: Request):
     body = await request.json()
-    q = body.get("text", "").strip()
+    q = (body.get("text") or "").strip()
+    if not q:
+        return JSONResponse({"result": "❌ Kitob nomi yoki muallifni kiriting"})
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get("https://openlibrary.org/search.json",
-                                  params={"q": q, "limit": 8, "fields": "title,author_name,first_publish_year"})
+            r = await client.get(
+                "https://openlibrary.org/search.json",
+                params={"q": q, "limit": 8, "fields": "title,author_name,first_publish_year"},
+            )
             d = r.json()
             if not d.get("docs"):
                 return JSONResponse({"result": "📚 Kitob topilmadi"})
             lines = []
             for i, b in enumerate(d["docs"], 1):
                 line = f"{i}. {b['title']}"
-                if b.get("author_name"): line += f"\n   ✍️ {b['author_name'][0]}"
-                if b.get("first_publish_year"): line += f"  📅 {b['first_publish_year']}"
+                if b.get("author_name"):
+                    line += f"\n   ✍️ {b['author_name'][0]}"
+                if b.get("first_publish_year"):
+                    line += f"  📅 {b['first_publish_year']}"
                 lines.append(line)
-            return JSONResponse({"result": f"📚 Natijalar ({d['numFound']} ta):\n\n" + "\n\n".join(lines)})
-    except Exception as e:
-        return JSONResponse({"result": f"❌ Xatolik: {str(e)}"})
+            total = d.get("numFound", len(d["docs"]))
+            return JSONResponse({"result": f"📚 Natijalar ({total} ta):\n\n" + "\n\n".join(lines)})
+    except Exception:
+        return JSONResponse({"result": "❌ Kitob qidirishda xato. Keyinroq urinib ko'ring."})
 
 # ─── ZIP ──────────────────────────────────────────────────────────────────────
 
@@ -2647,21 +2732,37 @@ async def make_zip(request: Request, files: List[UploadFile] = File(...)):
     try:
         buf = io.BytesIO()
         total = 0
-        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        count = 0
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
             for f in files:
                 data = await f.read()
                 total += len(data)
                 if total > MAX_FILE_BYTES * 3:
                     raise HTTPException(status_code=413, detail="Fayllar jami hajmi juda katta")
-                zf.writestr(f.filename or "file", data)
-        return Response(content=buf.getvalue(), media_type="application/zip",
-                        headers={"Content-Disposition": "attachment; filename=archive.zip"})
+                # Prevent path traversal in filenames
+                safe_name = os.path.basename(f.filename or "file") or "file"
+                zf.writestr(safe_name, data)
+                count += 1
+        info = f"{count} fayl → archive.zip"
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": "attachment; filename=archive.zip",
+                "X-Info": info,
+            },
+        )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="ZIP yaratish xato")
 
 # ─── Unzip ────────────────────────────────────────────────────────────────────
+
+_UNZIP_MAX_FILES       = 500
+_UNZIP_MAX_UNCOMP_MB   = 200
+_UNZIP_MAX_RATIO       = 50   # compressed:uncompressed ratio limit
+
 
 @app.post("/api/unzip")
 @limiter.limit("20/minute")
@@ -2670,23 +2771,46 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
         data = await file.read()
         check_size(data, "/api/unzip")
         zf = zipfile.ZipFile(io.BytesIO(data))
-        names = [n for n in zf.namelist() if not n.endswith("/")]
-        if not names:
-            raise HTTPException(status_code=400, detail="ZIP fayl bo'sh")
+        all_infos = [i for i in zf.infolist() if not i.filename.endswith("/")]
+        if not all_infos:
+            raise HTTPException(status_code=400, detail="ZIP ichida fayl yo'q")
+
+        # ZIP bomb checks
+        if len(all_infos) > _UNZIP_MAX_FILES:
+            raise HTTPException(status_code=400,
+                detail=f"ZIP ichida {len(all_infos)} fayl — maksimal {_UNZIP_MAX_FILES}")
+        total_uncomp = sum(i.file_size for i in all_infos)
+        if total_uncomp > _UNZIP_MAX_UNCOMP_MB * 1024 * 1024:
+            raise HTTPException(status_code=400,
+                detail=f"Siqilmagan hajm {total_uncomp // (1024*1024)} MB — maksimal {_UNZIP_MAX_UNCOMP_MB} MB")
+        if len(data) > 0 and total_uncomp / len(data) > _UNZIP_MAX_RATIO:
+            raise HTTPException(status_code=400, detail="ZIP bomb aniqlandi — fayl xavfsiz emas")
+
+        names = [i.filename for i in all_infos]
         if len(names) == 1:
             content = zf.read(names[0])
-            return Response(content=content, media_type="application/octet-stream",
-                            headers={"Content-Disposition": f"attachment; filename={names[0]}"})
+            safe_name = os.path.basename(names[0]) or "file"
+            return Response(
+                content=content,
+                media_type="application/octet-stream",
+                headers={"Content-Disposition": f"attachment; filename={safe_name}"},
+            )
         out = io.BytesIO()
-        with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zout:
-            for name in names:
-                zout.writestr(name, zf.read(name))
-        return Response(content=out.getvalue(), media_type="application/zip",
-                        headers={"Content-Disposition": "attachment; filename=extracted.zip"})
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+            for info in all_infos:
+                zout.writestr(info.filename, zf.read(info.filename))
+        return Response(
+            content=out.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": "attachment; filename=extracted.zip",
+                "X-Info": f"{len(names)} fayl",
+            },
+        )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="ZIP ochish xato")
 
 
 # ─── Payment: Create ─────────────────────────────────────────────────────────
