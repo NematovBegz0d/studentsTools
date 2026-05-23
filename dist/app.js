@@ -11,12 +11,8 @@
 
 "use strict";
 
-const {
-  useState,
-  useEffect,
-  useCallback,
-  useReducer
-} = React;
+// useState, useEffect, useCallback, useMemo declared in components.js (same global scope)
+const useReducer = React.useReducer;
 
 // ─── Telegram SDK References ──────────────────────────────────────
 const IN_TELEGRAM = !!window.Telegram?.WebApp?.initData;
