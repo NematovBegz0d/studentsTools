@@ -17,6 +17,7 @@ import asyncio
 import secrets
 import zipfile
 import tempfile
+import functools
 import httpx
 import sys
 from urllib.parse import quote as url_quote
@@ -70,8 +71,13 @@ def get_rembg_session():
     global _rembg_session
     if _rembg_session is None:
         from rembg import new_session
-        _rembg_session = new_session("u2netp")
-        logger.info("rembg session yaratildi (u2netp)")
+        model = os.environ.get("REMBG_MODEL", "isnet-general-use")
+        try:
+            _rembg_session = new_session(model)
+            logger.info(f"rembg session yaratildi ({model})")
+        except Exception:
+            _rembg_session = new_session("u2netp")
+            logger.info("rembg session yaratildi (u2netp fallback)")
     return _rembg_session
 
 # ─── Lifespan ─────────────────────────────────────────────────────────────────
@@ -261,21 +267,25 @@ _MERGEPDF_MAX_FILES = 30
 
 
 def _do_mergepdf(data_list: list) -> tuple:
-    from pypdf import PdfReader, PdfWriter
+    import fitz
 
-    writer = PdfWriter()
+    out_doc = fitz.open()
     page_count = 0
     for data in data_list:
         if data[:4] != b"%PDF":
             raise ValueError("Faqat PDF fayllar qabul qilinadi")
-        reader = PdfReader(io.BytesIO(data))
-        for page in reader.pages:
-            writer.add_page(page)
-            page_count += 1
-    out = io.BytesIO()
-    writer.write(out)
+        src = fitz.open(stream=data, filetype="pdf")
+        if src.is_encrypted:
+            src.close()
+            raise ValueError("Himoyalangan PDF birlashtirish uchun ochib bo'lmadi")
+        out_doc.insert_pdf(src)
+        page_count += len(src)
+        src.close()
+    buf = io.BytesIO()
+    out_doc.save(buf, garbage=4, deflate=True)
+    out_doc.close()
     info = f"{len(data_list)} fayl, {page_count} sahifa"
-    return out.getvalue(), info, page_count
+    return buf.getvalue(), info, page_count
 
 
 @app.post("/api/mergepdf")
@@ -319,45 +329,83 @@ async def merge_pdf(request: Request, files: List[UploadFile] = File(...)):
 _SPLITPDF_MAX_PAGES = 200
 
 
-def _do_splitpdf(data: bytes) -> tuple:
-    from pypdf import PdfReader, PdfWriter
+def _parse_page_ranges(pages_str: str, total: int) -> list:
+    """Parse "1-5,8,10-15" → [0,1,2,3,4,7,9,10,11,12,13,14] (0-indexed).
+    None or empty → all pages."""
+    if not pages_str or not pages_str.strip():
+        return list(range(total))
+    result = set()
+    for part in pages_str.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            result.update(range(int(a) - 1, int(b)))
+        else:
+            result.add(int(part) - 1)
+    return sorted(x for x in result if 0 <= x < total)
+
+
+def _do_splitpdf(data: bytes, page_indices: list) -> tuple:
+    import fitz
 
     if data[:4] != b"%PDF":
         raise ValueError("PDF fayl emas")
-    reader = PdfReader(io.BytesIO(data))
-    n = len(reader.pages)
+    doc = fitz.open(stream=data, filetype="pdf")
+    n = doc.page_count
     if n == 0:
+        doc.close()
         raise ValueError("PDF sahifasiz")
-    if n > _SPLITPDF_MAX_PAGES:
-        raise ValueError(f"PDF {n} sahifa — maksimal {_SPLITPDF_MAX_PAGES}")
+    if len(page_indices) > _SPLITPDF_MAX_PAGES:
+        doc.close()
+        raise ValueError(f"Maksimal {_SPLITPDF_MAX_PAGES} sahifa ajratish mumkin")
+
     zf_buf = io.BytesIO()
     with zipfile.ZipFile(zf_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for i, page in enumerate(reader.pages, 1):
-            w = PdfWriter()
-            w.add_page(page)
+        pad = len(str(max(page_indices) + 1))
+        for i in page_indices:
+            out = fitz.open()
+            out.insert_pdf(doc, from_page=i, to_page=i)
             pb = io.BytesIO()
-            w.write(pb)
-            zf.writestr(f"page_{i:03d}.pdf", pb.getvalue())
-    return zf_buf.getvalue(), n
+            out.save(pb, garbage=4, deflate=True)
+            out.close()
+            zf.writestr(f"page_{str(i + 1).zfill(pad)}.pdf", pb.getvalue())
+    doc.close()
+    return zf_buf.getvalue(), len(page_indices)
 
 
 @app.post("/api/splitpdf")
 @limiter.limit("10/minute")
-async def split_pdf(request: Request, file: UploadFile = File(...)):
+async def split_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    pages: Optional[str] = Form(None),
+):
     try:
         data = await file.read()
         check_size(data, "/api/splitpdf")
+        import fitz as _fitz_check
+        doc_check = _fitz_check.open(stream=data, filetype="pdf")
+        total_n = doc_check.page_count
+        doc_check.close()
+        try:
+            indices = _parse_page_ranges(pages, total_n)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Sahifa oralig'i noto'g'ri. Format: 1-5,8,10-15")
+        if not indices:
+            raise HTTPException(status_code=400, detail="Sahifalar ro'yxati bo'sh")
         loop = asyncio.get_event_loop()
         try:
-            zip_bytes, n = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_splitpdf, data),
+            zip_bytes, count = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_splitpdf, data, indices),
                 timeout=45.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail="PDF ajratish vaqti tugadi")
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        info = f"{n} sahifa → {n} fayl"
+        info = f"{count} sahifa → {count} fayl"
         logger.info(f"splitpdf: {info}")
         return Response(
             content=zip_bytes,
@@ -371,6 +419,64 @@ async def split_pdf(request: Request, file: UploadFile = File(...)):
         raise
     except Exception:
         raise HTTPException(status_code=500, detail="PDF ajratish xato")
+
+
+# ─── PDF: Page selection ──────────────────────────────────────────────────────
+
+@app.post("/api/pdfpages")
+@limiter.limit("10/minute")
+async def pdf_select_pages(
+    request: Request,
+    file: UploadFile = File(...),
+    pages: str = Form(...),
+):
+    """Extract a subset of pages into a new PDF. pages = '1,3,5-10,15'"""
+    try:
+        data = await file.read()
+        check_size(data, "/api/pdfpages")
+        if data[:4] != b"%PDF":
+            raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+        import fitz as _fitz
+        doc = _fitz.open(stream=data, filetype="pdf")
+        total_n = doc.page_count
+        try:
+            indices = _parse_page_ranges(pages, total_n)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Sahifa oralig'i noto'g'ri. Format: 1-5,8,10")
+        if not indices:
+            raise HTTPException(status_code=400, detail="Sahifalar ro'yxati bo'sh")
+
+        def _extract():
+            out = _fitz.open()
+            for i in indices:
+                out.insert_pdf(doc, from_page=i, to_page=i)
+            buf = io.BytesIO()
+            out.save(buf, garbage=4, deflate=True)
+            out.close()
+            doc.close()
+            return buf.getvalue()
+
+        loop = asyncio.get_event_loop()
+        try:
+            out_bytes = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _extract),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="Sahifa ajratish vaqti tugadi")
+        info = f"{len(indices)} sahifa tanlandi (jami {total_n} dan)"
+        return Response(
+            content=out_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=selected.pdf",
+                "X-Info": info,
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Sahifa ajratishda xato")
 
 # ─── PDF: Text extraction ─────────────────────────────────────────────────────
 
@@ -401,6 +507,28 @@ def _do_pdftext(data: bytes) -> str:
     doc.close()
 
     result = re.sub(r'\n{3,}', '\n\n', "\n\n".join(parts)).strip()
+
+    if not result:
+        # pdfplumber fallback — jadvalli PDFlar uchun yaxshiroq
+        try:
+            import pdfplumber
+            pb_parts = []
+            with pdfplumber.open(io.BytesIO(data)) as pdf:
+                for i, page in enumerate(pdf.pages[:render_n]):
+                    text = page.extract_text() or ""
+                    tables = page.extract_tables() or []
+                    for table in tables:
+                        text += "\n" + "\n".join(
+                            " | ".join(str(c or "").strip() for c in row)
+                            for row in table if any(c for c in row)
+                        )
+                    if text.strip():
+                        if n > 1:
+                            pb_parts.append(f"── Sahifa {i + 1} ──")
+                        pb_parts.append(text.strip())
+            result = re.sub(r'\n{3,}', '\n\n', "\n\n".join(pb_parts)).strip()
+        except Exception:
+            pass
 
     if not result:
         return ("❌ Matn topilmadi. Bu skanerlangan PDF bo'lishi mumkin — "
@@ -439,43 +567,77 @@ async def pdf_text(request: Request, file: UploadFile = File(...)):
 
 # ─── PDF: Lock ────────────────────────────────────────────────────────────────
 
-def _do_pdflock(data: bytes, password: str) -> tuple:
-    from pypdf import PdfReader, PdfWriter
-    reader = PdfReader(io.BytesIO(data))
-    if reader.is_encrypted:
+def _do_pdflock(data: bytes, user_pwd: str, owner_pwd: str,
+                allow_print: bool, allow_copy: bool, allow_modify: bool) -> tuple:
+    import fitz
+
+    doc = fitz.open(stream=data, filetype="pdf")
+    if doc.is_encrypted:
+        doc.close()
         raise ValueError("PDF allaqachon parol bilan himoyalangan.")
-    n = len(reader.pages)
+    n = doc.page_count
     if n == 0:
+        doc.close()
         raise ValueError("PDF bo'sh (0 sahifa).")
     if n > 200:
+        doc.close()
         raise ValueError(f"PDF {n} sahifa. Maksimal 200 sahifa qabul qilinadi.")
-    writer = PdfWriter()
-    for page in reader.pages:
-        writer.add_page(page)
-    try:
-        writer.encrypt(password, algorithm="AES-256")
-    except TypeError:
-        writer.encrypt(password)  # older pypdf fallback
-    out = io.BytesIO()
-    writer.write(out)
-    info = f"{n} sahifa • AES-256 himoyalangan"
-    return out.getvalue(), info
+
+    perm = fitz.PDF_PERM_ACCESSIBILITY
+    if allow_print:
+        perm |= fitz.PDF_PERM_PRINT | fitz.PDF_PERM_PRINT_HQ
+    if allow_copy:
+        perm |= fitz.PDF_PERM_COPY
+    if allow_modify:
+        perm |= fitz.PDF_PERM_MODIFY | fitz.PDF_PERM_ANNOTATE
+
+    buf = io.BytesIO()
+    doc.save(
+        buf,
+        encryption=fitz.PDF_ENCRYPT_AES_256,
+        user_pw=user_pwd,
+        owner_pw=owner_pwd,
+        permissions=perm,
+        garbage=4,
+        deflate=True,
+    )
+    doc.close()
+
+    perms = []
+    if allow_print:  perms.append("chop")
+    if allow_copy:   perms.append("nusxa")
+    if allow_modify: perms.append("tahrir")
+    perm_str = ", ".join(perms) if perms else "faqat o'qish"
+    info = f"{n} sahifa • AES-256 • {perm_str}"
+    return buf.getvalue(), info
+
 
 @app.post("/api/pdflock")
 @limiter.limit("15/minute")
-async def lock_pdf(request: Request, file: UploadFile = File(...),
-                   password: str = Form("")):
+async def lock_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    password: str = Form(""),
+    allow_print: bool = Form(True),
+    allow_copy: bool = Form(False),
+    allow_modify: bool = Form(False),
+):
     t0 = time.time()
     try:
         data = await file.read()
         check_size(data, "/api/pdflock")
         if data[:4] != b'%PDF':
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
-        pwd = password.strip()[:64] if password.strip() else secrets.token_urlsafe(9)[:12]
+        user_pwd  = password.strip()[:64] if password.strip() else secrets.token_urlsafe(9)[:12]
+        owner_pwd = secrets.token_urlsafe(16)
         loop = asyncio.get_event_loop()
         try:
             out_bytes, info = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_pdflock, data, pwd),
+                loop.run_in_executor(
+                    _converter_pool,
+                    functools.partial(_do_pdflock, data, user_pwd, owner_pwd,
+                                      allow_print, allow_copy, allow_modify),
+                ),
                 timeout=45.0,
             )
         except asyncio.TimeoutError:
@@ -487,7 +649,7 @@ async def lock_pdf(request: Request, file: UploadFile = File(...),
             media_type="application/pdf",
             headers={
                 "Content-Disposition": "attachment; filename=locked.pdf",
-                "X-Password": pwd,
+                "X-Password": user_pwd,
                 "X-Info": info,
             },
         )
@@ -500,7 +662,8 @@ async def lock_pdf(request: Request, file: UploadFile = File(...),
 
 # ─── PDF: Watermark ───────────────────────────────────────────────────────────
 
-def _make_wm_page(pw: float, ph: float, text: str):
+def _make_wm_page(pw: float, ph: float, text: str,
+                   opacity: float = 0.22, angle: int = 42, repeat: bool = True):
     """Create a ReportLab watermark overlay for one (pw×ph) page size."""
     from reportlab.pdfgen import canvas as rl_canvas
     from reportlab.lib.colors import Color
@@ -513,17 +676,18 @@ def _make_wm_page(pw: float, ph: float, text: str):
     c = rl_canvas.Canvas(wm_buf, pagesize=(pw, ph))
     c.saveState()
     c.translate(pw / 2, ph / 2)
-    c.rotate(42)
-    c.setFillColor(Color(0.5, 0.5, 0.5, alpha=0.22))
+    c.rotate(angle)
+    c.setFillColor(Color(0.5, 0.5, 0.5, alpha=max(0.05, min(0.9, opacity))))
     c.setFont("Helvetica-Bold", font_size)
-    # Three diagonal strips for full-page coverage
-    for offset in (-spacing, 0, spacing):
+    offsets = (-spacing, 0, spacing) if repeat else (0,)
+    for offset in offsets:
         c.drawCentredString(0, offset, text)
     c.restoreState()
     c.save()
     return _PR(io.BytesIO(wm_buf.getvalue())).pages[0]
 
-def _do_watermark(data: bytes, wm_text: str) -> tuple:
+def _do_watermark(data: bytes, wm_text: str,
+                  opacity: float = 0.22, angle: int = 42, repeat: bool = True) -> tuple:
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(io.BytesIO(data))
@@ -545,29 +709,41 @@ def _do_watermark(data: bytes, wm_text: str) -> tuple:
         ph = float(page.mediabox.height)
         key = (round(pw), round(ph))
         if key not in wm_cache:
-            wm_cache[key] = _make_wm_page(pw, ph, text)
+            wm_cache[key] = _make_wm_page(pw, ph, text, opacity, angle, repeat)
         page.merge_page(wm_cache[key])
         writer.add_page(page)
 
     out = io.BytesIO()
     writer.write(out)
-    info = f"{n} sahifa • \"{text}\" watermark"
+    info = f"{n} sahifa • \"{text}\" watermark • {int(opacity*100)}% shaffof"
     return out.getvalue(), info
+
 
 @app.post("/api/watermark")
 @limiter.limit("15/minute")
-async def watermark_pdf(request: Request, file: UploadFile = File(...),
-                        text: str = Form("")):
+async def watermark_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    text: str = Form(""),
+    opacity: float = Form(0.22),
+    angle: int = Form(42),
+    repeat: bool = Form(True),
+):
     t0 = time.time()
     try:
         data = await file.read()
         check_size(data, "/api/watermark")
         if data[:4] != b'%PDF':
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+        opacity = max(0.05, min(0.9, opacity))
+        angle   = angle % 360
         loop = asyncio.get_event_loop()
         try:
             out_bytes, info = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_watermark, data, text),
+                loop.run_in_executor(
+                    _converter_pool,
+                    functools.partial(_do_watermark, data, text, opacity, angle, repeat),
+                ),
                 timeout=45.0,
             )
         except asyncio.TimeoutError:
@@ -593,17 +769,23 @@ async def watermark_pdf(request: Request, file: UploadFile = File(...),
 
 _PDF2IMG_MAX_PAGES = 25   # more than enough for presentations & reports
 
-def _do_pdf2img(data: bytes) -> tuple:
-    """
-    PDF → ZIP of PNG images (150 DPI, one file per page).
-    150 DPI = ilovepdf standard. ZIP_STORED because PNG is already compressed.
-    Page-by-page rendering keeps memory usage flat (no full batch in RAM).
-    """
+_PDF2IMG_VALID_DPI = {72, 96, 150, 300}
+_PDF2IMG_VALID_FMT = {"png", "jpeg", "webp"}
+
+
+def _do_pdf2img(data: bytes, dpi: int = 150, fmt: str = "png", quality: int = 85) -> tuple:
+    """PDF → single image or ZIP of images. Single-page → raw image; multi-page → ZIP."""
     import fitz
 
-    doc = fitz.open(stream=data, filetype="pdf")
-    total_pages  = doc.page_count
+    dpi     = dpi if dpi in _PDF2IMG_VALID_DPI else 150
+    fmt     = fmt if fmt in _PDF2IMG_VALID_FMT else "png"
+    quality = max(50, min(95, quality))
+    zoom    = dpi / 72
+    mat     = fitz.Matrix(zoom, zoom)
+    ext     = "jpg" if fmt == "jpeg" else fmt
 
+    doc = fitz.open(stream=data, filetype="pdf")
+    total_pages = doc.page_count
     if total_pages == 0:
         doc.close()
         raise ValueError("PDF bo'sh (0 sahifa).")
@@ -611,39 +793,45 @@ def _do_pdf2img(data: bytes) -> tuple:
     render_n  = min(total_pages, _PDF2IMG_MAX_PAGES)
     truncated = total_pages > _PDF2IMG_MAX_PAGES
 
-    # 150 DPI — matches ilovepdf default (72 pt × zoom = DPI)
-    zoom = 150 / 72          # ≈ 2.083
-    mat  = fitz.Matrix(zoom, zoom)
+    # Single page → return raw image (better UX — direct download, no ZIP)
+    if render_n == 1:
+        pix       = doc[0].get_pixmap(matrix=mat, alpha=False)
+        img_bytes = pix.tobytes(fmt, quality=quality) if fmt != "png" else pix.tobytes("png")
+        doc.close()
+        media = f"image/{fmt}"
+        info  = f"✅ 1 sahifa · {dpi} DPI · {fmt.upper()}"
+        return img_bytes, info, media, f"page_1.{ext}"
 
-    zf_buf     = io.BytesIO()
+    # Multi-page → ZIP
+    padding = len(str(render_n))
+    zf_buf  = io.BytesIO()
     total_size = 0
-    padding    = len(str(render_n))   # zero-padding: "01", "02" … or "1", "2"
-
-    # ZIP_STORED — no redundant compression on already-compressed PNG
-    with zipfile.ZipFile(zf_buf, 'w', zipfile.ZIP_STORED) as zf:
+    zip_mode = zipfile.ZIP_STORED if fmt == "png" else zipfile.ZIP_DEFLATED
+    with zipfile.ZipFile(zf_buf, "w", zip_mode) as zf:
         for i in range(render_n):
-            page      = doc[i]
-            pix       = page.get_pixmap(matrix=mat, alpha=False)
-            png_bytes = pix.tobytes("png")
-            total_size += len(png_bytes)
-            zf.writestr(f"page_{str(i + 1).zfill(padding)}.png", png_bytes)
-            del pix          # free GPU/CPU memory immediately
-
+            pix       = doc[i].get_pixmap(matrix=mat, alpha=False)
+            img_bytes = pix.tobytes(fmt, quality=quality) if fmt != "png" else pix.tobytes("png")
+            total_size += len(img_bytes)
+            zf.writestr(f"page_{str(i + 1).zfill(padding)}.{ext}", img_bytes)
+            del pix
     doc.close()
 
-    avg_kb   = total_size // 1024 // render_n if render_n else 0
-    info_parts = [f"✅ {render_n} sahifa · 150 DPI · PNG · ~{avg_kb} KB/sahifa"]
+    avg_kb     = total_size // 1024 // render_n if render_n else 0
+    info_parts = [f"✅ {render_n} sahifa · {dpi} DPI · {fmt.upper()} · ~{avg_kb} KB/sahifa"]
     if truncated:
-        info_parts.append(
-            f"⚠️ Faqat {_PDF2IMG_MAX_PAGES} sahifa ko'rsatildi "
-            f"(PDF jami {total_pages} sahifa)"
-        )
-    return zf_buf.getvalue(), " · ".join(info_parts)
+        info_parts.append(f"⚠️ Faqat {_PDF2IMG_MAX_PAGES} sahifa (PDF jami {total_pages})")
+    return zf_buf.getvalue(), " · ".join(info_parts), "application/zip", "pages.zip"
 
 
 @app.post("/api/pdf2img")
 @limiter.limit("10/minute")
-async def pdf_to_img(request: Request, file: UploadFile = File(...)):
+async def pdf_to_img(
+    request: Request,
+    file: UploadFile = File(...),
+    dpi: int = Form(150),
+    fmt: str = Form("png"),
+    quality: int = Form(85),
+):
     t0 = time.time()
     try:
         data = await file.read()
@@ -651,21 +839,23 @@ async def pdf_to_img(request: Request, file: UploadFile = File(...)):
 
         loop = asyncio.get_event_loop()
         try:
-            zip_bytes, info = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_pdf2img, data),
-                timeout=90.0,   # 25 pages × ~3s/page
+            content, info, media_type, filename = await asyncio.wait_for(
+                loop.run_in_executor(
+                    _converter_pool,
+                    functools.partial(_do_pdf2img, data, dpi, fmt, quality),
+                ),
+                timeout=90.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=408,
-                detail=f"Konversiya 90 soniyadan oshdi. "
-                       f"PDF juda katta — maksimal {_PDF2IMG_MAX_PAGES} sahifa.")
+                detail=f"Konversiya 90 soniyadan oshdi — maksimal {_PDF2IMG_MAX_PAGES} sahifa.")
 
-        logger.info(f"pdf2img: {len(data)//1024}KB → {len(zip_bytes)//1024}KB, {time.time()-t0:.1f}s")
+        logger.info(f"pdf2img: {len(data)//1024}KB → {len(content)//1024}KB, {time.time()-t0:.1f}s")
         return Response(
-            content=zip_bytes,
-            media_type="application/zip",
+            content=content,
+            media_type=media_type,
             headers={
-                "Content-Disposition": "attachment; filename=pages.zip",
+                "Content-Disposition": f"attachment; filename={filename}",
                 "X-Info": info,
             },
         )
@@ -678,7 +868,15 @@ async def pdf_to_img(request: Request, file: UploadFile = File(...)):
 
 # ─── PDF: Compress ────────────────────────────────────────────────────────────
 
-def _do_compresspdf(data: bytes) -> tuple:
+_COMPRESSPDF_LEVELS = {
+    "screen":   (52,  96),   # minimal sifat, maksimal siqish
+    "ebook":    (65, 110),   # o'rtacha, ekran uchun
+    "printer":  (82, 150),   # yuqori sifat
+    "prepress": (92, 200),   # maxsus bosib chiqarish
+}
+
+
+def _do_compresspdf(data: bytes, level: str = "ebook") -> tuple:
     import fitz
 
     orig_size = len(data)
@@ -711,13 +909,17 @@ def _do_compresspdf(data: bytes) -> tuple:
     # Only used when PDF has no extractable text.
     result_b = None
     if not is_text_pdf:
-        orig_mb = orig_size / (1024 * 1024)
-        if orig_mb > 5:
-            quality, dpi = 52, 96
-        elif orig_mb > 2:
-            quality, dpi = 62, 110
+        # Level parametri ustunlik qiladi
+        if level in _COMPRESSPDF_LEVELS:
+            quality, dpi = _COMPRESSPDF_LEVELS[level]
         else:
-            quality, dpi = 72, 130
+            orig_mb = orig_size / (1024 * 1024)
+            if orig_mb > 5:
+                quality, dpi = 52, 96
+            elif orig_mb > 2:
+                quality, dpi = 62, 110
+            else:
+                quality, dpi = 72, 130
         zoom = dpi / 72
         mat  = fitz.Matrix(zoom, zoom)
 
@@ -755,17 +957,24 @@ def _do_compresspdf(data: bytes) -> tuple:
 
 @app.post("/api/compresspdf")
 @limiter.limit("10/minute")
-async def compress_pdf(request: Request, file: UploadFile = File(...)):
+async def compress_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    level: str = Form("ebook"),   # screen | ebook | printer | prepress
+):
     t0 = time.time()
     try:
         data = await file.read()
         check_size(data, "/api/compresspdf")
         if data[:4] != b'%PDF':
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+        if level not in _COMPRESSPDF_LEVELS:
+            level = "ebook"
         loop = asyncio.get_event_loop()
+        fn = functools.partial(_do_compresspdf, data, level)
         try:
             out_bytes, info, saved = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_compresspdf, data),
+                loop.run_in_executor(_converter_pool, fn),
                 timeout=60.0,
             )
         except asyncio.TimeoutError:
@@ -1217,6 +1426,105 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=500,
             detail="Kutilmagan xatolik. Fayl buzilgan yoki qo'llab-quvvatlanmaydi.")
 
+
+# ─── DOCX Edit ────────────────────────────────────────────────────────────────
+
+def _do_docxedit(data: bytes, find: str, replace: str, case_sensitive: bool) -> tuple:
+    """Find-and-replace text in a DOCX file (runs + tables)."""
+    from docx import Document
+    import copy
+
+    doc = Document(io.BytesIO(data))
+    count = 0
+
+    def _replace_in_para(para):
+        nonlocal count
+        full = "".join(r.text for r in para.runs)
+        if case_sensitive:
+            if find not in full:
+                return
+            new_full = full.replace(find, replace)
+            hit = full.count(find)
+        else:
+            import re as _re
+            pattern = _re.compile(_re.escape(find), _re.IGNORECASE)
+            if not pattern.search(full):
+                return
+            hit = len(pattern.findall(full))
+            new_full = pattern.sub(replace, full)
+
+        count += hit
+        # Write replacement into first run, clear the rest
+        if para.runs:
+            para.runs[0].text = new_full
+            for r in para.runs[1:]:
+                r.text = ""
+
+    for para in doc.paragraphs:
+        _replace_in_para(para)
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    _replace_in_para(para)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue(), count
+
+
+@app.post("/api/docxedit")
+@limiter.limit("15/minute")
+async def docx_edit(
+    request: Request,
+    file: UploadFile = File(...),
+    find: str = Form(...),
+    replace: str = Form(...),
+    case_sensitive: bool = Form(False),
+):
+    t0 = time.time()
+    try:
+        data = await file.read()
+        check_size(data, "/api/docxedit")
+
+        if not find:
+            raise HTTPException(status_code=400, detail="'find' bo'sh bo'lmasligi kerak")
+        if len(find) > 500:
+            raise HTTPException(status_code=400, detail="'find' 500 belgidan oshmasligi kerak")
+        if len(replace) > 500:
+            raise HTTPException(status_code=400, detail="'replace' 500 belgidan oshmasligi kerak")
+
+        loop = asyncio.get_event_loop()
+        fn = functools.partial(_do_docxedit, data, find, replace, case_sensitive)
+        out_bytes, count = await asyncio.wait_for(
+            loop.run_in_executor(_converter_pool, fn),
+            timeout=30.0,
+        )
+
+        orig_name = os.path.splitext(file.filename or "document")[0]
+        out_name = f"{orig_name}_edited.docx"
+        enc_name = url_quote(out_name)
+
+        logger.info(f"docxedit: {count} almashtirish, {time.time()-t0:.1f}s")
+        return Response(
+            content=out_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{enc_name}",
+                "X-Info": f"{count} ta so'z almashtirildi",
+            },
+        )
+    except HTTPException:
+        raise
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Vaqt tugadi. Kichikroq fayl yuboring.")
+    except Exception as e:
+        logger.error(f"docxedit xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="Kutilmagan xatolik. Fayl buzilgan yoki qo'llab-quvvatlanmaydi.")
+
+
 # ─── Image → PDF helpers ──────────────────────────────────────────────────────
 
 def _open_and_fix_image(data: bytes):
@@ -1517,8 +1825,19 @@ def _do_xlsx2pdf(data: bytes) -> tuple:
         orientation = "Portrait"
     avail_w = page_w - 2 * MARGIN
 
-    # ── Pass 2: full build ─────────────────────────────────────────────────
-    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    # ── Pass 2: full build (read_only=False to access cell formatting) ──────
+    wb = load_workbook(io.BytesIO(data), read_only=False, data_only=True)
+
+    def _cell_bg(cell) -> str | None:
+        try:
+            fill = cell.fill
+            if fill and fill.fill_type == "solid":
+                rgb = fill.fgColor.rgb  # "FFRRGGBB"
+                if rgb and rgb not in ("00000000", "FF000000", "FFFFFFFF"):
+                    return f"#{rgb[2:]}"
+        except Exception:
+            pass
+        return None
 
     title_st = ParagraphStyle('xt', fontName=fn_bold, fontSize=12,
                                spaceAfter=6, spaceBefore=4,
@@ -1533,15 +1852,19 @@ def _do_xlsx2pdf(data: bytes) -> tuple:
 
     for name in wb.sheetnames[:MAX_SHEETS]:
         ws = wb[name]
-        raw = list(ws.iter_rows(values_only=True,
-                                max_row=MAX_ROWS + 1, max_col=MAX_COLS))
-        if not raw:
+        # values_only=False — to access cell formatting (fill, font)
+        raw_cells = list(ws.iter_rows(values_only=False,
+                                      max_row=MAX_ROWS + 1, max_col=MAX_COLS))
+        if not raw_cells:
             continue
 
-        truncated = len(raw) > MAX_ROWS
-        raw = raw[:MAX_ROWS]
+        truncated = len(raw_cells) > MAX_ROWS
+        raw_cells = raw_cells[:MAX_ROWS]
         if truncated:
             any_truncated = True
+
+        # Extract plain values for column width calc
+        raw = [[cell.value for cell in row] for row in raw_cells]
 
         # Trim trailing all-None columns
         col_n = MAX_COLS
@@ -1556,6 +1879,7 @@ def _do_xlsx2pdf(data: bytes) -> tuple:
         # Trim trailing all-None rows
         while raw and all(v is None for v in raw[-1][:col_n]):
             raw.pop()
+            raw_cells.pop()
         if not raw:
             continue
 
@@ -1570,15 +1894,24 @@ def _do_xlsx2pdf(data: bytes) -> tuple:
 
         col_widths = calc_col_widths(raw, col_n, avail_w)
 
-        # Build table rows
+        # Build table rows + collect cell background colors
         table_data = []
-        for r_idx, row in enumerate(raw):
+        cell_bgs = []  # list of (row, col, hex_color)
+        for r_idx, (row_cells, row_vals) in enumerate(zip(raw_cells, raw)):
             is_hdr = r_idx == 0
             cells = []
             for j in range(col_n):
-                v = row[j] if j < len(row) else None
+                cell_obj = row_cells[j] if j < len(row_cells) else None
+                v = row_vals[j] if j < len(row_vals) else None
                 txt = esc(fmt_val(v))
-                cells.append(Paragraph(txt, tch_st if is_hdr else tc_st))
+                is_bold = is_hdr or bool(
+                    cell_obj and cell_obj.font and cell_obj.font.bold
+                )
+                cells.append(Paragraph(txt, tch_st if is_bold else tc_st))
+                if cell_obj and not is_hdr:
+                    bg = _cell_bg(cell_obj)
+                    if bg:
+                        cell_bgs.append((r_idx, j, bg))
             table_data.append(cells)
 
         # Section header
@@ -1590,7 +1923,7 @@ def _do_xlsx2pdf(data: bytes) -> tuple:
                 f'⚠️ Faqat birinchi {MAX_ROWS} qator ko\'rsatildi', note_st))
 
         tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
-        tbl.setStyle(TableStyle([
+        style_cmds = [
             # Header row
             ('BACKGROUND',    (0, 0), (-1,  0), colors.HexColor('#cfe2f3')),
             ('LINEBELOW',     (0, 0), (-1,  0), 1.2, colors.HexColor('#2e7cbf')),
@@ -1606,7 +1939,13 @@ def _do_xlsx2pdf(data: bytes) -> tuple:
             ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
             ('VALIGN',        (0, 0), (-1, -1), 'TOP'),
             ('WORDWRAP',      (0, 0), (-1, -1), 'WORD'),
-        ]))
+        ]
+        # Apply per-cell background colors from Excel
+        for r_idx, c_idx, hex_color in cell_bgs:
+            style_cmds.append(
+                ('BACKGROUND', (c_idx, r_idx), (c_idx, r_idx), colors.HexColor(hex_color))
+            )
+        tbl.setStyle(TableStyle(style_cmds))
         story.append(tbl)
         total_rows   += len(raw)
         total_sheets += 1
@@ -1694,9 +2033,7 @@ def _do_compresspptx(data: bytes) -> tuple:
                             (int(img.width * ratio), int(img.height * ratio)),
                             Image.LANCZOS,
                         )
-                    if img.mode not in ("RGB",):
-                        img = img.convert("RGB")
-                    # adaptive quality: larger embedded image → more aggressive
+                    # Adaptive quality: larger embedded image → more aggressive
                     if len(item_data) > 2 * 1024 * 1024:
                         quality = 65
                     elif len(item_data) > 512 * 1024:
@@ -1704,7 +2041,15 @@ def _do_compresspptx(data: bytes) -> tuple:
                     else:
                         quality = 82
                     cb = io.BytesIO()
-                    img.save(cb, format="JPEG", quality=quality, optimize=True)
+                    if img.mode == "RGBA" or (img.mode == "P" and "transparency" in img.info):
+                        # Keep alpha channel → save as PNG (converting to JPEG would lose transparency)
+                        if img.mode != "RGBA":
+                            img = img.convert("RGBA")
+                        img.save(cb, format="PNG", optimize=True)
+                    else:
+                        if img.mode != "RGB":
+                            img = img.convert("RGB")
+                        img.save(cb, format="JPEG", quality=quality, optimize=True)
                     candidate = cb.getvalue()
                     if len(candidate) < len(item_data):
                         item_data = candidate
@@ -1757,13 +2102,11 @@ _IMGCOMPRESS_MAX_DIM = 4000
 _IMGCOMPRESS_ALLOWED = {b"\xff\xd8\xff", b"\x89PNG", b"RIFF", b"WEBP"}  # JPEG, PNG, WebP
 
 
-def _do_imgcompress(data: bytes) -> tuple:
+def _do_imgcompress(data: bytes, output_format: str = "jpeg", user_quality: int = 0) -> tuple:
     from PIL import Image, ImageOps
 
     orig_size = len(data)
     img = Image.open(io.BytesIO(data))
-
-    # Fix EXIF rotation so portrait photos are not sideways
     img = ImageOps.exif_transpose(img)
 
     w, h = img.width, img.height
@@ -1771,11 +2114,15 @@ def _do_imgcompress(data: bytes) -> tuple:
     if ratio < 1.0:
         img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
 
-    if img.mode not in ("RGB",):
-        img = img.convert("RGB")
+    has_alpha = img.mode in ("RGBA", "LA", "P")
+    # Force webp for alpha images if jpeg requested (JPEG can't hold alpha)
+    if has_alpha and output_format == "jpeg":
+        output_format = "webp"
 
-    # Adaptive quality: larger source → more aggressive compression
-    if orig_size > 3 * 1024 * 1024:
+    # Adaptive quality based on source size
+    if user_quality:
+        quality = max(30, min(95, user_quality))
+    elif orig_size > 3 * 1024 * 1024:
         quality = 65
     elif orig_size > 1024 * 1024:
         quality = 72
@@ -1783,41 +2130,60 @@ def _do_imgcompress(data: bytes) -> tuple:
         quality = 82
 
     out = io.BytesIO()
-    img.save(out, format="JPEG", quality=quality, optimize=True)
-    out_bytes = out.getvalue()
+    if output_format == "webp":
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGBA" if has_alpha else "RGB")
+        img.save(out, format="WEBP", quality=quality, method=4)
+        media_type, ext = "image/webp", "webp"
+    elif output_format == "png":
+        img.save(out, format="PNG", optimize=True, compress_level=9)
+        media_type, ext = "image/png", "png"
+    else:
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.save(out, format="JPEG", quality=quality, optimize=True)
+        media_type, ext = "image/jpeg", "jpg"
 
-    # Never return a larger file than the original
+    out_bytes = out.getvalue()
     if len(out_bytes) >= orig_size:
         out_bytes = data
-        quality = 0  # signal: unchanged
+        quality   = 0
 
     saved = max(0, round((1 - len(out_bytes) / orig_size) * 100))
-    final_w, final_h = img.width, img.height
-    info = f"{w}×{h} → {final_w}×{final_h}, q={quality if quality else 'orig'}, saved {saved}%"
-    return out_bytes, info, saved
+    info  = f"{w}×{h} → {img.width}×{img.height}, {output_format}, saved {saved}%"
+    return out_bytes, info, saved, media_type, ext
 
 
 @app.post("/api/imgcompress")
 @limiter.limit("20/minute")
-async def img_compress(request: Request, file: UploadFile = File(...)):
+async def img_compress(
+    request: Request,
+    file: UploadFile = File(...),
+    output_format: str = Form("jpeg"),
+    quality: int = Form(0),
+):
     try:
         data = await file.read()
         check_size(data, "/api/imgcompress")
         if len(data) < 4:
             raise HTTPException(status_code=400, detail="Invalid image file")
+        output_format = output_format if output_format in ("jpeg", "png", "webp") else "jpeg"
         loop = asyncio.get_event_loop()
         try:
-            out_bytes, info, saved = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_imgcompress, data),
+            out_bytes, info, saved, media_type, ext = await asyncio.wait_for(
+                loop.run_in_executor(
+                    _converter_pool,
+                    functools.partial(_do_imgcompress, data, output_format, quality),
+                ),
                 timeout=30.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail="Image compression timed out")
         return Response(
             content=out_bytes,
-            media_type="image/jpeg",
+            media_type=media_type,
             headers={
-                "Content-Disposition": "attachment; filename=compressed.jpg",
+                "Content-Disposition": f"attachment; filename=compressed.{ext}",
                 "X-Info": info,
                 "X-Saved-Percent": str(saved),
             },
@@ -1832,25 +2198,28 @@ async def img_compress(request: Request, file: UploadFile = File(...)):
 @app.post("/api/bgremove")
 @limiter.limit("5/minute")
 async def bgremove(request: Request):
-    import base64, functools
+    import base64
     from rembg import remove
     t0 = time.time()
     try:
-        ct = request.headers.get("content-type", "")
+        ct       = request.headers.get("content-type", "")
+        bg_color = None
         if "multipart" in ct:
-            form = await request.form()
-            f    = form.get("file")
-            data = await f.read()
+            form     = await request.form()
+            f        = form.get("file")
+            data     = await f.read()
+            bg_color = (form.get("bg_color") or "").strip().lstrip("#") or None
         else:
-            body = await request.json()
-            data = base64.b64decode(body["data"])
+            body     = await request.json()
+            data     = base64.b64decode(body["data"])
+            bg_color = (body.get("bg_color") or "").strip().lstrip("#") or None
 
         check_size(data, "/api/bgremove")
 
-        session = get_rembg_session()   # instant after preload
+        session = get_rembg_session()
         loop    = asyncio.get_event_loop()
         try:
-            result = await asyncio.wait_for(
+            result_png = await asyncio.wait_for(
                 loop.run_in_executor(
                     _converter_pool,
                     functools.partial(remove, data, session=session),
@@ -1861,11 +2230,30 @@ async def bgremove(request: Request):
             raise HTTPException(status_code=408,
                 detail="Fon olib tashlash 60 soniyadan oshdi. Kichikroq rasm yuklang.")
 
-        logger.info(f"bgremove: {len(data)//1024}KB → {len(result)//1024}KB, {time.time()-t0:.1f}s")
+        # Optional: composite over a solid background color
+        if bg_color and len(bg_color) >= 6:
+            from PIL import Image as _PILImg
+            try:
+                r = int(bg_color[0:2], 16)
+                g = int(bg_color[2:4], 16)
+                b = int(bg_color[4:6], 16)
+                fg  = _PILImg.open(io.BytesIO(result_png)).convert("RGBA")
+                bg  = _PILImg.new("RGBA", fg.size, (r, g, b, 255))
+                bg.paste(fg, mask=fg.split()[3])
+                out_buf = io.BytesIO()
+                bg.convert("RGB").save(out_buf, format="JPEG", quality=95, optimize=True)
+                result_png = out_buf.getvalue()
+                media_type, fname = "image/jpeg", "no-bg.jpg"
+            except Exception:
+                media_type, fname = "image/png", "no-bg.png"
+        else:
+            media_type, fname = "image/png", "no-bg.png"
+
+        logger.info(f"bgremove: {len(data)//1024}KB → {len(result_png)//1024}KB, {time.time()-t0:.1f}s")
         return Response(
-            content=result,
-            media_type="image/png",
-            headers={"Content-Disposition": "attachment; filename=no-bg.png"},
+            content=result_png,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={fname}"},
         )
     except HTTPException:
         raise
@@ -2226,14 +2614,38 @@ async def stats(request: Request):
         return JSONResponse({"result": "❌ Raqamlar kiriting. Masalan: 4 7 2 9 1 5"})
     n = len(nums)
     total = sum(nums)
-    mean = total / n
-    s = sorted(nums)
+    mean  = total / n
+    s     = sorted(nums)
     median = s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
-    var = sum((x - mean) ** 2 for x in nums) / n
+    var   = sum((x - mean) ** 2 for x in nums) / n
+    std   = var ** 0.5
+
+    # Quartiles (linear interpolation)
+    def _percentile(data, p):
+        idx = (len(data) - 1) * p / 100
+        lo, hi = int(idx), min(int(idx) + 1, len(data) - 1)
+        return data[lo] + (data[hi] - data[lo]) * (idx - lo)
+
+    q1  = _percentile(s, 25)
+    q3  = _percentile(s, 75)
+    iqr = q3 - q1
+
+    # Mode (most frequent value; show only if appears >1 time)
+    from collections import Counter
+    freq = Counter(nums)
+    top_val, top_cnt = freq.most_common(1)[0]
+    mode_str = f"{top_val:g} ({top_cnt} marta)" if top_cnt > 1 else "—"
+
     return JSONResponse({"result": (
-        f"📊 n = {n}\n∑ Yig'indi: {total:g}\n"
-        f"x̄ O'rtacha: {mean:.4f}\nM Mediana: {median:g}\n"
-        f"σ² Dispersiya: {var:.4f}\nσ Standart og'ish: {var**0.5:.4f}\n"
+        f"📊 n = {n}\n"
+        f"∑  Yig'indi: {total:g}\n"
+        f"x̄  O'rtacha: {mean:.4f}\n"
+        f"M  Mediana: {median:g}\n"
+        f"Mo Moda: {mode_str}\n"
+        f"σ² Dispersiya: {var:.4f}\n"
+        f"σ  Standart og'ish: {std:.4f}\n"
+        f"Q1 / Q3: {q1:g} / {q3:g}\n"
+        f"IQR: {iqr:g}\n"
         f"Min: {s[0]:g}  Max: {s[-1]:g}"
     )})
 
@@ -2244,45 +2656,68 @@ _QR_FILL  = (79, 70, 229)   # indigo-600
 _QR_BACK  = (238, 242, 255) # indigo-50
 
 
-def _do_qr(text: str) -> bytes:
+def _do_qr(text: str, size: int = 400, ec_level: str = "M", fmt: str = "png") -> tuple:
     import qrcode
     from PIL import Image
 
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=10,
-        border=4,
-    )
+    _EC = {
+        "L": qrcode.constants.ERROR_CORRECT_L,
+        "M": qrcode.constants.ERROR_CORRECT_M,
+        "Q": qrcode.constants.ERROR_CORRECT_Q,
+        "H": qrcode.constants.ERROR_CORRECT_H,
+    }
+    ec       = _EC.get(ec_level.upper(), qrcode.constants.ERROR_CORRECT_M)
+    box_size = max(5, size // 50)
+
+    qr = qrcode.QRCode(version=None, error_correction=ec, box_size=box_size, border=4)
     qr.add_data(text)
     qr.make(fit=True)
-    img = qr.make_image(fill_color=_QR_FILL, back_color=_QR_BACK).convert("RGB")
 
+    if fmt == "svg":
+        import qrcode.image.svg as qrsvg
+        factory = qrsvg.SvgPathImage
+        img_svg = qr.make_image(image_factory=factory)
+        buf = io.BytesIO()
+        img_svg.save(buf)
+        return buf.getvalue(), "image/svg+xml", "qrcode.svg"
+
+    img = qr.make_image(fill_color=_QR_FILL, back_color=_QR_BACK).convert("RGB")
+    if img.width != size:
+        img = img.resize((size, size), Image.NEAREST)
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
-    return buf.getvalue()
+    return buf.getvalue(), "image/png", "qrcode.png"
 
 
 @app.post("/api/qr")
 @limiter.limit("30/minute")
 async def make_qr(request: Request):
     try:
-        body = await request.json()
-        text = (body.get("text") or "EduBot").strip() or "EduBot"
+        body     = await request.json()
+        text     = (body.get("text") or "EduBot").strip() or "EduBot"
+        size     = max(100, min(1000, int(body.get("size", 400))))
+        ec_level = str(body.get("ec", "M")).upper()
+        fmt      = str(body.get("format", "png")).lower()
+        if fmt not in ("png", "svg"):
+            fmt = "png"
         if len(text) > 2000:
             raise HTTPException(status_code=400, detail="Matn 2000 belgidan oshmasligi kerak")
         loop = asyncio.get_event_loop()
         try:
-            png = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_qr, text),
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    _converter_pool,
+                    functools.partial(_do_qr, text, size, ec_level, fmt),
+                ),
                 timeout=15.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail="QR generation timed out")
+        content, media_type, filename = result
         return Response(
-            content=png,
-            media_type="image/png",
-            headers={"Content-Disposition": "attachment; filename=qrcode.png"},
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
     except HTTPException:
         raise
@@ -2291,26 +2726,38 @@ async def make_qr(request: Request):
 
 # ─── Certificate ──────────────────────────────────────────────────────────────
 
-def _do_cert(name: str, course: str, issuer: str) -> bytes:
+_CERT_THEMES = {
+    "classic": {"bg_top": (10, 8, 45),   "bg_bot": (35, 20, 75),  "accent": (251, 191, 36),  "text": (255, 255, 255), "sub": (167, 139, 250)},
+    "modern":  {"bg_top": (15, 23, 42),  "bg_bot": (30, 50, 80),  "accent": (96, 165, 250),  "text": (255, 255, 255), "sub": (148, 210, 252)},
+    "minimal": {"bg_top": (245, 245, 250),"bg_bot": (220, 220, 235),"accent": (79, 70, 229),  "text": (30, 30, 50),    "sub": (100, 80, 200)},
+    "dark":    {"bg_top": (5, 5, 15),    "bg_bot": (20, 10, 30),  "accent": (167, 139, 250), "text": (240, 240, 255), "sub": (120, 100, 220)},
+}
+
+
+def _do_cert(name: str, course: str, issuer: str, theme: str = "classic") -> bytes:
     from PIL import Image, ImageDraw, ImageFont
 
-    W, H = 900, 620
-    img = Image.new("RGB", (W, H))
-    draw = ImageDraw.Draw(img)
+    th     = _CERT_THEMES.get(theme, _CERT_THEMES["classic"])
+    W, H   = 900, 620
+    img    = Image.new("RGB", (W, H))
+    draw   = ImageDraw.Draw(img)
 
-    # Deep navy → indigo gradient background
+    # Gradient background (theme top → theme bottom)
+    r0, g0, b0 = th["bg_top"]
+    r1, g1, b1 = th["bg_bot"]
     for i in range(H):
         t = i / H
-        r = int(10  + t * 25)
-        g = int(8   + t * 12)
-        b = int(45  + t * 30)
-        draw.line([(0, i), (W, i)], fill=(r, g, b))
+        draw.line([(0, i), (W, i)], fill=(
+            int(r0 + t * (r1 - r0)),
+            int(g0 + t * (g1 - g0)),
+            int(b0 + t * (b1 - b0)),
+        ))
 
-    GOLD   = (251, 191, 36)
-    GOLD2  = (180, 140, 30)
-    WHITE  = (255, 255, 255)
+    GOLD   = th["accent"]
+    GOLD2  = tuple(max(0, c - 70) for c in GOLD)
+    WHITE  = th["text"]
     SILVER = (190, 190, 200)
-    PURPLE = (167, 139, 250)
+    PURPLE = th["sub"]
 
     # Outer + inner border
     draw.rectangle([(16, 16), (W - 16, H - 16)], outline=GOLD,  width=3)
@@ -2398,17 +2845,23 @@ def _do_cert(name: str, course: str, issuer: str) -> bytes:
 @limiter.limit("20/minute")
 async def make_cert(request: Request):
     try:
-        body = await request.json()
+        body   = await request.json()
         lines  = (body.get("text") or "Ism Familiya\nKurs nomi").strip().split("\n")
         name   = lines[0].strip() if lines else "Ism Familiya"
         course = lines[1].strip() if len(lines) > 1 else "Kurs nomi"
         issuer = lines[2].strip() if len(lines) > 2 else "EduBot"
+        theme  = str(body.get("theme", "classic"))
+        if theme not in _CERT_THEMES:
+            theme = "classic"
         if not name:
             raise HTTPException(status_code=400, detail="Ism bo'sh bo'lmasligi kerak")
         loop = asyncio.get_event_loop()
         try:
             png = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_cert, name, course, issuer),
+                loop.run_in_executor(
+                    _converter_pool,
+                    functools.partial(_do_cert, name, course, issuer, theme),
+                ),
                 timeout=20.0,
             )
         except asyncio.TimeoutError:
@@ -2670,13 +3123,16 @@ async def translate(request: Request):
 @app.post("/api/wiki")
 @limiter.limit("20/minute")
 async def wiki(request: Request):
-    body = await request.json()
-    q = (body.get("text") or "").strip()
+    body     = await request.json()
+    q        = (body.get("text") or "").strip()
+    pref_lang = (body.get("lang") or "").strip().lower()[:5]
     if not q:
         return JSONResponse({"result": "❌ Qidiruv so'zini kiriting"})
-    encoded = url_quote(q, safe="")
+    encoded  = url_quote(q, safe="")
+    # User-preferred language first, then fallbacks
+    langs = ([pref_lang] + [l for l in ["uz", "ru", "en"] if l != pref_lang]) if pref_lang else ["uz", "ru", "en"]
     async with httpx.AsyncClient(timeout=15) as client:
-        for lang in ["uz", "ru", "en"]:
+        for lang in langs:
             try:
                 r = await client.get(
                     f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}"
@@ -2685,7 +3141,7 @@ async def wiki(request: Request):
                     d = r.json()
                     if d.get("extract"):
                         url = d.get("content_urls", {}).get("desktop", {}).get("page", "")
-                        result = f"📖 {d['title']}\n\n{d['extract']}"
+                        result = f"📖 {d['title']}  [{lang.upper()}]\n\n{d['extract']}"
                         if url:
                             result += f"\n\n🔗 {url}"
                         return JSONResponse({"result": result})
@@ -2728,22 +3184,43 @@ async def books(request: Request):
 
 @app.post("/api/zip")
 @limiter.limit("20/minute")
-async def make_zip(request: Request, files: List[UploadFile] = File(...)):
+async def make_zip(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    password: Optional[str] = Form(None),
+):
     try:
+        if password is not None and len(password) > 128:
+            raise HTTPException(status_code=400, detail="Parol 128 belgidan oshmasligi kerak")
+
         buf = io.BytesIO()
         total = 0
         count = 0
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-            for f in files:
-                data = await f.read()
-                total += len(data)
-                if total > MAX_FILE_BYTES * 3:
-                    raise HTTPException(status_code=413, detail="Fayllar jami hajmi juda katta")
-                # Prevent path traversal in filenames
-                safe_name = os.path.basename(f.filename or "file") or "file"
-                zf.writestr(safe_name, data)
-                count += 1
-        info = f"{count} fayl → archive.zip"
+        entries: list = []
+
+        for f in files:
+            data = await f.read()
+            total += len(data)
+            if total > MAX_FILE_BYTES * 3:
+                raise HTTPException(status_code=413, detail="Fayllar jami hajmi juda katta")
+            safe_name = os.path.basename(f.filename or "file") or "file"
+            entries.append((safe_name, data))
+            count += 1
+
+        if password:
+            import pyzipper
+            with pyzipper.AESZipFile(buf, "w",
+                                     compression=pyzipper.ZIP_DEFLATED,
+                                     encryption=pyzipper.WZ_AES) as zf:
+                zf.setpassword(password.encode("utf-8"))
+                for name, content in entries:
+                    zf.writestr(name, content)
+        else:
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+                for name, content in entries:
+                    zf.writestr(name, content)
+
+        info = f"{count} fayl → archive.zip" + (" (parollanган)" if password else "")
         return Response(
             content=buf.getvalue(),
             media_type="application/zip",
@@ -2764,18 +3241,77 @@ _UNZIP_MAX_UNCOMP_MB   = 200
 _UNZIP_MAX_RATIO       = 50   # compressed:uncompressed ratio limit
 
 
+def _build_response_from_entries(entries: list) -> Response:
+    """entries = [(name, content_bytes), ...]"""
+    if len(entries) == 1:
+        name, content = entries[0]
+        safe = os.path.basename(name) or "file"
+        return Response(
+            content=content,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename={url_quote(safe)}"},
+        )
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for name, content in entries:
+            zout.writestr(name, content)
+    return Response(
+        content=out.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": "attachment; filename=extracted.zip",
+            "X-Info": f"{len(entries)} fayl",
+        },
+    )
+
+
 @app.post("/api/unzip")
 @limiter.limit("20/minute")
 async def unzip_file(request: Request, file: UploadFile = File(...)):
     try:
         data = await file.read()
         check_size(data, "/api/unzip")
+        fname = (file.filename or "").lower()
+
+        # ── TAR (tar, tar.gz, tgz, tar.bz2, tar.xz) ─────────────────────
+        import tarfile as _tarfile
+        is_tar = (
+            fname.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".txz"))
+            or data[:5] == b"ustar"
+            or data[:2] == b"\x1f\x8b"  # gzip magic (may be .tar.gz)
+        )
+        if is_tar:
+            try:
+                tf = _tarfile.open(fileobj=io.BytesIO(data))
+                members = [m for m in tf.getmembers() if m.isfile()]
+                if not members:
+                    raise HTTPException(status_code=400, detail="TAR ichida fayl yo'q")
+                if len(members) > _UNZIP_MAX_FILES:
+                    raise HTTPException(status_code=400,
+                        detail=f"TAR ichida {len(members)} fayl — maksimal {_UNZIP_MAX_FILES}")
+                total_uncomp = sum(m.size for m in members)
+                if total_uncomp > _UNZIP_MAX_UNCOMP_MB * 1024 * 1024:
+                    raise HTTPException(status_code=400,
+                        detail=f"Siqilmagan hajm {total_uncomp // (1024*1024)} MB — maksimal {_UNZIP_MAX_UNCOMP_MB} MB")
+                entries = []
+                for m in members:
+                    f_obj = tf.extractfile(m)
+                    if f_obj:
+                        safe = os.path.basename(m.name) or "file"
+                        entries.append((safe, f_obj.read()))
+                tf.close()
+                return _build_response_from_entries(entries)
+            except HTTPException:
+                raise
+            except Exception:
+                pass  # fallback to ZIP path below
+
+        # ── ZIP ───────────────────────────────────────────────────────────
         zf = zipfile.ZipFile(io.BytesIO(data))
         all_infos = [i for i in zf.infolist() if not i.filename.endswith("/")]
         if not all_infos:
             raise HTTPException(status_code=400, detail="ZIP ichida fayl yo'q")
 
-        # ZIP bomb checks
         if len(all_infos) > _UNZIP_MAX_FILES:
             raise HTTPException(status_code=400,
                 detail=f"ZIP ichida {len(all_infos)} fayl — maksimal {_UNZIP_MAX_FILES}")
@@ -2786,31 +3322,13 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
         if len(data) > 0 and total_uncomp / len(data) > _UNZIP_MAX_RATIO:
             raise HTTPException(status_code=400, detail="ZIP bomb aniqlandi — fayl xavfsiz emas")
 
-        names = [i.filename for i in all_infos]
-        if len(names) == 1:
-            content = zf.read(names[0])
-            safe_name = os.path.basename(names[0]) or "file"
-            return Response(
-                content=content,
-                media_type="application/octet-stream",
-                headers={"Content-Disposition": f"attachment; filename={safe_name}"},
-            )
-        out = io.BytesIO()
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
-            for info in all_infos:
-                zout.writestr(info.filename, zf.read(info.filename))
-        return Response(
-            content=out.getvalue(),
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": "attachment; filename=extracted.zip",
-                "X-Info": f"{len(names)} fayl",
-            },
-        )
+        entries = [(i.filename, zf.read(i.filename)) for i in all_infos]
+        return _build_response_from_entries(entries)
+
     except HTTPException:
         raise
     except Exception:
-        raise HTTPException(status_code=500, detail="ZIP ochish xato")
+        raise HTTPException(status_code=500, detail="Arxiv ochish xato")
 
 
 # ─── Payment: Create ─────────────────────────────────────────────────────────

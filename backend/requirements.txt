@@ -12,8 +12,11 @@ loguru==0.7.2
 mammoth
 pypdf
 PyMuPDF
+pdfplumber
 reportlab
 openpyxl
 qrcode[pil]
 python-dateutil
 deep-translator
+pyzipper
+numpy

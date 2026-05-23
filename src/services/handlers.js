@@ -397,7 +397,6 @@ async function watermark({ file, text }) {
 
 async function pdf2img({ file }) {
   validateFile(file, ".pdf");
-  // 25 sahifa render 90s gacha olishi mumkin
   const form = buildFormData("file", file);
   const response = await fetchWithTimeout(
     `${BACKEND_URL}/api/pdf2img`,
@@ -407,7 +406,11 @@ async function pdf2img({ file }) {
   await handleResponseError(response);
   const blob = await response.blob();
   const info = response.headers.get("X-Info");
-  return { type: "file", blob, filename: "pages.zip", ...(info ? { info } : {}) };
+  // Single-page → raw image; multi-page → ZIP
+  const ct = response.headers.get("content-type") || "";
+  const ext = ct.includes("jpeg") ? "jpg" : ct.includes("webp") ? "webp" : ct.includes("png") ? "png" : null;
+  const filename = ext ? `page_1.${ext}` : "pages.zip";
+  return { type: "file", blob, filename, ...(info ? { info } : {}) };
 }
 
 async function compresspdf({ file }) {
@@ -597,9 +600,48 @@ async function schedule({ text }) {
 
 // ─── Archive ──────────────────────────────────────────────────────
 
-async function zip({ files }) {
+async function pdfpages({ file, text }) {
+  validateFile(file, ".pdf");
+  if (!text?.trim()) throw new Error("Sahifa oralig'ini kiriting. Masalan: 1-3,5,7");
+  const form = buildFormData("file", file);
+  form.append("pages", sanitizeText(text.trim(), 200));
+  const response = await fetchWithTimeout(
+    `${BACKEND_URL}/api/pdfpages`,
+    { method: "POST", headers: getAuthHeaders(), body: form },
+    45000,
+  );
+  await handleResponseError(response);
+  const blob = await response.blob();
+  const info = response.headers.get("X-Info");
+  return { type: "file", blob, filename: "selected.pdf", ...(info ? { info } : {}) };
+}
+
+async function docxedit({ file, text }) {
+  validateFile(file, ".doc,.docx");
+  if (!text?.trim()) throw new Error("Qidirish va almashtirish matni kiriting.");
+  const lines = text.trim().split("\n");
+  const find = lines[0]?.trim() || "";
+  const replace = lines.slice(1).join("\n").trimStart();
+  if (!find) throw new Error("1-qator: qidiriluvchi matn kiritilmagan.");
+  const form = buildFormData("file", file);
+  form.append("find", sanitizeText(find, 500));
+  form.append("replace", sanitizeText(replace, 500));
+  const response = await fetchWithTimeout(
+    `${BACKEND_URL}/api/docxedit`,
+    { method: "POST", headers: getAuthHeaders(), body: form },
+    30000,
+  );
+  await handleResponseError(response);
+  const blob = await response.blob();
+  const info = response.headers.get("X-Info");
+  return { type: "file", blob, filename: "edited.docx", ...(info ? { info } : {}) };
+}
+
+async function zip({ files, text }) {
   validateFiles(files);
-  return apiFile("/api/zip", buildFormData("files", files), "archive.zip");
+  const form = buildFormData("files", files);
+  if (text?.trim()) form.append("password", sanitizeText(text.trim(), 128));
+  return apiFile("/api/zip", form, "archive.zip", "X-Info");
 }
 
 async function unzip({ file }) {
@@ -630,6 +672,7 @@ const SERVICE_HANDLERS = {
   // PDF
   mergepdf,
   splitpdf,
+  pdfpages,
   pdftext,
   pdflock,
   watermark,
@@ -639,6 +682,7 @@ const SERVICE_HANDLERS = {
   xlsx2pdf,
   pdf2docx,
   docx2pdf,
+  docxedit,
   compresspdf,
   compresspptx,
   // Image

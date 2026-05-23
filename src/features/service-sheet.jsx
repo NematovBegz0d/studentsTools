@@ -806,10 +806,13 @@ const TEXT_HINTS = {
   schedule: "Dushanba: Matematika 8:00, Fizika 10:00\nSeshanba: Ingliz tili 9:00, Kimyo 11:00",
   pdflock: "Parol kiriting (bo'sh qolsa avtomatik yaratiladi)",
   watermark: "Watermark matni (bo'sh qoldirilsa EduBot yoziladi)",
+  pdfpages: "Sahifa oralig'i: 1-3,5,7-10",
+  docxedit: "1-qator: qidiriladigan matn\n2-qator: almashtiriluvchi matn",
+  zip: "Parol (ixtiyoriy — bo'sh qolsa shifrsiz)",
 };
 
 // File services that also need an optional text input (e.g. password, label)
-const EXTRA_TEXT_IDS = new Set(["pdflock", "watermark"]);
+const EXTRA_TEXT_IDS = new Set(["pdflock", "watermark", "pdfpages", "docxedit", "zip"]);
 
 // ─── Main ServiceSheet ────────────────────────────────────────────
 function ServiceSheet({

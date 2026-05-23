@@ -20,6 +20,13 @@ const FREE_SERVICES = [
   ai: false,
   accept: '.doc,.docx'
 }, {
+  id: 'docxedit',
+  cat: 'file',
+  icon: '✏️',
+  new: true,
+  ai: false,
+  accept: '.doc,.docx'
+}, {
   id: 'img2pdf',
   cat: 'file',
   icon: '🖼️',
@@ -61,6 +68,13 @@ const FREE_SERVICES = [
   cat: 'pdf',
   icon: '✂️',
   new: false,
+  ai: false,
+  accept: '.pdf'
+}, {
+  id: 'pdfpages',
+  cat: 'pdf',
+  icon: '📑',
+  new: true,
   ai: false,
   accept: '.pdf'
 }, {
@@ -397,6 +411,10 @@ const I18N = {
         name: 'Word → PDF',
         desc: 'Word hujjatni PDF ga aylantirish'
       },
+      docxedit: {
+        name: 'Word matn almashtirish',
+        desc: 'DOCX faylida so\'z topib almashtirish'
+      },
       img2pdf: {
         name: 'Rasm → PDF',
         desc: 'Bitta rasmni PDF ga aylantirish'
@@ -420,6 +438,10 @@ const I18N = {
       splitpdf: {
         name: 'PDF ajratish',
         desc: 'PDF sahifalarini alohida ajratish'
+      },
+      pdfpages: {
+        name: 'PDF sahifa tanlash',
+        desc: 'Kerakli sahifalarni yangi PDF ga'
       },
       pdftext: {
         name: 'PDF dan matn',
@@ -656,6 +678,10 @@ const I18N = {
         name: 'Word → PDF',
         desc: 'Конвертация Word в PDF'
       },
+      docxedit: {
+        name: 'Редактировать Word',
+        desc: 'Найти и заменить текст в DOCX'
+      },
       img2pdf: {
         name: 'Фото → PDF',
         desc: 'Одно изображение в PDF'
@@ -679,6 +705,10 @@ const I18N = {
       splitpdf: {
         name: 'Разбить PDF',
         desc: 'Разделить страницы PDF'
+      },
+      pdfpages: {
+        name: 'Выбор страниц PDF',
+        desc: 'Выбрать нужные страницы в новый PDF'
       },
       pdftext: {
         name: 'PDF → Текст',
@@ -913,6 +943,10 @@ const I18N = {
         name: 'Word → PDF',
         desc: 'Convert Word to PDF'
       },
+      docxedit: {
+        name: 'Edit Word',
+        desc: 'Find and replace text in DOCX'
+      },
       img2pdf: {
         name: 'Image → PDF',
         desc: 'Single image to PDF'
@@ -936,6 +970,10 @@ const I18N = {
       splitpdf: {
         name: 'Split PDF',
         desc: 'Separate PDF pages'
+      },
+      pdfpages: {
+        name: 'Select pages',
+        desc: 'Extract selected pages to new PDF'
       },
       pdftext: {
         name: 'Extract text',
