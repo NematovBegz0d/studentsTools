@@ -111,14 +111,23 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("BOT_TOKEN yoki RAILWAY_PUBLIC_DOMAIN yo'q")
 
-    # ── Rembg modelini oldindan yuklash ──────────────────────────────
-    # Birinchi so'rovda 60+ soniya kutilmasligi uchun startup'da yuklanadi
-    try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, get_rembg_session)
-        logger.info("rembg model preloaded ✓")
-    except Exception as e:
-        logger.warning(f"rembg preload muvaffaqiyatsiz (birinchi so'rovda yuklanadi): {e}")
+    # ── Rembg modelini background'da yuklash ─────────────────────────
+    # Startup ni bloklamasligi uchun background task sifatida ishlatiladi.
+    # isnet-general-use modeli katta (170MB) — yuklanishi vaqt olishi mumkin.
+    async def _preload_rembg():
+        try:
+            loop = asyncio.get_event_loop()
+            await asyncio.wait_for(
+                loop.run_in_executor(None, get_rembg_session),
+                timeout=120.0,
+            )
+            logger.info("rembg model preloaded ✓")
+        except asyncio.TimeoutError:
+            logger.warning("rembg preload timeout — birinchi so'rovda yuklanadi")
+        except Exception as e:
+            logger.warning(f"rembg preload muvaffaqiyatsiz — birinchi so'rovda yuklanadi: {e}")
+
+    asyncio.create_task(_preload_rembg())
 
     yield
     logger.info("EduBot Backend to'xtatilmoqda...")
