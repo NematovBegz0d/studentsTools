@@ -892,46 +892,226 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=500,
             detail="Kutilmagan xatolik. Fayl buzilgan yoki qo'llab-quvvatlanmaydi.")
 
+# ─── Image → PDF helpers ──────────────────────────────────────────────────────
+
+def _open_and_fix_image(data: bytes):
+    """
+    Open image, apply EXIF rotation, convert transparency to white bg.
+    Returns PIL Image in RGB mode.
+    """
+    from PIL import Image, ImageOps
+    img = Image.open(io.BytesIO(data))
+    # Fix EXIF rotation (phone cameras store orientation in metadata)
+    img = ImageOps.exif_transpose(img)
+    # Transparency → white background
+    if img.mode in ('RGBA', 'LA', 'P'):
+        if img.mode == 'P':
+            img = img.convert('RGBA')
+        bg = Image.new('RGB', img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+        img = bg
+    elif img.mode != 'RGB':
+        img = img.convert('RGB')
+    return img
+
+
+def _fit_image_on_page(img, page_w: float, page_h: float, margin: float):
+    """
+    Scale image to fit on page with given margin.
+    Returns (draw_w, draw_h, x, y) in points.
+    """
+    from PIL import Image
+    w, h = img.size
+    # Limit resolution to prevent OOM (very large camera photos)
+    MAX_PX = 4000
+    if max(w, h) > MAX_PX:
+        ratio = MAX_PX / max(w, h)
+        img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+        w, h = img.size
+    avail_w = page_w - 2 * margin
+    avail_h = page_h - 2 * margin
+    scale = min(avail_w / w, avail_h / h)
+    draw_w = w * scale
+    draw_h = h * scale
+    x = (page_w - draw_w) / 2   # center horizontally
+    y = (page_h - draw_h) / 2   # center vertically
+    return img, draw_w, draw_h, x, y
+
+
+def _do_img2pdf(data: bytes) -> tuple:
+    """
+    Single image → A4 PDF.
+    Fixes: EXIF rotation, transparency, auto landscape/portrait,
+           centered with 1 cm margins, quality=92 JPEG encoding.
+    """
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib.utils import ImageReader
+
+    img = _open_and_fix_image(data)
+    orig_w, orig_h = img.size
+
+    # Auto landscape/portrait based on image aspect ratio
+    if orig_w > orig_h:
+        page_w, page_h = A4[1], A4[0]   # A4 landscape
+        orientation = "Landscape"
+    else:
+        page_w, page_h = A4              # A4 portrait
+        orientation = "Portrait"
+
+    img, draw_w, draw_h, x, y = _fit_image_on_page(img, page_w, page_h, 1 * cm)
+
+    # Encode to high-quality JPEG for ReportLab
+    img_buf = io.BytesIO()
+    img.save(img_buf, format='JPEG', quality=92, optimize=True)
+    img_buf.seek(0)
+
+    # Draw on PDF canvas (centered)
+    out_buf = io.BytesIO()
+    c = rl_canvas.Canvas(out_buf, pagesize=(page_w, page_h))
+    c.setTitle("EduBot — Image to PDF")
+    c.drawImage(ImageReader(img_buf), x, y, width=draw_w, height=draw_h,
+                preserveAspectRatio=True)
+    c.save()
+
+    info = f"✅ {orig_w}×{orig_h} px · {orientation} · A4"
+    return out_buf.getvalue(), info
+
+
+def _do_imgs2pdf(all_data: list) -> tuple:
+    """
+    Multiple images → multi-page A4 PDF.
+    Each image gets its own page with auto orientation + centering.
+    """
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib.utils import ImageReader
+
+    out_buf = io.BytesIO()
+    c = None
+    count = 0
+
+    for idx, data in enumerate(all_data):
+        try:
+            img = _open_and_fix_image(data)
+            w, h = img.size
+
+            if w > h:
+                page_w, page_h = A4[1], A4[0]
+            else:
+                page_w, page_h = A4
+
+            img, draw_w, draw_h, x, y = _fit_image_on_page(img, page_w, page_h, 1 * cm)
+
+            img_buf = io.BytesIO()
+            img.save(img_buf, format='JPEG', quality=90, optimize=True)
+            img_buf.seek(0)
+
+            if c is None:
+                c = rl_canvas.Canvas(out_buf, pagesize=(page_w, page_h))
+                c.setTitle("EduBot — Images to PDF")
+            else:
+                c.showPage()
+                c.setPageSize((page_w, page_h))
+
+            c.drawImage(ImageReader(img_buf), x, y, width=draw_w, height=draw_h,
+                        preserveAspectRatio=True)
+            count += 1
+        except Exception:
+            pass  # skip unreadable images
+
+    if c is None or count == 0:
+        raise ValueError("Hech qanday rasm ochib bo'lmadi.")
+
+    c.save()
+    info = f"✅ {count} ta rasm · {count} sahifali PDF"
+    return out_buf.getvalue(), info
+
+
 # ─── Image → PDF ──────────────────────────────────────────────────────────────
 
 @app.post("/api/img2pdf")
 @limiter.limit("20/minute")
 async def img_to_pdf(request: Request, file: UploadFile = File(...)):
+    t0 = time.time()
     try:
-        from PIL import Image
         data = await file.read()
         check_size(data, "/api/img2pdf")
-        img = Image.open(io.BytesIO(data)).convert("RGB")
-        out = io.BytesIO()
-        img.save(out, format="PDF", resolution=150)
-        return Response(content=out.getvalue(), media_type="application/pdf",
-                        headers={"Content-Disposition": "attachment; filename=image.pdf"})
+
+        loop = asyncio.get_event_loop()
+        try:
+            pdf_bytes, info = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_img2pdf, data),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408, detail="Konversiya 30 soniyadan oshdi.")
+
+        logger.info(f"img2pdf: {len(data)//1024}KB → {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=image.pdf",
+                "X-Info": info,
+            },
+        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"img2pdf xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="Rasm ochib bo'lmadi. JPG yoki PNG fayl yuklang.")
 
 # ─── Images → PDF ─────────────────────────────────────────────────────────────
 
 @app.post("/api/imgs2pdf")
 @limiter.limit("10/minute")
 async def imgs_to_pdf(request: Request, files: List[UploadFile] = File(...)):
+    t0 = time.time()
     try:
-        from PIL import Image
-        images = []
+        if not files:
+            raise HTTPException(status_code=400, detail="Rasm yuklanmadi.")
+        if len(files) > 30:
+            raise HTTPException(status_code=400,
+                detail=f"Juda ko'p rasm ({len(files)} ta). Maksimal 30 ta.")
+
+        all_data = []
+        total = 0
         for f in files:
-            data = await f.read()
-            images.append(Image.open(io.BytesIO(data)).convert("RGB"))
-        if not images:
-            raise HTTPException(status_code=400, detail="Rasm yuklanmadi")
-        out = io.BytesIO()
-        images[0].save(out, format="PDF", save_all=True, append_images=images[1:], resolution=150)
-        return Response(content=out.getvalue(), media_type="application/pdf",
-                        headers={"Content-Disposition": "attachment; filename=images.pdf"})
+            d = await f.read()
+            total += len(d)
+            if total > MAX_FILE_BYTES * 3:
+                raise HTTPException(status_code=413,
+                    detail="Rasmlarning umumiy hajmi juda katta.")
+            all_data.append(d)
+
+        loop = asyncio.get_event_loop()
+        try:
+            pdf_bytes, info = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_imgs2pdf, all_data),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408, detail="Konversiya 60 soniyadan oshdi.")
+
+        logger.info(f"imgs2pdf: {len(files)} rasm, {total//1024}KB → {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=images.pdf",
+                "X-Info": info,
+            },
+        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"imgs2pdf xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="Rasmlarni ochib bo'lmadi. JPG yoki PNG fayllar yuklang.")
 
 # ─── Excel → PDF ──────────────────────────────────────────────────────────────
 

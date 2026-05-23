@@ -435,12 +435,12 @@ async function docx2pdf({ file }) {
 
 async function img2pdf({ file }) {
   validateFile(file, ".jpg,.jpeg,.png");
-  return apiFile("/api/img2pdf", buildFormData("file", file), "image.pdf");
+  return apiFile("/api/img2pdf", buildFormData("file", file), "image.pdf", "X-Info");
 }
 
 async function imgs2pdf({ files }) {
   validateFiles(files, ".jpg,.jpeg,.png");
-  return apiFile("/api/imgs2pdf", buildFormData("files", files), "images.pdf");
+  return apiFile("/api/imgs2pdf", buildFormData("files", files), "images.pdf", "X-Info");
 }
 
 async function xlsx2pdf({ file }) {
