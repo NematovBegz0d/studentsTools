@@ -1115,60 +1115,231 @@ async def imgs_to_pdf(request: Request, files: List[UploadFile] = File(...)):
 
 # ─── Excel → PDF ──────────────────────────────────────────────────────────────
 
+def _do_xlsx2pdf(data: bytes) -> tuple:
+    """
+    Excel → PDF with smart column widths, auto landscape, date/number formatting.
+    Pass 1 — scan all sheets → determine orientation.
+    Pass 2 — build full document.
+    Runs in _converter_pool (non-blocking).
+    """
+    from openpyxl import load_workbook
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak,
+    )
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from datetime import datetime as _dt, date as _date, time as _time
+
+    fn, fn_bold = _rl_fonts()
+    MAX_ROWS    = 500
+    MAX_SHEETS  = 10
+    MAX_COLS    = 20
+    MARGIN      = 1.2 * cm
+
+    def fmt_val(v) -> str:
+        if v is None:
+            return ''
+        if isinstance(v, (_dt,)):
+            return v.strftime('%d.%m.%Y %H:%M') if v.hour or v.minute else v.strftime('%d.%m.%Y')
+        if isinstance(v, _date):
+            return v.strftime('%d.%m.%Y')
+        if isinstance(v, _time):
+            return v.strftime('%H:%M')
+        if isinstance(v, bool):
+            return 'Ha' if v else "Yo'q"
+        if isinstance(v, float):
+            # Integer-valued float (e.g. 1.0, 2.0)
+            if abs(v) < 1e14 and v == int(v):
+                return str(int(v))
+            return f'{v:g}'
+        return str(v)
+
+    def esc(t: str) -> str:
+        return t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    def calc_col_widths(all_rows, col_n: int, avail_w: float) -> list:
+        """Proportional widths based on max content length, clamped min/max."""
+        max_lens = [1] * col_n
+        for row in all_rows[:100]:
+            for j in range(col_n):
+                v = row[j] if j < len(row) else None
+                max_lens[j] = max(max_lens[j], min(len(fmt_val(v)), 40))
+        total = sum(max_lens) or col_n
+        MIN_W, MAX_W = 1.0 * cm, 9.0 * cm
+        widths = [max(MIN_W, min(MAX_W, avail_w * l / total)) for l in max_lens]
+        # Normalise so columns fill the page exactly
+        scale = avail_w / sum(widths)
+        return [w * scale for w in widths]
+
+    # ── Pass 1: quick scan — find max non-empty columns across all sheets ──
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    max_col_n = 0
+    for name in wb.sheetnames[:MAX_SHEETS]:
+        ws = wb[name]
+        for row in ws.iter_rows(values_only=True, max_row=5, max_col=MAX_COLS):
+            non_empty = sum(1 for v in row if v is not None)
+            max_col_n = max(max_col_n, non_empty)
+    wb.close()
+
+    # Landscape if any sheet has > 7 meaningful columns
+    if max_col_n > 7:
+        page_w, page_h = A4[1], A4[0]
+        orientation = "Landscape"
+    else:
+        page_w, page_h = A4
+        orientation = "Portrait"
+    avail_w = page_w - 2 * MARGIN
+
+    # ── Pass 2: full build ─────────────────────────────────────────────────
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+
+    title_st = ParagraphStyle('xt', fontName=fn_bold, fontSize=12,
+                               spaceAfter=6, spaceBefore=4,
+                               textColor=colors.HexColor('#1a3a5c'))
+    note_st  = ParagraphStyle('xn', fontName=fn, fontSize=8,
+                               textColor=colors.HexColor('#888888'), spaceAfter=4)
+
+    story = []
+    total_rows   = 0
+    total_sheets = 0
+    any_truncated = False
+
+    for name in wb.sheetnames[:MAX_SHEETS]:
+        ws = wb[name]
+        raw = list(ws.iter_rows(values_only=True,
+                                max_row=MAX_ROWS + 1, max_col=MAX_COLS))
+        if not raw:
+            continue
+
+        truncated = len(raw) > MAX_ROWS
+        raw = raw[:MAX_ROWS]
+        if truncated:
+            any_truncated = True
+
+        # Trim trailing all-None columns
+        col_n = MAX_COLS
+        while col_n > 1:
+            if all((r[col_n - 1] if col_n - 1 < len(r) else None) is None
+                   for r in raw[:30]):
+                col_n -= 1
+            else:
+                break
+        col_n = max(1, col_n)
+
+        # Trim trailing all-None rows
+        while raw and all(v is None for v in raw[-1][:col_n]):
+            raw.pop()
+        if not raw:
+            continue
+
+        # Font size adapts to column count
+        if   col_n <= 4:  fs = 10
+        elif col_n <= 7:  fs = 9
+        elif col_n <= 11: fs = 8
+        else:             fs = 7
+
+        tc_st  = ParagraphStyle(f'tc_{name}',  fontName=fn,      fontSize=fs, leading=fs + 3)
+        tch_st = ParagraphStyle(f'tch_{name}', fontName=fn_bold, fontSize=fs, leading=fs + 3)
+
+        col_widths = calc_col_widths(raw, col_n, avail_w)
+
+        # Build table rows
+        table_data = []
+        for r_idx, row in enumerate(raw):
+            is_hdr = r_idx == 0
+            cells = []
+            for j in range(col_n):
+                v = row[j] if j < len(row) else None
+                txt = esc(fmt_val(v))
+                cells.append(Paragraph(txt, tch_st if is_hdr else tc_st))
+            table_data.append(cells)
+
+        # Section header
+        if story:
+            story.append(PageBreak())
+        story.append(Paragraph(name, title_st))
+        if truncated:
+            story.append(Paragraph(
+                f'⚠️ Faqat birinchi {MAX_ROWS} qator ko\'rsatildi', note_st))
+
+        tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            # Header row
+            ('BACKGROUND',    (0, 0), (-1,  0), colors.HexColor('#cfe2f3')),
+            ('LINEBELOW',     (0, 0), (-1,  0), 1.2, colors.HexColor('#2e7cbf')),
+            # Alternating data rows
+            ('ROWBACKGROUNDS',(0, 1), (-1, -1),
+             [colors.white, colors.HexColor('#f0f6fb')]),
+            # Grid
+            ('GRID',          (0, 0), (-1, -1), 0.35, colors.HexColor('#b0c8e0')),
+            # Padding
+            ('TOPPADDING',    (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ('LEFTPADDING',   (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
+            ('VALIGN',        (0, 0), (-1, -1), 'TOP'),
+            ('WORDWRAP',      (0, 0), (-1, -1), 'WORD'),
+        ]))
+        story.append(tbl)
+        total_rows   += len(raw)
+        total_sheets += 1
+
+    wb.close()
+
+    if not story:
+        raise ValueError("Excel fayl bo'sh yoki o'qib bo'lmadi.")
+
+    out = io.BytesIO()
+    doc = SimpleDocTemplate(
+        out, pagesize=(page_w, page_h),
+        leftMargin=MARGIN, rightMargin=MARGIN,
+        topMargin=MARGIN + 0.3 * cm, bottomMargin=MARGIN,
+        title="EduBot — Excel to PDF",
+    )
+    doc.build(story)
+
+    sheets_word = f"{total_sheets} varaq" if total_sheets > 1 else "1 varaq"
+    info = f"✅ {sheets_word} · {total_rows} qator · {orientation}"
+    if any_truncated:
+        info += f" · (max {MAX_ROWS} qator/varaq)"
+    return out.getvalue(), info
+
+
 @app.post("/api/xlsx2pdf")
 @limiter.limit("10/minute")
 async def xlsx_to_pdf(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
     try:
-        from openpyxl import load_workbook
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-        from reportlab.lib.styles import ParagraphStyle
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import cm
-        from reportlab.lib import colors
-
         data = await file.read()
         check_size(data, "/api/xlsx2pdf")
-        fn, fn_bold = _rl_fonts()
-        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
 
-        out = io.BytesIO()
-        doc = SimpleDocTemplate(out, pagesize=A4,
-                                leftMargin=1*cm, rightMargin=1*cm,
-                                topMargin=2*cm, bottomMargin=2*cm)
-        title_st = ParagraphStyle('t', fontName=fn_bold, fontSize=13, spaceAfter=8, spaceBefore=4)
-        story = []
-        for i, name in enumerate(wb.sheetnames):
-            if i > 0:
-                story.append(PageBreak())
-            story.append(Paragraph(name, title_st))
-            ws = wb[name]
-            rows = list(ws.iter_rows(values_only=True, max_row=300, max_col=20))
-            if not rows:
-                continue
-            table_data = [[str(v) if v is not None else '' for v in row] for row in rows]
-            col_n = max(len(r) for r in table_data)
-            col_w = (A4[0] - 2*cm) / col_n if col_n else A4[0]
-            t = Table(table_data, colWidths=[col_w]*col_n, repeatRows=1)
-            t.setStyle(TableStyle([
-                ('FONTNAME', (0,0), (-1,-1), fn),
-                ('FONTNAME', (0,0), (-1,0), fn_bold),
-                ('FONTSIZE', (0,0), (-1,-1), 8),
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#e8e8e8')),
-                ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor('#cccccc')),
-                ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8f8f8')]),
-                ('TOPPADDING', (0,0), (-1,-1), 3),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-            ]))
-            story.append(t)
-        doc.build(story)
-        logger.info(f"xlsx2pdf: {time.time()-t0:.1f}s")
-        return Response(content=out.getvalue(), media_type="application/pdf",
-                        headers={"Content-Disposition": "attachment; filename=spreadsheet.pdf"})
+        loop = asyncio.get_event_loop()
+        try:
+            pdf_bytes, info = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_xlsx2pdf, data),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail="Konversiya 60 soniyadan oshdi. Excel fayl juda katta.")
+
+        logger.info(f"xlsx2pdf: {len(data)//1024}KB → {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=spreadsheet.pdf",
+                "X-Info": info,
+            },
+        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"xlsx2pdf xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="Excel fayl ochib bo'lmadi. .xlsx yoki .xls fayl yuklang.")
 
 # ─── PPTX Compress (ZIP approach) ────────────────────────────────────────────
 

@@ -431,7 +431,7 @@ async function xlsx2pdf({
   file
 }) {
   validateFile(file, ".xlsx,.xls");
-  return apiFile("/api/xlsx2pdf", buildFormData("file", file), "spreadsheet.pdf");
+  return apiFile("/api/xlsx2pdf", buildFormData("file", file), "spreadsheet.pdf", "X-Info");
 }
 async function compresspptx({
   file
