@@ -313,24 +313,68 @@ async def split_pdf(request: Request, file: UploadFile = File(...)):
 
 # ─── PDF: Text extraction ─────────────────────────────────────────────────────
 
+_PDFTEXT_MAX_PAGES = 50
+
+def _do_pdftext(data: bytes) -> str:
+    import fitz
+
+    doc = fitz.open(stream=data, filetype="pdf")
+    if doc.is_encrypted:
+        doc.close()
+        raise ValueError("PDF parol bilan himoyalangan.")
+    n = doc.page_count
+    if n == 0:
+        doc.close()
+        return "PDF bo'sh (0 sahifa)."
+
+    render_n = min(n, _PDFTEXT_MAX_PAGES)
+    parts = []
+    for i in range(render_n):
+        # sort=True: reads spans in visual reading order (top→bottom, left→right)
+        # Handles multi-column layouts and tables far better than pypdf
+        page_text = doc[i].get_text("text", sort=True).strip()
+        if page_text:
+            if n > 1:
+                parts.append(f"── Sahifa {i + 1} ──")
+            parts.append(page_text)
+    doc.close()
+
+    result = re.sub(r'\n{3,}', '\n\n', "\n\n".join(parts)).strip()
+
+    if not result:
+        return ("❌ Matn topilmadi. Bu skanerlangan PDF bo'lishi mumkin — "
+                "OCR xizmatidan foydalaning.")
+    if n > _PDFTEXT_MAX_PAGES:
+        result += (f"\n\n⚠️ Faqat birinchi {_PDFTEXT_MAX_PAGES} sahifa ko'rsatildi "
+                   f"(PDF jami {n} sahifali).")
+    return result
+
 @app.post("/api/pdftext")
 @limiter.limit("20/minute")
 async def pdf_text(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
     try:
-        from pypdf import PdfReader
         data = await file.read()
         check_size(data, "/api/pdftext")
-        reader = PdfReader(io.BytesIO(data))
-        text = "\n\n".join(p.extract_text() or "" for p in reader.pages).strip()
-        if not text:
-            return JSONResponse({"result": "❌ Matn topilmadi. Bu skanerlangan PDF bo'lishi mumkin — OCR xizmatidan foydalaning."})
-        logger.info(f"pdftext: {len(text)} belgi, {time.time()-t0:.1f}s")
-        return JSONResponse({"result": text})
+        if data[:4] != b'%PDF':
+            raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+        loop = asyncio.get_event_loop()
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_pdftext, data),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail="Matn ajratish 30 soniyadan oshdi. Kichikroq PDF tanlang.")
+        logger.info(f"pdftext: {len(result)} belgi, {time.time()-t0:.1f}s")
+        return JSONResponse({"result": result})
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"pdftext xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="PDF matn ajratishda xato. Fayl buzilgan bo'lishi mumkin.")
 
 # ─── PDF: Lock ────────────────────────────────────────────────────────────────
 
