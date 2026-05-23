@@ -393,7 +393,24 @@ async function docx2pdf({
   file
 }) {
   validateFile(file, ".doc,.docx");
-  return apiFile("/api/docx2pdf", buildFormData("file", file), "document.pdf");
+  const form = buildFormData("file", file);
+  // Murakkab hujjatlar uchun 60 soniya — default 30s etarli emas
+  const response = await fetchWithTimeout(`${BACKEND_URL}/api/docx2pdf`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: form
+  }, 60000);
+  await handleResponseError(response);
+  const blob = await response.blob();
+  const info = response.headers.get("X-Info");
+  return {
+    type: "file",
+    blob,
+    filename: "document.pdf",
+    ...(info ? {
+      info
+    } : {})
+  };
 }
 
 // ─── File conversion ──────────────────────────────────────────────

@@ -578,60 +578,319 @@ def _rl_fonts():
     except Exception:
         return 'Helvetica', 'Helvetica-Bold'
 
+
+def _do_docx2pdf(data: bytes, fn_regular: str, fn_bold: str) -> bytes:
+    """
+    CPU-bound DOCX→PDF conversion using python-docx + ReportLab.
+    Preserves: headings (H1–H4), bold/italic/underline/color/font-size,
+               paragraph alignment, tables (borders + alternating rows),
+               embedded images, bulleted & numbered lists.
+    Runs in _converter_pool (non-blocking).
+    """
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph as DocxParagraph
+    from docx.table import Table as DocxTable
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        Image as RLImage, PageBreak,
+    )
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
+    from PIL import Image as PILImage
+
+    doc = Document(io.BytesIO(data))
+    PAGE_W = A4[0] - 4 * cm  # usable text width
+
+    ALIGN_MAP = {
+        WD_ALIGN_PARAGRAPH.LEFT:    TA_LEFT,
+        WD_ALIGN_PARAGRAPH.CENTER:  TA_CENTER,
+        WD_ALIGN_PARAGRAPH.RIGHT:   TA_RIGHT,
+        WD_ALIGN_PARAGRAPH.JUSTIFY: TA_JUSTIFY,
+        None: TA_LEFT,
+    }
+
+    # ── Base styles ────────────────────────────────────────────────
+    S = {
+        'h1':  ParagraphStyle('h1',  fontName=fn_bold,    fontSize=20, leading=26, spaceAfter=8,  spaceBefore=18),
+        'h2':  ParagraphStyle('h2',  fontName=fn_bold,    fontSize=16, leading=21, spaceAfter=6,  spaceBefore=14),
+        'h3':  ParagraphStyle('h3',  fontName=fn_bold,    fontSize=13, leading=17, spaceAfter=5,  spaceBefore=10),
+        'h4':  ParagraphStyle('h4',  fontName=fn_bold,    fontSize=12, leading=15, spaceAfter=4,  spaceBefore=8),
+        'body':ParagraphStyle('body',fontName=fn_regular, fontSize=11, leading=16, spaceAfter=6),
+        'lb':  ParagraphStyle('lb',  fontName=fn_regular, fontSize=11, leading=16, spaceAfter=3,  leftIndent=18),
+        'ln':  ParagraphStyle('ln',  fontName=fn_regular, fontSize=11, leading=16, spaceAfter=3,  leftIndent=18),
+        'tc':  ParagraphStyle('tc',  fontName=fn_regular, fontSize=9,  leading=13),
+        'tch': ParagraphStyle('tch', fontName=fn_bold,    fontSize=9,  leading=13),
+    }
+
+    _style_ctr = [0]
+
+    def derived(base, alignment, extra_indent=0):
+        _style_ctr[0] += 1
+        return ParagraphStyle(
+            f'_d{_style_ctr[0]}',
+            parent=base,
+            alignment=alignment,
+            leftIndent=base.leftIndent + extra_indent,
+        )
+
+    def esc(t: str) -> str:
+        return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def runs_to_markup(para) -> str:
+        """Convert paragraph runs to ReportLab XML markup."""
+        if not para.runs:
+            return esc(para.text or "")
+        parts = []
+        for run in para.runs:
+            if not run.text:
+                continue
+            t = esc(run.text)
+            # Font color
+            try:
+                clr = run.font.color
+                if clr and clr.type and clr.rgb:
+                    t = f'<font color="#{clr.rgb}">{t}</font>'
+            except Exception:
+                pass
+            # Font size (only if meaningfully different from default 11pt)
+            try:
+                if run.font.size and run.font.size.pt:
+                    fs = round(run.font.size.pt)
+                    if fs > 0 and abs(fs - 11) > 1:
+                        t = f'<font size="{fs}">{t}</font>'
+            except Exception:
+                pass
+            if run.bold:      t = f'<b>{t}</b>'
+            if run.italic:    t = f'<i>{t}</i>'
+            if run.underline: t = f'<u>{t}</u>'
+            parts.append(t)
+        result = "".join(parts)
+        return result if result.strip() else esc(para.text or "")
+
+    def heading_level(element, para) -> int:
+        """Return heading level 1-4, or 0 for non-heading."""
+        style_name = (para.style.name or "").lower()
+        for n in (1, 2, 3, 4, 5, 6):
+            if f"heading {n}" in style_name or f"заголовок {n}" in style_name:
+                return min(n, 4)
+        # Fallback: check outline level in XML
+        try:
+            pPr = element.find(qn("w:pPr"))
+            if pPr is not None:
+                ol = pPr.find(qn("w:outlineLvl"))
+                if ol is not None:
+                    lvl = int(ol.get(qn("w:val"), 9))
+                    if lvl <= 3:
+                        return lvl + 1
+        except Exception:
+            pass
+        return 0
+
+    # ── Extract images from relationships ──────────────────────────
+    images: dict[str, bytes] = {}
+    try:
+        for rel in doc.part.rels.values():
+            if "image" in rel.reltype:
+                images[rel.rId] = rel.target_part.blob
+    except Exception:
+        pass
+
+    # ── Track numbered list counters per numId ─────────────────────
+    list_counters: dict[str, int] = {}
+
+    # ── Build story ────────────────────────────────────────────────
+    story = []
+
+    for element in doc.element.body:
+        tag = element.tag.split("}")[-1] if "}" in element.tag else element.tag
+
+        # ── Paragraph ─────────────────────────────────────────────
+        if tag == "p":
+            para = DocxParagraph(element, doc)
+            style_name = (para.style.name or "").lower()
+
+            # Images inside this paragraph
+            for blip in element.findall(".//" + qn("a:blip")):
+                rId = blip.get(qn("r:embed")) or blip.get(qn("r:link"))
+                if rId and rId in images:
+                    try:
+                        buf = io.BytesIO(images[rId])
+                        pil = PILImage.open(buf)
+                        iw, ih = pil.size
+                        if iw > PAGE_W:
+                            ratio = PAGE_W / iw
+                            iw, ih = PAGE_W, ih * ratio
+                        out_buf = io.BytesIO()
+                        pil.convert("RGB").save(out_buf, format="PNG")
+                        out_buf.seek(0)
+                        story.append(RLImage(out_buf, width=iw, height=ih))
+                        story.append(Spacer(1, 6))
+                    except Exception:
+                        pass
+
+            markup = runs_to_markup(para)
+            if not markup.strip():
+                story.append(Spacer(1, 3))
+                continue
+
+            align = ALIGN_MAP.get(para.alignment, TA_LEFT)
+            hlvl = heading_level(element, para)
+
+            if hlvl == 1:
+                st = derived(S["h1"], align)
+            elif hlvl == 2:
+                st = derived(S["h2"], align)
+            elif hlvl == 3:
+                st = derived(S["h3"], align)
+            elif hlvl >= 4:
+                st = derived(S["h4"], align)
+            elif "list bullet" in style_name or "list paragraph" in style_name:
+                markup = f"• {markup}"
+                st = derived(S["lb"], align)
+            elif "list number" in style_name:
+                # Simple auto-numbering per numId
+                try:
+                    numId = element.find(".//" + qn("w:numId"))
+                    key = numId.get(qn("w:val"), "0") if numId is not None else "0"
+                except Exception:
+                    key = "0"
+                list_counters[key] = list_counters.get(key, 0) + 1
+                markup = f"{list_counters[key]}. {markup}"
+                st = derived(S["ln"], align)
+            else:
+                st = derived(S["body"], align)
+
+            try:
+                story.append(Paragraph(markup, st))
+            except Exception:
+                # Markup parse error — fall back to plain text
+                story.append(Paragraph(esc(para.text or ""), S["body"]))
+
+        # ── Table ─────────────────────────────────────────────────
+        elif tag == "tbl":
+            table = DocxTable(element, doc)
+            rows_data = []
+            for r_idx, row in enumerate(table.rows):
+                row_cells = []
+                is_header = r_idx == 0
+                for cell in row.cells:
+                    cell_para_text = " ".join(p.text for p in cell.paragraphs).strip()
+                    row_cells.append(Paragraph(esc(cell_para_text),
+                                               S["tch"] if is_header else S["tc"]))
+                rows_data.append(row_cells)
+
+            if rows_data:
+                col_n = max(len(r) for r in rows_data)
+                col_w = PAGE_W / col_n if col_n else PAGE_W
+                tbl = Table(rows_data, colWidths=[col_w] * col_n, repeatRows=1)
+                tbl.setStyle(TableStyle([
+                    ("BACKGROUND",    (0, 0), (-1,  0), colors.HexColor("#e8e8e8")),
+                    ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f7f7")]),
+                    ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#bbbbbb")),
+                    ("TOPPADDING",    (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+                    ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+                    ("WORDWRAP",      (0, 0), (-1, -1), "WORD"),
+                ]))
+                story.append(tbl)
+                story.append(Spacer(1, 10))
+
+        # ── Page break ────────────────────────────────────────────
+        elif tag == "sectPr":
+            pass  # section properties — skip
+
+    if not story:
+        story.append(Paragraph("(Bo'sh hujjat)", S["body"]))
+
+    # ── Build PDF ─────────────────────────────────────────────────
+    out = io.BytesIO()
+    pdf_doc = SimpleDocTemplate(
+        out, pagesize=A4,
+        leftMargin=2 * cm, rightMargin=2 * cm,
+        topMargin=2.5 * cm, bottomMargin=2.5 * cm,
+        title=doc.core_properties.title or "EduBot Document",
+        author="EduBot",
+    )
+    pdf_doc.build(story)
+    return out.getvalue()
+
+
 @app.post("/api/docx2pdf")
 @limiter.limit("10/minute")
 async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
     try:
-        import mammoth
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-        from reportlab.lib.styles import ParagraphStyle
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import cm
-
         data = await file.read()
         check_size(data, "/api/docx2pdf")
         fn, fn_bold = _rl_fonts()
 
-        result = mammoth.convert_to_html(io.BytesIO(data))
-        # Strip HTML tags to get readable text with basic structure
-        html = result.value
-        import re as _re
-        # Convert headings
-        html = _re.sub(r'<h[1-3][^>]*>(.*?)</h[1-3]>', r'\n### \1\n', html, flags=_re.DOTALL)
-        html = _re.sub(r'<li[^>]*>(.*?)</li>', r'\n• \1', html, flags=_re.DOTALL)
-        html = _re.sub(r'<p[^>]*>(.*?)</p>', r'\1\n', html, flags=_re.DOTALL)
-        html = _re.sub(r'<br\s*/?>', '\n', html)
-        html = _re.sub(r'<[^>]+>', '', html)
-        import html as _html
-        text = _html.unescape(html)
+        # ── 1. Fayl validatsiyasi ─────────────────────────────────
+        fname = (file.filename or "").lower()
+        if fname.endswith(".doc") and not fname.endswith(".docx"):
+            raise HTTPException(status_code=400,
+                detail="Eski .doc format qo'llab-quvvatlanmaydi. "
+                       "Faylni Microsoft Word'da ochib, 'Word hujjati (.docx)' formatida saqlang.")
 
-        out = io.BytesIO()
-        doc = SimpleDocTemplate(out, pagesize=A4,
-                                leftMargin=2*cm, rightMargin=2*cm,
-                                topMargin=2*cm, bottomMargin=2*cm)
-        h_style = ParagraphStyle('h', fontName=fn_bold, fontSize=14, spaceAfter=6, spaceBefore=10)
-        p_style = ParagraphStyle('p', fontName=fn, fontSize=11, leading=16, spaceAfter=6)
+        # ── 2. Hujjat tarkibini oldindan tekshirish ───────────────
+        try:
+            from docx import Document as _DocCheck
+            _doc_check = _DocCheck(io.BytesIO(data))
+            para_count  = sum(1 for p in _doc_check.paragraphs if p.text.strip())
+            table_count = len(_doc_check.tables)
+            del _doc_check
+        except Exception as e:
+            raise HTTPException(status_code=422,
+                detail="DOCX fayl ochib bo'lmadi. Fayl buzilgan yoki parol bilan himoyalangan.")
 
-        story = []
-        for line in text.split('\n'):
-            s = line.strip()
-            if not s:
-                story.append(Spacer(1, 6))
-            elif s.startswith('###'):
-                story.append(Paragraph(s[3:].strip(), h_style))
-            else:
-                story.append(Paragraph(s, p_style))
-        doc.build(story)
-        pdf_bytes = out.getvalue()
-        logger.info(f"docx2pdf: {len(data)//1024}KB → {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
-        return Response(content=pdf_bytes, media_type="application/pdf",
-                        headers={"Content-Disposition": "attachment; filename=document.pdf"})
+        if para_count == 0 and table_count == 0:
+            raise HTTPException(status_code=422, detail="Hujjat bo'sh (matn yoki jadval topilmadi).")
+
+        # ── 3. Thread pool'da konversiya (60s timeout) ────────────
+        loop = asyncio.get_event_loop()
+        try:
+            pdf_bytes = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_docx2pdf, data, fn, fn_bold),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail="Konversiya 60 soniyadan oshdi. Hujjat juda katta yoki murakkab.")
+
+        if len(pdf_bytes) < 500:
+            raise HTTPException(status_code=500, detail="Konversiya natijasi bo'sh. Qayta urinib ko'ring.")
+
+        # ── 4. Info xabar ─────────────────────────────────────────
+        info_parts = [f"✅ {para_count} paragraf"]
+        if table_count:
+            info_parts.append(f"{table_count} jadval")
+        info_parts.append("aylantiriLdi")
+        info = " · ".join(info_parts)
+
+        logger.info(f"docx2pdf: {para_count}p+{table_count}t, "
+                    f"{len(data)//1024}KB → {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=document.pdf",
+                "X-Info": info,
+            },
+        )
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"docx2pdf xato: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500,
+            detail="Kutilmagan xatolik. Fayl buzilgan yoki qo'llab-quvvatlanmaydi.")
 
 # ─── Image → PDF ──────────────────────────────────────────────────────────────
 

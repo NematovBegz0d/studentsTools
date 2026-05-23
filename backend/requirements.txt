@@ -6,6 +6,7 @@ rembg==2.0.57
 pytesseract==0.3.10
 Pillow==10.3.0
 pdf2docx==0.5.8
+python-docx
 slowapi==0.1.9
 loguru==0.7.2
 mammoth
