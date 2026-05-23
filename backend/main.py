@@ -1654,31 +1654,79 @@ async def compress_pptx(request: Request, file: UploadFile = File(...)):
 
 # ─── Image compress ───────────────────────────────────────────────────────────
 
+_IMGCOMPRESS_MAX_DIM = 4000
+_IMGCOMPRESS_ALLOWED = {b"\xff\xd8\xff", b"\x89PNG", b"RIFF", b"WEBP"}  # JPEG, PNG, WebP
+
+
+def _do_imgcompress(data: bytes) -> tuple:
+    from PIL import Image, ImageOps
+
+    orig_size = len(data)
+    img = Image.open(io.BytesIO(data))
+
+    # Fix EXIF rotation so portrait photos are not sideways
+    img = ImageOps.exif_transpose(img)
+
+    w, h = img.width, img.height
+    ratio = min(1.0, _IMGCOMPRESS_MAX_DIM / max(w, h))
+    if ratio < 1.0:
+        img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+
+    if img.mode not in ("RGB",):
+        img = img.convert("RGB")
+
+    # Adaptive quality: larger source → more aggressive compression
+    if orig_size > 3 * 1024 * 1024:
+        quality = 65
+    elif orig_size > 1024 * 1024:
+        quality = 72
+    else:
+        quality = 82
+
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=quality, optimize=True)
+    out_bytes = out.getvalue()
+
+    # Never return a larger file than the original
+    if len(out_bytes) >= orig_size:
+        out_bytes = data
+        quality = 0  # signal: unchanged
+
+    saved = max(0, round((1 - len(out_bytes) / orig_size) * 100))
+    final_w, final_h = img.width, img.height
+    info = f"{w}×{h} → {final_w}×{final_h}, q={quality if quality else 'orig'}, saved {saved}%"
+    return out_bytes, info, saved
+
+
 @app.post("/api/imgcompress")
 @limiter.limit("20/minute")
 async def img_compress(request: Request, file: UploadFile = File(...)):
     try:
-        from PIL import Image
         data = await file.read()
         check_size(data, "/api/imgcompress")
-        img = Image.open(io.BytesIO(data))
-        MAX_DIM = 1920
-        ratio = min(1.0, MAX_DIM / max(img.width, img.height))
-        if ratio < 1.0:
-            img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
-        if img.mode not in ('RGB',):
-            img = img.convert('RGB')
-        out = io.BytesIO()
-        img.save(out, format='JPEG', quality=72, optimize=True)
-        out_bytes = out.getvalue()
-        saved = max(0, round((1 - len(out_bytes) / len(data)) * 100))
-        return Response(content=out_bytes, media_type="image/jpeg",
-                        headers={"Content-Disposition": "attachment; filename=compressed.jpg",
-                                 "X-Saved-Percent": str(saved)})
+        if len(data) < 4:
+            raise HTTPException(status_code=400, detail="Invalid image file")
+        loop = asyncio.get_event_loop()
+        try:
+            out_bytes, info, saved = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_imgcompress, data),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="Image compression timed out")
+        return Response(
+            content=out_bytes,
+            media_type="image/jpeg",
+            headers={
+                "Content-Disposition": "attachment; filename=compressed.jpg",
+                "X-Info": info,
+                "X-Saved-Percent": str(saved),
+            },
+        )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Image compression failed")
 
 # ─── Background removal ───────────────────────────────────────────────────────
 

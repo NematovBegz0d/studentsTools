@@ -492,8 +492,22 @@ async function compresspptx({
 async function imgcompress({
   file
 }) {
-  validateFile(file, ".jpg,.png");
-  return apiFileWithSavedInfo("/api/imgcompress", buildFormData("file", file), "compressed.jpg");
+  validateFile(file, ".jpg,.jpeg,.png,.webp");
+  const response = await fetchWithTimeout(`${BACKEND_URL}/api/imgcompress`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: buildFormData("file", file)
+  }, 30000);
+  await handleResponseError(response);
+  const blob = await response.blob();
+  const info = response.headers.get("X-Info") || "";
+  const saved = response.headers.get("X-Saved-Percent");
+  return {
+    type: "file",
+    blob,
+    filename: "compressed.jpg",
+    info: info || (saved ? `${saved}% kichiklashdi` : undefined)
+  };
 }
 
 // ─── AI (with mobile fallback) ────────────────────────────────────
