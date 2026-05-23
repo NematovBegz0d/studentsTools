@@ -103,6 +103,16 @@ async def lifespan(app: FastAPI):
             logger.error(f"Webhook ulanishda xato: {e}")
     else:
         logger.warning("BOT_TOKEN yoki RAILWAY_PUBLIC_DOMAIN yo'q")
+
+    # ── Rembg modelini oldindan yuklash ──────────────────────────────
+    # Birinchi so'rovda 60+ soniya kutilmasligi uchun startup'da yuklanadi
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, get_rembg_session)
+        logger.info("rembg model preloaded ✓")
+    except Exception as e:
+        logger.warning(f"rembg preload muvaffaqiyatsiz (birinchi so'rovda yuklanadi): {e}")
+
     yield
     logger.info("EduBot Backend to'xtatilmoqda...")
     global _rembg_session
@@ -1551,27 +1561,47 @@ async def img_compress(request: Request, file: UploadFile = File(...)):
 @app.post("/api/bgremove")
 @limiter.limit("5/minute")
 async def bgremove(request: Request):
+    import base64, functools
+    from rembg import remove
     t0 = time.time()
     try:
-        from rembg import remove
-        import base64
         ct = request.headers.get("content-type", "")
         if "multipart" in ct:
             form = await request.form()
-            f = form.get("file")
+            f    = form.get("file")
             data = await f.read()
         else:
             body = await request.json()
             data = base64.b64decode(body["data"])
+
         check_size(data, "/api/bgremove")
-        result = remove(data, session=get_rembg_session())
+
+        session = get_rembg_session()   # instant after preload
+        loop    = asyncio.get_event_loop()
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    _converter_pool,
+                    functools.partial(remove, data, session=session),
+                ),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail="Fon olib tashlash 60 soniyadan oshdi. Kichikroq rasm yuklang.")
+
         logger.info(f"bgremove: {len(data)//1024}KB → {len(result)//1024}KB, {time.time()-t0:.1f}s")
-        return Response(content=result, media_type="image/png",
-                        headers={"Content-Disposition": "attachment; filename=no-bg.png"})
+        return Response(
+            content=result,
+            media_type="image/png",
+            headers={"Content-Disposition": "attachment; filename=no-bg.png"},
+        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"bgremove xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="Fon olib tashlashda xato. JPG yoki PNG rasm yuklang.")
 
 # ─── OCR helpers ──────────────────────────────────────────────────────────────
 
