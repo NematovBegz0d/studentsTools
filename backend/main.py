@@ -1770,51 +1770,111 @@ async def ocr(request: Request):
 
 # ─── Translit ─────────────────────────────────────────────────────────────────
 
-@app.post("/api/translit")
-@limiter.limit("60/minute")
-async def translit(request: Request):
-    body = await request.json()
-    text = body.get("text", "")
-    LTR = {
-        "sh": "ш", "ch": "ч", "yo": "ё", "ye": "е", "yu": "ю", "ya": "я", "ts": "ц",
-        "o'": "ў", "g'": "ғ",
-        "a": "а", "b": "б", "v": "в", "d": "д", "e": "е", "f": "ф", "g": "г", "h": "ҳ",
-        "i": "и", "j": "ж", "k": "к", "l": "л", "m": "м", "n": "н", "o": "о", "p": "п",
-        "q": "қ", "r": "р", "s": "с", "t": "т", "u": "у", "x": "х", "y": "й", "z": "з",
-        "'": "ъ",
-    }
-    RTL = {
-        "ш": "sh", "ч": "ch", "ё": "yo", "ю": "yu", "я": "ya", "ц": "ts", "ў": "o'", "ғ": "g'",
-        "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ж": "j", "з": "z",
-        "и": "i", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p",
-        "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f", "х": "x", "қ": "q", "ҳ": "h", "ъ": "'",
-    }
-    is_cyr = bool(re.search(r'[а-яёА-ЯЁ]', text))
-    if is_cyr:
-        out = ""
-        for c in text:
-            lc = c.lower()
-            m = RTL.get(lc, c)
-            out += (m[0].upper() + m[1:]) if (c != lc and m != c) else m
-        return JSONResponse({"result": out})
-    MULTI = ["sh", "ch", "yo", "ye", "yu", "ya", "ts", "o'", "g'"]
-    out = ""
+# Latin (Uzbek) → Cyrillic
+_LTR_MAP = {
+    # digraphs first (checked before single chars)
+    "sh": "ш", "ch": "ч",
+    "yo": "ё", "ye": "е", "yu": "ю", "ya": "я",
+    "ts": "ц",
+    # o' variants: apostrophe (U+0027), modifier-turned-comma (U+02BB),
+    # modifier-apostrophe (U+02BC), right-single-quote (U+2019)
+    "o’": "ў", "oʻ": "ў", "oʼ": "ў", "o'": "ў",
+    # g' variants
+    "g’": "ғ", "gʻ": "ғ", "gʼ": "ғ", "g'": "ғ",
+    # single letters
+    "a": "а", "b": "б", "v": "в", "d": "д", "e": "е",
+    "f": "ф", "g": "г", "h": "ҳ", "i": "и", "j": "ж",
+    "k": "к", "l": "л", "m": "м", "n": "н", "o": "о",
+    "p": "п", "q": "қ", "r": "р", "s": "с", "t": "т",
+    "u": "у", "x": "х", "y": "й", "z": "з",
+    # standalone apostrophe variants → ъ
+    "'": "ъ", "ʻ": "ъ", "ʼ": "ъ", "’": "ъ",
+}
+# ordered: longer keys first so digraphs are matched before single chars
+_LTR_MULTI = [k for k in _LTR_MAP if len(k) == 2]
+
+# Cyrillic → Latin (Uzbek)
+_RTL_MAP = {
+    "ш": "sh", "ч": "ch",
+    "ё": "yo", "ю": "yu", "я": "ya",
+    "ц": "ts", "ў": "o'", "ғ": "g'",
+    "а": "a",  "б": "b",  "в": "v",  "г": "g",  "д": "d",
+    "е": "e",  "э": "e",  "ж": "j",  "з": "z",
+    "и": "i",  "й": "y",  "к": "k",  "л": "l",  "м": "m",
+    "н": "n",  "о": "o",  "п": "p",  "р": "r",  "с": "s",
+    "т": "t",  "у": "u",  "ф": "f",  "х": "x",
+    "қ": "q",  "ҳ": "h",  "ъ": "'",  "ь": "",
+}
+
+
+def _translit_ltr(text: str) -> str:
+    """Uzbek Latin → Cyrillic."""
+    out = []
     i = 0
-    while i < len(text):
+    n = len(text)
+    while i < n:
         matched = False
-        for key in MULTI:
-            if text[i:i+len(key)].lower() == key:
-                c0 = LTR[key]
-                out += c0.upper() if text[i].isupper() else c0
-                i += len(key)
+        for key in _LTR_MULTI:
+            kl = len(key)
+            if text[i:i + kl].lower() == key:
+                cyr = _LTR_MAP[key]
+                out.append(cyr.upper() if text[i].isupper() else cyr)
+                i += kl
                 matched = True
                 break
         if not matched:
             c = text[i]
-            m = LTR.get(c.lower(), c)
-            out += m.upper() if (c.isupper() and not c.islower()) else m
+            m = _LTR_MAP.get(c.lower(), c)
+            out.append(m.upper() if c.isupper() else m)
             i += 1
-    return JSONResponse({"result": out})
+    return "".join(out)
+
+
+def _translit_rtl(text: str) -> str:
+    """Uzbek Cyrillic → Latin.
+
+    Handles three case patterns:
+      lowercase  → lowercase  (salom → salom)
+      Title-case → Title-case (Salom → Salom, Sh → Sh)
+      ALL-CAPS   → ALL-CAPS   (SALOM → SALOM, SH → SH)
+    """
+    out = []
+    chars = list(text)
+    n = len(chars)
+    for idx, c in enumerate(chars):
+        lc = c.lower()
+        m = _RTL_MAP.get(lc, c)
+        if not m:           # soft sign → skip
+            continue
+        if c.isupper() and lc != c:
+            # Look ahead: if next alphabetic char is also uppercase → ALL-CAPS
+            next_alpha = next(
+                (chars[j] for j in range(idx + 1, min(idx + 4, n))
+                 if chars[j].isalpha()),
+                None,
+            )
+            if next_alpha and next_alpha.isupper():
+                out.append(m.upper())          # ALL-CAPS: SH, CH, YO …
+            else:
+                out.append(m[0].upper() + m[1:])  # Title: Sh, Ch, Yo …
+        else:
+            out.append(m)
+    return "".join(out)
+
+
+@app.post("/api/translit")
+@limiter.limit("60/minute")
+async def translit(request: Request):
+    body = await request.json()
+    text = str(body.get("text", "")).strip()
+    if not text:
+        return JSONResponse({"result": ""})
+    if len(text) > 50_000:
+        text = text[:50_000]
+    # Detect by Uzbek Cyrillic letters (including ў қ ғ ҳ)
+    is_cyr = bool(re.search(r'[а-яёА-ЯЁўқғҳ]', text))
+    result = _translit_rtl(text) if is_cyr else _translit_ltr(text)
+    return JSONResponse({"result": result})
 
 # ─── Readtime ─────────────────────────────────────────────────────────────────
 
