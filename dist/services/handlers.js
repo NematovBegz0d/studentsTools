@@ -324,24 +324,26 @@ async function pdftext({
   };
 }
 async function pdflock({
-  file
+  file,
+  text
 }) {
   validateFile(file, ".pdf");
   const form = buildFormData("file", file);
+  if (text && text.trim()) form.append("password", sanitizeText(text.trim(), 64));
   const response = await fetchWithTimeout(`${BACKEND_URL}/api/pdflock`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: form
-  });
+  }, 45000);
   await handleResponseError(response);
   const blob = await response.blob();
-  // ✅ FIX: Fallback password if header missing
-  const password = response.headers.get("X-Password") || "EduBot123";
+  const password = response.headers.get("X-Password") || "???";
+  const info = response.headers.get("X-Info");
   return {
     type: "file",
     blob,
     filename: "locked.pdf",
-    info: `🔑 Parol: ${password}`
+    info: `🔑 Parol: ${password}${info ? ` • ${info}` : ""}`
   };
 }
 async function watermark({

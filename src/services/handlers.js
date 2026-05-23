@@ -359,23 +359,24 @@ async function pdftext({ file }) {
   return { type: "text", content: result };
 }
 
-async function pdflock({ file }) {
+async function pdflock({ file, text }) {
   validateFile(file, ".pdf");
   const form = buildFormData("file", file);
-  const response = await fetchWithTimeout(`${BACKEND_URL}/api/pdflock`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: form,
-  });
+  if (text && text.trim()) form.append("password", sanitizeText(text.trim(), 64));
+  const response = await fetchWithTimeout(
+    `${BACKEND_URL}/api/pdflock`,
+    { method: "POST", headers: getAuthHeaders(), body: form },
+    45000,
+  );
   await handleResponseError(response);
   const blob = await response.blob();
-  // ✅ FIX: Fallback password if header missing
-  const password = response.headers.get("X-Password") || "EduBot123";
+  const password = response.headers.get("X-Password") || "???";
+  const info = response.headers.get("X-Info");
   return {
     type: "file",
     blob,
     filename: "locked.pdf",
-    info: `🔑 Parol: ${password}`,
+    info: `🔑 Parol: ${password}${info ? ` • ${info}` : ""}`,
   };
 }
 

@@ -806,9 +806,12 @@ const TEXT_HINTS = {
   qr: "QR kod uchun matn yoki URL",
   cert: "1-qator: Ism Familiya\n2-qator: Kurs nomi",
   schedule: "Har qatorda bir dars: Dushanba: Matematika 9:00",
-  pdflock: "Parol kiriting",
+  pdflock: "Parol kiriting (bo'sh qolsa avtomatik yaratiladi)",
   watermark: "Watermark matni (bo'sh qoldirilsa EduBot yoziladi)",
 };
+
+// File services that also need an optional text input (e.g. password, label)
+const EXTRA_TEXT_IDS = new Set(["pdflock", "watermark"]);
 
 // ─── Main ServiceSheet ────────────────────────────────────────────
 function ServiceSheet({
@@ -824,11 +827,13 @@ function ServiceSheet({
   const [inputData, setInputData] = useS(null);
   const [hasInput, setHasInput] = useS(false);
   const [result, setResult] = useS(null);
+  const [extraText, setExtraText] = useS("");
 
   const meta = isPremium ? t.p?.[service.id] : t.s?.[service.id];
   if (!meta) return null;
 
   const acceptText = !service.accept;
+  const needsExtraText = !acceptText && EXTRA_TEXT_IDS.has(service.id);
   const catColor = CAT_COLOR?.[service.cat] || "#a78bfa";
   const iconColor = isPremium ? "#fbbf24" : catColor;
 
@@ -869,9 +874,9 @@ function ServiceSheet({
         arg = { text: String(inputData || "").trim() };
       } else if (service.multi) {
         const files = Array.isArray(inputData) ? inputData : [inputData];
-        arg = { files, file: files[0], text: "" };
+        arg = { files, file: files[0], text: needsExtraText ? extraText.trim() : "" };
       } else {
-        arg = { file: inputData, text: "" };
+        arg = { file: inputData, text: needsExtraText ? extraText.trim() : "" };
       }
 
       const res = await handler(arg);
@@ -982,6 +987,27 @@ function ServiceSheet({
               onPick={(data) => {
                 setInputData(data);
                 setHasInput(true);
+              }}
+            />
+          )}
+          {needsExtraText && (
+            <input
+              type={service.id === "pdflock" ? "password" : "text"}
+              placeholder={TEXT_HINTS[service.id] || ""}
+              value={extraText}
+              onChange={(e) => setExtraText(e.target.value)}
+              maxLength={service.id === "pdflock" ? 64 : 200}
+              style={{
+                marginTop: 10,
+                width: "100%",
+                padding: "10px 14px",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid var(--border-medium)",
+                background: "var(--bg-surface-2)",
+                color: "var(--text-primary)",
+                fontSize: 15,
+                outline: "none",
+                boxSizing: "border-box",
               }}
             />
           )}

@@ -14,6 +14,7 @@ import math
 import time
 import uuid
 import asyncio
+import secrets
 import zipfile
 import tempfile
 import httpx
@@ -335,30 +336,64 @@ async def pdf_text(request: Request, file: UploadFile = File(...)):
 
 # ─── PDF: Lock ────────────────────────────────────────────────────────────────
 
+def _do_pdflock(data: bytes, password: str) -> tuple:
+    from pypdf import PdfReader, PdfWriter
+    reader = PdfReader(io.BytesIO(data))
+    if reader.is_encrypted:
+        raise ValueError("PDF allaqachon parol bilan himoyalangan.")
+    n = len(reader.pages)
+    if n == 0:
+        raise ValueError("PDF bo'sh (0 sahifa).")
+    if n > 200:
+        raise ValueError(f"PDF {n} sahifa. Maksimal 200 sahifa qabul qilinadi.")
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    try:
+        writer.encrypt(password, algorithm="AES-256")
+    except TypeError:
+        writer.encrypt(password)  # older pypdf fallback
+    out = io.BytesIO()
+    writer.write(out)
+    info = f"{n} sahifa • AES-256 himoyalangan"
+    return out.getvalue(), info
+
 @app.post("/api/pdflock")
 @limiter.limit("15/minute")
-async def lock_pdf(request: Request, file: UploadFile = File(...)):
+async def lock_pdf(request: Request, file: UploadFile = File(...),
+                   password: str = Form("")):
     t0 = time.time()
     try:
-        from pypdf import PdfReader, PdfWriter
         data = await file.read()
         check_size(data, "/api/pdflock")
-        password = "EduBot123"
-        reader = PdfReader(io.BytesIO(data))
-        writer = PdfWriter()
-        for page in reader.pages:
-            writer.add_page(page)
-        writer.encrypt(password)
-        out = io.BytesIO()
-        writer.write(out)
-        logger.info(f"pdflock: {time.time()-t0:.1f}s")
-        return Response(content=out.getvalue(), media_type="application/pdf",
-                        headers={"Content-Disposition": "attachment; filename=locked.pdf",
-                                 "X-Password": password})
+        if data[:4] != b'%PDF':
+            raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+        pwd = password.strip()[:64] if password.strip() else secrets.token_urlsafe(9)[:12]
+        loop = asyncio.get_event_loop()
+        try:
+            out_bytes, info = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_pdflock, data, pwd),
+                timeout=45.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail="Parol qo'yish 45 soniyadan oshdi. Kichikroq fayl tanlang.")
+        logger.info(f"pdflock: {len(data)//1024}KB, {info}, {time.time()-t0:.1f}s")
+        return Response(
+            content=out_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=locked.pdf",
+                "X-Password": pwd,
+                "X-Info": info,
+            },
+        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"pdflock xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="Parol qo'yishda xato. Fayl buzilgan bo'lishi mumkin.")
 
 # ─── PDF: Watermark ───────────────────────────────────────────────────────────
 
