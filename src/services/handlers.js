@@ -539,10 +539,6 @@ async function stats({ text }) {
   return apiText("/api/stats", { text: sanitizeText(text, 1000) });
 }
 
-async function equation({ text }) {
-  return apiText("/api/equation", { text: sanitizeText(text, 500) });
-}
-
 async function translate({ text }) {
   if (!text?.trim()) throw new Error("Tarjima uchun matn kiriting.");
   return apiText("/api/translate", { text: sanitizeText(text) });
@@ -559,12 +555,6 @@ async function books({ text }) {
 }
 
 // ─── Visual generators ────────────────────────────────────────────
-
-async function graph({ text }) {
-  if (!text?.trim())
-    throw new Error("Funksiya kiriting (masalan: sin(x), x^2).");
-  return apiImage("/api/graph", { text: sanitizeText(text, 500) }, "graph.png");
-}
 
 async function qr({ text }) {
   if (!text?.trim()) throw new Error("QR kod uchun matn yoki URL kiriting.");
@@ -643,8 +633,6 @@ const SERVICE_HANDLERS = {
   readtime,
   deadline,
   stats,
-  equation,
-  graph,
   // API proxy
   translate,
   wiki,

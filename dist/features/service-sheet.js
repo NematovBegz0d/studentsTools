@@ -731,8 +731,6 @@ const TEXT_HINTS = {
   readtime: "O'qish vaqtini hisoblash uchun matn kiriting...",
   deadline: "Sana kiriting: 31.12.2025 yoki 2025-12-31",
   stats: "Raqamlar kiriting: 4 7 2 9 1 5",
-  equation: "Ifoda kiriting: 2^10, sqrt(144), sin(pi/2)",
-  graph: "Funksiya: sin(x), x^2, cos(x)*x+1",
   translate: "1-qator: matn\n2-qator: til kodi (en, ru, tr, de...)",
   wiki: "Maqola nomi kiriting (uz, ru, en da)",
   books: "Kitob nomi yoki muallif",

@@ -41,18 +41,6 @@ FONT_BOLD    = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
 logger.remove()
 logger.add(sys.stdout, format="{time:HH:mm:ss} | {level:<7} | {message}", level="INFO")
 
-# ─── Matplotlib setup (non-interactive) ─────────────────────────────────────
-
-try:
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    import numpy as np
-    matplotlib.rcParams['font.family'] = 'DejaVu Sans'
-    _MPL_OK = True
-except Exception:
-    _MPL_OK = False
-
 # ─── Rate limiter ─────────────────────────────────────────────────────────────
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
@@ -174,7 +162,7 @@ def health():
         "status": "ok", "version": "2.0.0",
         "uptime": int(time.time() - _start_time),
         "ocr": ocr_ok, "rembg_ready": _rembg_session is not None,
-        "matplotlib": _MPL_OK, "max_file_mb": MAX_FILE_MB,
+        "max_file_mb": MAX_FILE_MB,
     }
 
 # ─── Telegram Webhook ─────────────────────────────────────────────────────────
@@ -1936,70 +1924,6 @@ async def stats(request: Request):
         f"σ² Dispersiya: {var:.4f}\nσ Standart og'ish: {var**0.5:.4f}\n"
         f"Min: {s[0]:g}  Max: {s[-1]:g}"
     )})
-
-# ─── Equation ─────────────────────────────────────────────────────────────────
-
-@app.post("/api/equation")
-@limiter.limit("60/minute")
-async def equation(request: Request):
-    body = await request.json()
-    expr = body.get("text", "").strip()
-    if not expr:
-        return JSONResponse({"result": "❌ Ifoda kiriting. Misol: 2^10, sqrt(144), sin(pi/2)"})
-    safe_expr = expr.replace("^", "**")
-    safe_ns = {
-        "sin": math.sin, "cos": math.cos, "tan": math.tan, "asin": math.asin,
-        "acos": math.acos, "atan": math.atan, "sqrt": math.sqrt,
-        "log": math.log, "log10": math.log10, "exp": math.exp,
-        "abs": abs, "round": round, "floor": math.floor, "ceil": math.ceil,
-        "pi": math.pi, "e": math.e, "__builtins__": {},
-    }
-    try:
-        result = eval(safe_expr, safe_ns)
-        fmt = f"{result:.10g}" if isinstance(result, float) else str(result)
-        return JSONResponse({"result": f"✅ {expr} = {fmt}"})
-    except Exception as ex:
-        return JSONResponse({"result": f"❌ {str(ex)}\n\nMisol: 2^10, sqrt(144), sin(pi/2), 3*4+2"})
-
-# ─── Graph ────────────────────────────────────────────────────────────────────
-
-@app.post("/api/graph")
-@limiter.limit("20/minute")
-async def graph(request: Request):
-    body = await request.json()
-    expr = body.get("text", "sin(x)").strip() or "sin(x)"
-    if not _MPL_OK:
-        raise HTTPException(status_code=503, detail="Matplotlib mavjud emas")
-    try:
-        safe_expr = expr.replace("^", "**")
-        x = np.linspace(-10, 10, 600)
-        safe_ns = {
-            "x": x, "sin": np.sin, "cos": np.cos, "tan": np.tan,
-            "sqrt": np.sqrt, "log": np.log, "exp": np.exp,
-            "abs": np.abs, "pi": np.pi, "e": np.e, "__builtins__": {},
-        }
-        y = eval(safe_expr, safe_ns)
-        y = np.where(np.isfinite(y), y, np.nan)
-
-        fig, ax = plt.subplots(figsize=(7, 4.5), facecolor="#0d0d18")
-        ax.set_facecolor("#0d0d18")
-        ax.plot(x, y, color="#8b5cf6", linewidth=2.5)
-        ax.axhline(0, color="white", linewidth=0.8, alpha=0.3)
-        ax.axvline(0, color="white", linewidth=0.8, alpha=0.3)
-        ax.grid(True, alpha=0.08, color="white")
-        ax.tick_params(colors="#aaaaaa", labelsize=9)
-        for sp in ax.spines.values():
-            sp.set_edgecolor("#333333")
-        ax.set_title(f"f(x) = {expr}", color="#cccccc", fontsize=12, pad=10)
-        plt.tight_layout()
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png", dpi=120, bbox_inches="tight", facecolor="#0d0d18")
-        plt.close(fig)
-        buf.seek(0)
-        return Response(content=buf.read(), media_type="image/png")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Xatolik: {str(e)}\nMisol: sin(x), x^2, cos(x)*x")
 
 # ─── QR Code ──────────────────────────────────────────────────────────────────
 

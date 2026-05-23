@@ -558,13 +558,6 @@ async function stats({
     text: sanitizeText(text, 1000)
   });
 }
-async function equation({
-  text
-}) {
-  return apiText("/api/equation", {
-    text: sanitizeText(text, 500)
-  });
-}
 async function translate({
   text
 }) {
@@ -592,14 +585,6 @@ async function books({
 
 // ─── Visual generators ────────────────────────────────────────────
 
-async function graph({
-  text
-}) {
-  if (!text?.trim()) throw new Error("Funksiya kiriting (masalan: sin(x), x^2).");
-  return apiImage("/api/graph", {
-    text: sanitizeText(text, 500)
-  }, "graph.png");
-}
 async function qr({
   text
 }) {
@@ -688,8 +673,6 @@ const SERVICE_HANDLERS = {
   readtime,
   deadline,
   stats,
-  equation,
-  graph,
   // API proxy
   translate,
   wiki,

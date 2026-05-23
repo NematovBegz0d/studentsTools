@@ -122,22 +122,8 @@ const FREE_SERVICES = [
   ai: false,
   input: 'text'
 },
-// Matematika (3)
+// Matematika (1)
 {
-  id: 'equation',
-  cat: 'math',
-  icon: '🧮',
-  new: false,
-  ai: false,
-  input: 'text'
-}, {
-  id: 'graph',
-  cat: 'math',
-  icon: '📈',
-  new: false,
-  ai: false,
-  input: 'text'
-}, {
   id: 'stats',
   cat: 'math',
   icon: '📐',
@@ -467,14 +453,6 @@ const I18N = {
         name: 'Lotin ↔ Kirill',
         desc: 'O\'zbek matnini transliteratsiya'
       },
-      equation: {
-        name: 'Tenglama yechish',
-        desc: 'Algebra va analiz masalalari'
-      },
-      graph: {
-        name: 'Grafik chizish',
-        desc: 'Funksiya grafigini yaratish'
-      },
       stats: {
         name: 'Statistika',
         desc: 'O\'rta, mediana, dispersiya'
@@ -734,14 +712,6 @@ const I18N = {
         name: 'Латин ↔ Кирилл',
         desc: 'Транслитерация узбекского'
       },
-      equation: {
-        name: 'Решить уравнение',
-        desc: 'Алгебра и анализ'
-      },
-      graph: {
-        name: 'Построить график',
-        desc: 'График функции'
-      },
       stats: {
         name: 'Статистика',
         desc: 'Среднее, медиана, дисперсия'
@@ -998,14 +968,6 @@ const I18N = {
       translit: {
         name: 'Latin ↔ Cyrillic',
         desc: 'Uzbek transliteration'
-      },
-      equation: {
-        name: 'Solve equation',
-        desc: 'Algebra and calculus'
-      },
-      graph: {
-        name: 'Plot graph',
-        desc: 'Function graph'
       },
       stats: {
         name: 'Statistics',

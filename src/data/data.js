@@ -20,9 +20,7 @@ const FREE_SERVICES = [
   { id: 'watermark', cat: 'pdf',  icon: '💧', new: false, ai: false, accept: '.pdf' },
   { id: 'imgcompress', cat: 'file', icon: '🗜️', new: false, ai: false, accept: '.jpg,.png' },
   { id: 'translit', cat: 'text',   icon: '🔤', new: false, ai: false, input: 'text' },
-  // Matematika (3)
-  { id: 'equation', cat: 'math',   icon: '🧮', new: false, ai: false, input: 'text' },
-  { id: 'graph',    cat: 'math',   icon: '📈', new: false, ai: false, input: 'text' },
+  // Matematika (1)
   { id: 'stats',    cat: 'math',   icon: '📐', new: true,  ai: false, input: 'text' },
   // Matn va Ma'lumot (4)
   { id: 'translate', cat: 'text',  icon: '🌐', new: false, ai: false, input: 'text' },
@@ -168,8 +166,6 @@ const I18N = {
       watermark:   { name: 'Watermark qo\'shish', desc: 'PDF ga vodyanoy belgi qo\'yish' },
       imgcompress: { name: 'Rasm siqish',         desc: 'Rasm hajmini kichraytirish' },
       translit:    { name: 'Lotin ↔ Kirill',      desc: 'O\'zbek matnini transliteratsiya' },
-      equation:    { name: 'Tenglama yechish',    desc: 'Algebra va analiz masalalari' },
-      graph:       { name: 'Grafik chizish',      desc: 'Funksiya grafigini yaratish' },
       stats:       { name: 'Statistika',          desc: 'O\'rta, mediana, dispersiya' },
       translate:   { name: 'Tarjima (Google)',    desc: '100+ tilga avtomatik tarjima' },
       wiki:        { name: 'Wikipedia',           desc: 'Maqola izlash va o\'qish' },
@@ -287,8 +283,6 @@ const I18N = {
       watermark: { name: 'Водяной знак', desc: 'Добавить водяной знак в PDF' },
       imgcompress: { name: 'Сжать изображение', desc: 'Уменьшить размер фото' },
       translit: { name: 'Латин ↔ Кирилл', desc: 'Транслитерация узбекского' },
-      equation: { name: 'Решить уравнение', desc: 'Алгебра и анализ' },
-      graph: { name: 'Построить график', desc: 'График функции' },
       stats: { name: 'Статистика', desc: 'Среднее, медиана, дисперсия' },
       translate: { name: 'Перевод (Google)', desc: 'Авто-перевод на 100+ языков' },
       wiki: { name: 'Wikipedia', desc: 'Поиск и чтение статей' },
@@ -402,8 +396,6 @@ const I18N = {
       watermark: { name: 'Watermark', desc: 'Add watermark to PDF' },
       imgcompress: { name: 'Compress image', desc: 'Reduce image size' },
       translit: { name: 'Latin ↔ Cyrillic', desc: 'Uzbek transliteration' },
-      equation: { name: 'Solve equation', desc: 'Algebra and calculus' },
-      graph: { name: 'Plot graph', desc: 'Function graph' },
       stats: { name: 'Statistics', desc: 'Mean, median, variance' },
       translate: { name: 'Translate (Google)', desc: 'Auto-translate 100+ langs' },
       wiki: { name: 'Wikipedia', desc: 'Search and read articles' },
