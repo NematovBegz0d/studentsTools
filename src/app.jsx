@@ -37,10 +37,12 @@ const DEFAULT_LANG = SUPPORTED_LANGS.includes(TG_USER?.language_code)
   : "uz";
 
 // ─── Tweak defaults ───────────────────────────────────────────────
+const _savedTheme = (typeof localStorage !== "undefined" && localStorage.getItem("edubot_theme")) || "";
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/ {
   cardStyle: "glass",
   accent: "#8b5cf6",
   lang: DEFAULT_LANG,
+  theme: _savedTheme,
 }; /*EDITMODE-END*/
 
 // ─── App State Reducer ────────────────────────────────────────────
@@ -179,18 +181,17 @@ class AppErrorBoundary extends React.Component {
 
 // ─── Theme manager ────────────────────────────────────────────────
 // ✅ NEW: Sync theme with Telegram + CSS custom props
-function useThemeSync(accent) {
+function useThemeSync(accent, manualTheme) {
   useEffect(() => {
     const root = document.documentElement;
 
-    // Telegram color scheme
-    const scheme = TG?.colorScheme ?? "dark";
+    // Manual theme overrides Telegram's colorScheme
+    const scheme = manualTheme || TG?.colorScheme || "dark";
     root.setAttribute("data-theme", scheme);
 
     // Accent color as CSS variable
     root.style.setProperty("--accent", accent);
 
-    // Derive glow from accent
     const hexToRgb = (hex) => {
       const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
       return result
@@ -199,21 +200,20 @@ function useThemeSync(accent) {
     };
     root.style.setProperty("--accent-glow", `rgba(${hexToRgb(accent)}, 0.35)`);
 
-    // Update meta theme-color
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.content = scheme === "dark" ? "#0a0a0f" : "#f8f7ff";
-  }, [accent]);
+  }, [accent, manualTheme]);
 
-  // ✅ NEW: Listen for Telegram theme changes
+  // Listen for Telegram theme changes (only when no manual override)
   useEffect(() => {
-    if (!TG) return;
+    if (!TG || manualTheme) return;
     const handler = () => {
       const scheme = TG.colorScheme ?? "dark";
       document.documentElement.setAttribute("data-theme", scheme);
     };
     TG.onEvent("themeChanged", handler);
     return () => TG.offEvent("themeChanged", handler);
-  }, []);
+  }, [manualTheme]);
 }
 
 // ─── Main App ─────────────────────────────────────────────────────
@@ -225,10 +225,10 @@ function App() {
   const lang = tweaks.lang;
   const accent = tweaks.accent;
   const cardStyle = tweaks.cardStyle;
+  const manualTheme = tweaks.theme || "";
   const str = I18N[lang] || I18N.uz;
 
-  // ✅ NEW: Theme sync
-  useThemeSync(accent);
+  useThemeSync(accent, manualTheme);
 
   // ─── Telegram SDK init ───────────────────────────────────────
   useEffect(() => {
@@ -277,6 +277,11 @@ function App() {
   const openService = useCallback((service, isPremium) => {
     Haptic.medium(); // ✅ NEW: haptic on service open
     dispatch({ type: "OPEN_SHEET", service, isPremium });
+  }, []);
+
+  const setTheme = useCallback((t) => {
+    try { localStorage.setItem("edubot_theme", t); } catch (_) {}
+    dispatch({ type: "SET_TWEAK", key: "theme", val: t });
   }, []);
 
   const closeSheet = useCallback(() => {
@@ -383,6 +388,8 @@ function App() {
               accent={accent}
               lang={lang}
               setLang={setLang}
+              theme={manualTheme}
+              setTheme={setTheme}
               currentPlan={currentPlan}
               onGoTo={setTab}
               user={TG_USER}

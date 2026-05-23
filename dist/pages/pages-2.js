@@ -319,6 +319,8 @@ function ProfilePage({
   accent,
   lang,
   setLang,
+  theme,
+  setTheme,
   currentPlan,
   onGoTo,
   user
@@ -353,15 +355,25 @@ function ProfilePage({
   }];
   const langs = [{
     id: "uz",
-    label: "🇺🇿 O'zbek"
+    label: "UZ"
   }, {
     id: "ru",
-    label: "🇷🇺 Русский"
+    label: "RU"
   }, {
     id: "en",
-    label: "🇬🇧 English"
+    label: "EN"
   }];
+  const currentTheme = theme || document.documentElement.getAttribute("data-theme") || "dark";
+  const isDark = currentTheme === "dark";
+  const toggleTheme = () => setTheme(isDark ? "light" : "dark");
   const settingsRows = [{
+    iconName: isDark ? "sun" : "moon",
+    color: isDark ? "#fbbf24" : "#818cf8",
+    label: isDark ? t.themeDark || "Qorong'i mavzu" : t.themeLight || "Yorug' mavzu",
+    sub: null,
+    isTheme: true,
+    onClick: toggleTheme
+  }, {
     iconName: "bell",
     color: "#60a5fa",
     label: t.settingsNotif,
@@ -518,8 +530,7 @@ function ProfilePage({
     role: "group",
     "aria-label": "Til tanlash",
     style: {
-      display: "grid",
-      gridTemplateColumns: "repeat(3, 1fr)",
+      display: "flex",
       gap: 8
     }
   }, langs.map(l => {
@@ -530,18 +541,20 @@ function ProfilePage({
       onClick: () => setLang(l.id),
       type: "button",
       "aria-pressed": active,
-      "aria-label": l.label,
       style: {
-        padding: "11px 4px",
+        flex: 1,
+        padding: "10px 4px",
         borderRadius: 12,
-        background: active ? "rgba(139,92,246,0.18)" : "var(--bg-surface-1)",
-        border: `0.5px solid ${active ? "rgba(139,92,246,0.40)" : "var(--border-subtle)"}`,
-        color: active ? "var(--text-primary)" : "var(--text-muted)",
-        fontSize: 12,
-        fontWeight: active ? 600 : 500,
+        background: active ? accent : "var(--bg-surface-1)",
+        border: `0.5px solid ${active ? accent : "var(--border-light)"}`,
+        color: active ? "#fff" : "var(--text-secondary)",
+        fontSize: 13,
+        fontWeight: 700,
+        letterSpacing: 0.5,
         cursor: "pointer",
         font: "inherit",
-        transition: "all 0.18s"
+        transition: "all 0.18s",
+        boxShadow: active ? `0 4px 12px ${accent}40` : "none"
       }
     }, l.label);
   }))), /*#__PURE__*/React.createElement("div", {
@@ -598,12 +611,38 @@ function ProfilePage({
       fontSize: 14,
       fontWeight: 500
     }
-  }, row.label), row.sub && /*#__PURE__*/React.createElement("span", {
+  }, row.label), row.isTheme ? /*#__PURE__*/React.createElement("div", {
+    "aria-hidden": "true",
+    style: {
+      width: 42,
+      height: 24,
+      borderRadius: 99,
+      background: isDark ? "rgba(139,92,246,0.25)" : "rgba(251,191,36,0.25)",
+      border: `1.5px solid ${isDark ? "rgba(139,92,246,0.45)" : "rgba(251,191,36,0.45)"}`,
+      position: "relative",
+      transition: "all 0.25s"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      top: 2,
+      left: isDark ? 20 : 2,
+      width: 16,
+      height: 16,
+      borderRadius: 99,
+      background: isDark ? "#a78bfa" : "#fbbf24",
+      transition: "left 0.25s cubic-bezier(0.34,1.56,0.64,1)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: 9
+    }
+  }, isDark ? "🌙" : "☀️")) : row.sub ? /*#__PURE__*/React.createElement("span", {
     style: {
       color: "var(--text-muted)",
       fontSize: 12
     }
-  }, row.sub), /*#__PURE__*/React.createElement("svg", {
+  }, row.sub) : /*#__PURE__*/React.createElement("svg", {
     "aria-hidden": "true",
     width: "7",
     height: "12",

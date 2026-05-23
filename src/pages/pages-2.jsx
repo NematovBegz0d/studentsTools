@@ -397,7 +397,7 @@ function PlansPage({ t, accent, currentPlan, onSubscribe }) {
 // ─────────────────────────────────────────────────────────────────
 // PROFILE PAGE
 // ─────────────────────────────────────────────────────────────────
-function ProfilePage({ t, accent, lang, setLang, currentPlan, onGoTo, user }) {
+function ProfilePage({ t, accent, lang, setLang, theme, setTheme, currentPlan, onGoTo, user }) {
   const fullName =
     [user?.first_name, user?.last_name].filter(Boolean).join(" ") ||
     t.studentRole;
@@ -434,12 +434,23 @@ function ProfilePage({ t, accent, lang, setLang, currentPlan, onGoTo, user }) {
   ];
 
   const langs = [
-    { id: "uz", label: "🇺🇿 O'zbek" },
-    { id: "ru", label: "🇷🇺 Русский" },
-    { id: "en", label: "🇬🇧 English" },
+    { id: "uz", label: "UZ" },
+    { id: "ru", label: "RU" },
+    { id: "en", label: "EN" },
   ];
+  const currentTheme = theme || document.documentElement.getAttribute("data-theme") || "dark";
+  const isDark = currentTheme === "dark";
+  const toggleTheme = () => setTheme(isDark ? "light" : "dark");
 
   const settingsRows = [
+    {
+      iconName: isDark ? "sun" : "moon",
+      color: isDark ? "#fbbf24" : "#818cf8",
+      label: isDark ? (t.themeDark || "Qorong'i mavzu") : (t.themeLight || "Yorug' mavzu"),
+      sub: null,
+      isTheme: true,
+      onClick: toggleTheme,
+    },
     {
       iconName: "bell",
       color: "#60a5fa",
@@ -603,27 +614,10 @@ function ProfilePage({ t, accent, lang, setLang, currentPlan, onGoTo, user }) {
 
       {/* Language picker */}
       <div style={{ padding: "0 18px 16px" }}>
-        <div
-          style={{
-            color: "var(--text-muted)",
-            fontSize: 11,
-            fontWeight: 600,
-            textTransform: "uppercase",
-            letterSpacing: 0.8,
-            marginBottom: 10,
-          }}
-        >
+        <div style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10 }}>
           {t.settingsLang}
         </div>
-        <div
-          role="group"
-          aria-label="Til tanlash"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: 8,
-          }}
-        >
+        <div role="group" aria-label="Til tanlash" style={{ display: "flex", gap: 8 }}>
           {langs.map((l) => {
             const active = lang === l.id;
             return (
@@ -633,20 +627,20 @@ function ProfilePage({ t, accent, lang, setLang, currentPlan, onGoTo, user }) {
                 onClick={() => setLang(l.id)}
                 type="button"
                 aria-pressed={active}
-                aria-label={l.label}
                 style={{
-                  padding: "11px 4px",
+                  flex: 1,
+                  padding: "10px 4px",
                   borderRadius: 12,
-                  background: active
-                    ? "rgba(139,92,246,0.18)"
-                    : "var(--bg-surface-1)",
-                  border: `0.5px solid ${active ? "rgba(139,92,246,0.40)" : "var(--border-subtle)"}`,
-                  color: active ? "var(--text-primary)" : "var(--text-muted)",
-                  fontSize: 12,
-                  fontWeight: active ? 600 : 500,
+                  background: active ? accent : "var(--bg-surface-1)",
+                  border: `0.5px solid ${active ? accent : "var(--border-light)"}`,
+                  color: active ? "#fff" : "var(--text-secondary)",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: 0.5,
                   cursor: "pointer",
                   font: "inherit",
                   transition: "all 0.18s",
+                  boxShadow: active ? `0 4px 12px ${accent}40` : "none",
                 }}
               >
                 {l.label}
@@ -682,53 +676,47 @@ function ProfilePage({ t, accent, lang, setLang, currentPlan, onGoTo, user }) {
                 padding: "14px 14px",
                 background: "transparent",
                 border: "none",
-                borderBottom:
-                  i < arr.length - 1
-                    ? "0.5px solid var(--border-subtle)"
-                    : "none",
+                borderBottom: i < arr.length - 1 ? "0.5px solid var(--border-subtle)" : "none",
                 color: "var(--text-primary)",
                 font: "inherit",
                 cursor: "pointer",
               }}
             >
-              <div
-                aria-hidden="true"
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 9,
-                  background: `${row.color}1f`,
-                  border: `0.5px solid ${row.color}33`,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Icon
-                  name={row.iconName}
-                  size={16}
-                  color={row.color}
-                  strokeWidth={1.8}
-                />
+              <div aria-hidden="true" style={{
+                width: 32, height: 32, borderRadius: 9,
+                background: `${row.color}1f`,
+                border: `0.5px solid ${row.color}33`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Icon name={row.iconName} size={16} color={row.color} strokeWidth={1.8} />
               </div>
-              <span style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>
-                {row.label}
-              </span>
-              {row.sub && (
-                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>
-                  {row.sub}
-                </span>
+              <span style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{row.label}</span>
+              {row.isTheme ? (
+                <div aria-hidden="true" style={{
+                  width: 42, height: 24, borderRadius: 99,
+                  background: isDark ? "rgba(139,92,246,0.25)" : "rgba(251,191,36,0.25)",
+                  border: `1.5px solid ${isDark ? "rgba(139,92,246,0.45)" : "rgba(251,191,36,0.45)"}`,
+                  position: "relative", transition: "all 0.25s",
+                }}>
+                  <div style={{
+                    position: "absolute",
+                    top: 2, left: isDark ? 20 : 2,
+                    width: 16, height: 16, borderRadius: 99,
+                    background: isDark ? "#a78bfa" : "#fbbf24",
+                    transition: "left 0.25s cubic-bezier(0.34,1.56,0.64,1)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 9,
+                  }}>
+                    {isDark ? "🌙" : "☀️"}
+                  </div>
+                </div>
+              ) : row.sub ? (
+                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{row.sub}</span>
+              ) : (
+                <svg aria-hidden="true" width="7" height="12" viewBox="0 0 8 14">
+                  <path d="M1 1l6 6-6 6" stroke="var(--border-medium)" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
               )}
-              <svg aria-hidden="true" width="7" height="12" viewBox="0 0 8 14">
-                <path
-                  d="M1 1l6 6-6 6"
-                  stroke="var(--border-medium)"
-                  strokeWidth="2"
-                  fill="none"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
             </button>
           ))}
         </div>

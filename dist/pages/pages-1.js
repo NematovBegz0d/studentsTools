@@ -1,7 +1,7 @@
 "use strict";
 
 // EduBot — Pages
-// HomePage, FreePage, PremiumPage, PlansPage, ProfilePage, PaymentSheet
+// HomePage, FreePage, PremiumPage
 
 const {
   useState: u_S,
@@ -83,13 +83,13 @@ function HomePage({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      color: 'rgba(255,255,255,0.55)',
+      color: 'var(--text-muted)',
       fontSize: 13,
       fontWeight: 500
     }
   }, t.hello, ","), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: '#fff',
+      color: 'var(--text-primary)',
       fontSize: 20,
       fontWeight: 700,
       letterSpacing: -0.4
@@ -101,8 +101,8 @@ function HomePage({
       width: 40,
       height: 40,
       borderRadius: 12,
-      background: 'rgba(255,255,255,0.05)',
-      border: '0.5px solid rgba(255,255,255,0.08)',
+      background: 'var(--bg-surface-2)',
+      border: '0.5px solid var(--border-light)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -116,7 +116,7 @@ function HomePage({
     fill: "none"
   }, /*#__PURE__*/React.createElement("path", {
     d: "M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9zM9 21a3 3 0 0 0 6 0",
-    stroke: "rgba(255,255,255,0.7)",
+    stroke: "var(--text-secondary)",
     strokeWidth: "1.8",
     strokeLinecap: "round",
     strokeLinejoin: "round"
@@ -129,7 +129,7 @@ function HomePage({
       height: 7,
       borderRadius: 99,
       background: '#ef4444',
-      border: '1.5px solid #0a0a0f'
+      border: '1.5px solid var(--bg-solid)'
     }
   }))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -142,8 +142,8 @@ function HomePage({
     key: i,
     style: {
       padding: '10px 8px',
-      background: 'rgba(255,255,255,0.03)',
-      border: '0.5px solid rgba(255,255,255,0.06)',
+      background: 'var(--bg-surface-1)',
+      border: '0.5px solid var(--border-subtle)',
       borderRadius: 14
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -155,7 +155,7 @@ function HomePage({
     }
   }, s.value), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: 'rgba(255,255,255,0.5)',
+      color: 'var(--text-muted)',
       fontSize: 10,
       marginTop: 2,
       fontWeight: 500
@@ -275,7 +275,7 @@ function HomePage({
   }, /*#__PURE__*/React.createElement("h2", {
     style: {
       margin: 0,
-      color: '#fff',
+      color: 'var(--text-primary)',
       fontSize: 17,
       fontWeight: 700,
       letterSpacing: -0.2
@@ -305,12 +305,12 @@ function HomePage({
     style: {
       textAlign: 'left',
       padding: '14px 12px',
-      background: item.isPremium ? 'linear-gradient(145deg, rgba(245,158,11,0.10), rgba(245,158,11,0.02))' : 'rgba(255,255,255,0.04)',
-      border: `0.5px solid ${item.isPremium ? 'rgba(245,158,11,0.18)' : 'rgba(255,255,255,0.08)'}`,
+      background: item.isPremium ? 'linear-gradient(145deg, rgba(245,158,11,0.12), rgba(245,158,11,0.04))' : 'var(--bg-surface-2)',
+      border: `0.5px solid ${item.isPremium ? 'rgba(245,158,11,0.22)' : 'var(--border-light)'}`,
       borderRadius: 16,
       cursor: 'pointer',
       font: 'inherit',
-      color: '#fff',
+      color: 'var(--text-primary)',
       position: 'relative'
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -340,7 +340,7 @@ function HomePage({
   }, item.meta.name), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10.5,
-      color: 'rgba(255,255,255,0.5)',
+      color: 'var(--text-muted)',
       lineHeight: 1.35,
       display: '-webkit-box',
       WebkitLineClamp: 2,
@@ -365,8 +365,8 @@ function HomePage({
     style: {
       padding: 16,
       borderRadius: 18,
-      background: 'rgba(255,255,255,0.03)',
-      border: '0.5px solid rgba(255,255,255,0.08)'
+      background: 'var(--bg-surface-1)',
+      border: '0.5px solid var(--border-light)'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -399,26 +399,26 @@ function HomePage({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      color: '#fff',
+      color: 'var(--text-primary)',
       fontSize: 13.5,
       fontWeight: 600
     }
   }, t.aiLimitTitle), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: 'rgba(255,255,255,0.5)',
+      color: 'var(--text-muted)',
       fontSize: 11,
       marginTop: 2
     }
   }, t.aiLimitSub)), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: '#fff',
+      color: 'var(--text-primary)',
       fontSize: 14,
       fontWeight: 700,
       fontVariantNumeric: 'tabular-nums'
     }
   }, aiUsed, /*#__PURE__*/React.createElement("span", {
     style: {
-      color: 'rgba(255,255,255,0.4)'
+      color: 'var(--text-faint)'
     }
   }, "/", aiLimit))), /*#__PURE__*/React.createElement(ProgressBar, {
     value: aiUsed,
@@ -432,7 +432,7 @@ function HomePage({
   }, /*#__PURE__*/React.createElement("h2", {
     style: {
       margin: 0,
-      color: '#fff',
+      color: 'var(--text-primary)',
       fontSize: 17,
       fontWeight: 700,
       letterSpacing: -0.2
@@ -461,8 +461,8 @@ function HomePage({
         gap: 12,
         padding: '11px 12px',
         borderRadius: 14,
-        background: 'rgba(255,255,255,0.03)',
-        border: '0.5px solid rgba(255,255,255,0.06)'
+        background: 'var(--bg-surface-1)',
+        border: '0.5px solid var(--border-subtle)'
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
@@ -487,13 +487,13 @@ function HomePage({
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
-        color: '#fff',
+        color: 'var(--text-primary)',
         fontSize: 13.5,
         fontWeight: 600
       }
     }, meta.name), /*#__PURE__*/React.createElement("div", {
       style: {
-        color: 'rgba(255,255,255,0.45)',
+        color: 'var(--text-muted)',
         fontSize: 11,
         marginTop: 1
       }
@@ -563,8 +563,8 @@ function FreePage({
       gap: 10,
       padding: '11px 14px',
       borderRadius: 14,
-      background: 'rgba(255,255,255,0.05)',
-      border: '0.5px solid rgba(255,255,255,0.08)'
+      background: 'var(--bg-surface-2)',
+      border: '0.5px solid var(--border-light)'
     }
   }, /*#__PURE__*/React.createElement("svg", {
     width: "16",
@@ -575,11 +575,11 @@ function FreePage({
     cx: "11",
     cy: "11",
     r: "7",
-    stroke: "rgba(255,255,255,0.5)",
+    stroke: "var(--text-muted)",
     strokeWidth: "2"
   }), /*#__PURE__*/React.createElement("path", {
     d: "M21 21l-4.3-4.3",
-    stroke: "rgba(255,255,255,0.5)",
+    stroke: "var(--text-muted)",
     strokeWidth: "2",
     strokeLinecap: "round"
   })), /*#__PURE__*/React.createElement("input", {
@@ -590,7 +590,7 @@ function FreePage({
       flex: 1,
       background: 'transparent',
       border: 'none',
-      color: '#fff',
+      color: 'var(--text-primary)',
       fontSize: 14,
       outline: 'none',
       font: 'inherit'
@@ -598,7 +598,7 @@ function FreePage({
   }), q && /*#__PURE__*/React.createElement("button", {
     onClick: () => setQ(''),
     style: {
-      background: 'rgba(255,255,255,0.1)',
+      background: 'var(--bg-surface-3)',
       border: 'none',
       width: 18,
       height: 18,
@@ -616,7 +616,7 @@ function FreePage({
     fill: "none"
   }, /*#__PURE__*/React.createElement("path", {
     d: "M6 6l12 12M18 6L6 18",
-    stroke: "rgba(255,255,255,0.7)",
+    stroke: "var(--text-secondary)",
     strokeWidth: "2.5",
     strokeLinecap: "round"
   }))))), /*#__PURE__*/React.createElement("div", {
@@ -643,9 +643,9 @@ function FreePage({
       style: {
         padding: '8px 14px',
         borderRadius: 99,
-        background: active ? accent : 'rgba(255,255,255,0.05)',
-        border: `0.5px solid ${active ? accent : 'rgba(255,255,255,0.08)'}`,
-        color: active ? '#fff' : 'rgba(255,255,255,0.7)',
+        background: active ? accent : 'var(--bg-surface-2)',
+        border: `0.5px solid ${active ? accent : 'var(--border-light)'}`,
+        color: active ? '#fff' : 'var(--text-secondary)',
         fontSize: 12.5,
         fontWeight: 600,
         cursor: 'pointer',
@@ -670,13 +670,13 @@ function FreePage({
     }
   }, "\uD83D\uDD0D"), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: '#fff',
+      color: 'var(--text-primary)',
       fontSize: 16,
       fontWeight: 600
     }
   }, t.noResults), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: 'rgba(255,255,255,0.5)',
+      color: 'var(--text-muted)',
       fontSize: 13,
       marginTop: 4
     }
@@ -785,7 +785,7 @@ function PremiumPage({
         textAlign: 'left',
         padding: 14,
         borderRadius: 18,
-        background: 'linear-gradient(140deg, rgba(245,158,11,0.06), rgba(139,92,246,0.04) 60%, rgba(255,255,255,0.02))',
+        background: 'linear-gradient(140deg, rgba(245,158,11,0.08), rgba(139,92,246,0.04) 60%, var(--bg-surface-1))',
         border: '0.5px solid rgba(245,158,11,0.18)',
         cursor: 'pointer',
         font: 'inherit',
@@ -824,7 +824,7 @@ function PremiumPage({
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
-        color: '#fff',
+        color: 'var(--text-primary)',
         fontSize: 14.5,
         fontWeight: 700,
         letterSpacing: -0.15
@@ -833,7 +833,7 @@ function PremiumPage({
       kind: s.badge.toLowerCase()
     }, s.badge)), /*#__PURE__*/React.createElement("div", {
       style: {
-        color: 'rgba(255,255,255,0.55)',
+        color: 'var(--text-secondary)',
         fontSize: 11.5,
         lineHeight: 1.35,
         textWrap: 'pretty'
@@ -854,7 +854,7 @@ function PremiumPage({
       }
     }, s.price.toLocaleString('ru-RU')), /*#__PURE__*/React.createElement("span", {
       style: {
-        color: 'rgba(255,255,255,0.5)',
+        color: 'var(--text-muted)',
         fontSize: 11
       }
     }, t.perRequest))), !isSubscribed && /*#__PURE__*/React.createElement("div", {
@@ -862,7 +862,7 @@ function PremiumPage({
         width: 32,
         height: 32,
         borderRadius: 10,
-        background: 'rgba(0,0,0,0.4)',
+        background: 'var(--bg-surface-3)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -879,11 +879,11 @@ function PremiumPage({
       width: "14",
       height: "10",
       rx: "2",
-      stroke: "rgba(255,255,255,0.7)",
+      stroke: "var(--text-secondary)",
       strokeWidth: "2"
     }), /*#__PURE__*/React.createElement("path", {
       d: "M8 11V8a4 4 0 1 1 8 0v3",
-      stroke: "rgba(255,255,255,0.7)",
+      stroke: "var(--text-secondary)",
       strokeWidth: "2",
       strokeLinecap: "round"
     }))));
