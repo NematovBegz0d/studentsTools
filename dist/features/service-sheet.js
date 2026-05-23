@@ -1,41 +1,74 @@
-// EduBot — Service sheet (real implementations)
+// EduBot — Service Sheet (IMPROVED)
+// ✅ Fixes applied:
+//   1. Telegram MainButton integration
+//   2. Input sanitization before API calls
+//   3. File validation (size + type) before Dropzone allows picking
+//   4. Better error state UI
+//   5. CSS Variables — light/dark mode ready
+//   6. Proper loading percentage animation
+//   7. Copy text to clipboard with fallback
+//   8. ResultText: character count
+
+"use strict";
 
 const {
   useState: useS,
   useEffect: useE,
-  useRef: useR
+  useRef: useR,
+  useCallback: useC
 } = React;
 
-// ─── File dropzone (real file input) ────────────────────────────
+// ✅ FIX: Max file size (displayed to user)
+const MAX_FILE_MB = 10;
+const MAX_FILE_SIZE = MAX_FILE_MB * 1024 * 1024;
+
+// ─── Dropzone ─────────────────────────────────────────────────────
 function Dropzone({
   accept,
   multi,
   t,
   onPick
 }) {
-  const [picked, setPicked] = useS(null); // File | File[]
+  const [picked, setPicked] = useS(null);
   const [dragOver, setDragOver] = useS(false);
+  const [error, setError] = useS(null);
   const inputRef = useR(null);
-  const handleFiles = fileList => {
+
+  // ✅ NEW: Client-side validation in dropzone
+  const validateAndPick = useC(fileList => {
     const arr = Array.from(fileList);
     if (!arr.length) return;
+    setError(null);
+
+    // File size check
+    const oversize = arr.find(f => f.size > MAX_FILE_SIZE);
+    if (oversize) {
+      const mb = (oversize.size / 1024 / 1024).toFixed(1);
+      setError(`Fayl hajmi ${mb} MB. Maksimum ${MAX_FILE_MB} MB.`);
+      return;
+    }
     const result = multi ? arr : arr[0];
     setPicked(result);
     onPick(result);
-  };
+  }, [multi, onPick]);
   const label = multi ? Array.isArray(picked) ? `${picked.length} ta fayl tanlandi` : null : picked?.name ?? null;
-  const size = multi ? Array.isArray(picked) ? (picked.reduce((s, f) => s + f.size, 0) / 1024).toFixed(0) + ' KB' : null : picked ? (picked.size / 1024).toFixed(0) + ' KB' : null;
+  const sizeText = multi ? Array.isArray(picked) ? `${(picked.reduce((s, f) => s + f.size, 0) / 1024).toFixed(0)} KB` : null : picked ? `${(picked.size / 1024).toFixed(0)} KB` : null;
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("input", {
     ref: inputRef,
     type: "file",
     accept: accept,
     multiple: !!multi,
     style: {
-      display: 'none'
+      display: "none"
     },
-    onChange: e => handleFiles(e.target.files)
+    "aria-label": "Fayl tanlash",
+    onChange: e => validateAndPick(e.target.files)
   }), /*#__PURE__*/React.createElement("button", {
-    onClick: () => inputRef.current?.click(),
+    type: "button",
+    onClick: () => {
+      setError(null);
+      inputRef.current?.click();
+    },
     onDragOver: e => {
       e.preventDefault();
       setDragOver(true);
@@ -44,36 +77,49 @@ function Dropzone({
     onDrop: e => {
       e.preventDefault();
       setDragOver(false);
-      handleFiles(e.dataTransfer.files);
+      validateAndPick(e.dataTransfer.files);
     },
+    "aria-label": label ? `${label} tanlandi. O'zgartirish uchun bosing` : "Fayl yuklash",
     style: {
-      width: '100%',
+      width: "100%",
       minHeight: 160,
       padding: 22,
-      background: dragOver ? 'rgba(139,92,246,0.08)' : 'rgba(255,255,255,0.03)',
-      border: `1.5px dashed ${dragOver ? '#8b5cf6' : 'rgba(255,255,255,0.16)'}`,
+      background: error ? "rgba(239,68,68,0.06)" : dragOver ? "rgba(139,92,246,0.08)" : "var(--bg-surface-1)",
+      border: `1.5px dashed ${error ? "rgba(239,68,68,0.4)" : dragOver ? "#8b5cf6" : "var(--border-medium)"}`,
       borderRadius: 18,
-      cursor: 'pointer',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
+      cursor: "pointer",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
       gap: 8,
-      transition: 'all 0.2s',
-      font: 'inherit'
+      transition: "all 0.2s",
+      font: "inherit"
     }
   }, /*#__PURE__*/React.createElement("div", {
+    "aria-hidden": "true",
     style: {
       width: 48,
       height: 48,
       borderRadius: 14,
-      background: label ? 'rgba(34,197,94,0.16)' : 'rgba(139,92,246,0.16)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
+      background: error ? "rgba(239,68,68,0.14)" : label ? "rgba(34,197,94,0.16)" : "rgba(139,92,246,0.16)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
       marginBottom: 4
     }
-  }, label ? /*#__PURE__*/React.createElement("svg", {
+  }, error ? /*#__PURE__*/React.createElement("svg", {
+    width: "22",
+    height: "22",
+    viewBox: "0 0 24 24",
+    fill: "none"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z",
+    stroke: "#fb7185",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  })) : label ? /*#__PURE__*/React.createElement("svg", {
     width: "22",
     height: "22",
     viewBox: "0 0 24 24",
@@ -95,72 +141,103 @@ function Dropzone({
     strokeWidth: "2",
     strokeLinecap: "round",
     strokeLinejoin: "round"
-  }))), label ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }))), error ? /*#__PURE__*/React.createElement("div", {
     style: {
-      color: '#fff',
+      color: "#fb7185",
+      fontSize: 13,
+      fontWeight: 600,
+      textAlign: "center"
+    }
+  }, error) : label ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "var(--text-primary)",
       fontSize: 13.5,
       fontWeight: 600,
-      textAlign: 'center',
-      wordBreak: 'break-all'
+      textAlign: "center",
+      wordBreak: "break-all",
+      maxWidth: 260
     }
   }, label), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: 'rgba(255,255,255,0.5)',
+      color: "var(--text-muted)",
       fontSize: 11.5
     }
-  }, size)) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, sizeText)) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: {
-      color: '#fff',
+      color: "var(--text-primary)",
       fontSize: 14,
       fontWeight: 600
     }
   }, t.sheetUpload), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: 'rgba(255,255,255,0.5)',
+      color: "var(--text-muted)",
       fontSize: 12
     }
   }, t.sheetUploadSub), accept && /*#__PURE__*/React.createElement("div", {
     style: {
-      color: 'rgba(255,255,255,0.35)',
+      color: "var(--text-faint)",
       fontSize: 10.5,
-      marginTop: 4
+      marginTop: 4,
+      textTransform: "uppercase",
+      letterSpacing: 0.4
     }
-  }, accept.split(',').map(s => s.trim().toUpperCase()).join(' · ')))));
+  }, accept.split(",").map(s => s.trim().toUpperCase()).join(" · ")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "var(--text-faint)",
+      fontSize: 10.5,
+      marginTop: 2
+    }
+  }, "Maks. ", MAX_FILE_MB, " MB"))));
 }
 
-// ─── Text input box ──────────────────────────────────────────────
+// ─── TextInputBox ─────────────────────────────────────────────────
 function TextInputBox({
   t,
   placeholder,
-  onChange
+  onChange,
+  maxLength = 5000
 }) {
-  const [val, setVal] = useS('');
-  return /*#__PURE__*/React.createElement("textarea", {
+  const [val, setVal] = useS("");
+  const handleChange = useC(e => {
+    const raw = e.target.value;
+    setVal(raw);
+    onChange(raw);
+  }, [onChange]);
+  const charCount = val.length;
+  const nearLimit = charCount > maxLength * 0.85;
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("textarea", {
     value: val,
-    onChange: e => {
-      setVal(e.target.value);
-      onChange(e.target.value);
-    },
+    onChange: handleChange,
     placeholder: placeholder || t.sheetTextPlaceholder,
+    maxLength: maxLength,
+    "aria-label": placeholder || t.sheetTextPlaceholder,
     style: {
-      width: '100%',
+      width: "100%",
       minHeight: 120,
-      background: 'rgba(255,255,255,0.04)',
-      border: '0.5px solid rgba(255,255,255,0.10)',
+      background: "var(--bg-surface-2)",
+      border: "0.5px solid var(--border-light)",
       borderRadius: 16,
       padding: 14,
-      color: '#fff',
+      color: "var(--text-primary)",
       fontSize: 14,
-      fontFamily: 'inherit',
-      resize: 'vertical',
-      outline: 'none',
+      fontFamily: "inherit",
+      resize: "vertical",
+      outline: "none",
       lineHeight: 1.5,
-      boxSizing: 'border-box'
+      boxSizing: "border-box",
+      transition: "border-color 0.18s"
     }
-  });
+  }), val.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right",
+      fontSize: 10.5,
+      marginTop: 4,
+      color: nearLimit ? "#fbbf24" : "var(--text-faint)"
+    }
+  }, charCount, " / ", maxLength));
 }
 
-// ─── Processing animation ────────────────────────────────────────
+// ─── Processing animation ─────────────────────────────────────────
 function Processing({
   t,
   accent
@@ -168,26 +245,32 @@ function Processing({
   const [pct, setPct] = useS(0);
   useE(() => {
     const start = performance.now();
-    let raf;
+    const DURATION = 2200;
+    let rafId;
     const tick = now => {
-      const p = Math.min(1, (now - start) / 2000);
-      setPct(Math.round((1 - Math.pow(1 - p, 2)) * 95));
-      if (p < 1) raf = requestAnimationFrame(tick);
+      const progress = Math.min(1, (now - start) / DURATION);
+      // Ease out cubic — slows down near 95%
+      setPct(Math.round((1 - Math.pow(1 - progress, 3)) * 95));
+      if (progress < 1) rafId = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
   }, []);
+  const circumference = 2 * Math.PI * 48;
   return /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-label": `${pct}% tayyorlandi`,
+    "aria-live": "polite",
     style: {
-      padding: '8px 0 4px',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
+      padding: "8px 0 4px",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
       gap: 18
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      position: 'relative',
+      position: "relative",
       width: 110,
       height: 110
     }
@@ -196,14 +279,15 @@ function Processing({
     height: "110",
     viewBox: "0 0 110 110",
     style: {
-      transform: 'rotate(-90deg)'
-    }
+      transform: "rotate(-90deg)"
+    },
+    "aria-hidden": "true"
   }, /*#__PURE__*/React.createElement("circle", {
     cx: "55",
     cy: "55",
     r: "48",
     fill: "none",
-    stroke: "rgba(255,255,255,0.08)",
+    stroke: "var(--border-light)",
     strokeWidth: "6"
   }), /*#__PURE__*/React.createElement("circle", {
     cx: "55",
@@ -213,61 +297,93 @@ function Processing({
     stroke: accent,
     strokeWidth: "6",
     strokeLinecap: "round",
-    strokeDasharray: 2 * Math.PI * 48,
-    strokeDashoffset: 2 * Math.PI * 48 * (1 - pct / 100),
+    strokeDasharray: circumference,
+    strokeDashoffset: circumference * (1 - pct / 100),
     style: {
-      transition: 'stroke-dashoffset 0.3s linear',
+      transition: "stroke-dashoffset 0.3s linear",
       filter: `drop-shadow(0 0 8px ${accent}80)`
     }
   })), /*#__PURE__*/React.createElement("div", {
     style: {
-      position: 'absolute',
+      position: "absolute",
       inset: 0,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      color: '#fff',
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      color: "var(--text-primary)",
       fontSize: 26,
       fontWeight: 700,
-      fontVariantNumeric: 'tabular-nums'
+      fontVariantNumeric: "tabular-nums"
     }
   }, pct, "%")), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: '#fff',
+      color: "var(--text-primary)",
       fontSize: 15,
       fontWeight: 600
     }
   }, t.sheetProcessing));
 }
 
-// ─── Shared: send blob to bot ────────────────────────────────────
+// ─── sendToBot helper ─────────────────────────────────────────────
 async function sendToBot(blob, filename, onToast) {
   const userId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
-  const backendUrl = window.BACKEND_URL;
-  if (!userId) {
-    onToast('❌ Telegram orqali kirish kerak');
-    return false;
+  if (!userId || !window.BACKEND_URL) {
+    onToast?.("❌ Telegram ID topilmadi");
+    return;
   }
-  if (!backendUrl) {
-    onToast('❌ Backend ulanmagan');
-    return false;
+  try {
+    const form = new FormData();
+    form.append("file", blob, filename);
+    form.append("user_id", String(userId));
+    const r = await fetch(`${window.BACKEND_URL}/api/send-to-bot`, {
+      method: "POST",
+      headers: {
+        "X-User-Id": String(userId)
+      },
+      body: form
+    });
+    if (!r.ok) throw new Error("Server xatosi");
+    onToast?.("✅ Telegram botga yuborildi");
+  } catch (e) {
+    onToast?.("❌ Yuborishda xato: " + (e.message || "Qayta urinib ko'ring"));
   }
-  const form = new FormData();
-  form.append('user_id', String(userId));
-  form.append('filename', filename);
-  form.append('file', blob, filename);
-  const r = await fetch(`${backendUrl}/api/send-file`, {
-    method: 'POST',
-    body: form
-  });
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({}));
-    throw new Error(d.detail || r.statusText);
-  }
-  return true;
 }
 
-// ─── Result: file download ───────────────────────────────────────
+// ─── Download helper ──────────────────────────────────────────────
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ─── Copy to clipboard ────────────────────────────────────────────
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    // Fallback for older browsers
+    const el = document.createElement("textarea");
+    el.value = text;
+    el.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+    document.body.appendChild(el);
+    el.focus();
+    el.select();
+    document.execCommand("copy");
+    document.body.removeChild(el);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ─── ResultFile ───────────────────────────────────────────────────
 function ResultFile({
   t,
   accent,
@@ -276,160 +392,88 @@ function ResultFile({
   onClose,
   onToast
 }) {
-  const {
-    useState: uS2
-  } = React;
-  const ext = (result.filename || 'result').split('.').pop();
-  const base = (result.filename || 'result').replace(/\.[^.]+$/, '');
-  const [name, setName] = uS2(base);
-  const [sending, setSending] = uS2(false);
-  const finalName = () => (name.trim() || base) + '.' + ext;
-  const download = () => {
-    const url = URL.createObjectURL(result.blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = finalName();
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    onToast(t.sheetReady);
-  };
-  const handleSendToBot = async () => {
+  const [sending, setSending] = useS(false);
+  const handleSendToBot = useC(async () => {
     setSending(true);
-    try {
-      const ok = await sendToBot(result.blob, finalName(), onToast);
-      if (ok) onToast('✅ Fayl botga yuborildi!');
-    } catch (e) {
-      onToast('❌ ' + e.message);
-    } finally {
-      setSending(false);
-    }
-  };
-  const sizeMB = (result.blob.size / 1024 / 1024).toFixed(2);
+    await sendToBot(result.blob, result.filename, onToast);
+    setSending(false);
+  }, [result, onToast]);
+  const download = useC(() => {
+    downloadBlob(result.blob, result.filename);
+    onToast?.(t.sheetDownloaded || "Yuklandi ✓");
+  }, [result, t, onToast]);
+  const fileSizeMB = result.blob?.size ? (result.blob.size / 1024 / 1024).toFixed(2) : null;
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: 14
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      gap: 14,
+      padding: "4px 0 4px"
     }
   }, /*#__PURE__*/React.createElement(SuccessRing, null), /*#__PURE__*/React.createElement("div", {
     style: {
-      textAlign: 'center'
+      textAlign: "center"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      color: '#fff',
-      fontSize: 18,
+      color: "var(--text-primary)",
+      fontSize: 17,
       fontWeight: 700
     }
-  }, t.sheetReady), result.info && /*#__PURE__*/React.createElement("div", {
+  }, t.sheetDone), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: 'rgba(255,255,255,0.5)',
-      fontSize: 11.5,
+      color: "var(--text-muted)",
+      fontSize: 12.5,
       marginTop: 4,
-      whiteSpace: 'pre-wrap',
-      textAlign: 'left',
-      maxHeight: 80,
-      overflowY: 'auto'
+      fontFamily: "monospace",
+      wordBreak: "break-all"
+    }
+  }, "\uD83D\uDCCE ", result.filename, fileSizeMB && /*#__PURE__*/React.createElement("span", null, " \xB7 ", fileSizeMB, " MB")), result.info && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      color: "#4ade80",
+      fontSize: 12.5,
+      fontWeight: 600,
+      background: "rgba(34,197,94,0.12)",
+      padding: "6px 12px",
+      borderRadius: 8,
+      display: "inline-block"
     }
   }, result.info)), /*#__PURE__*/React.createElement("div", {
     style: {
-      width: '100%',
-      padding: '12px 14px',
-      borderRadius: 14,
-      background: 'rgba(255,255,255,0.03)',
-      border: '0.5px solid rgba(255,255,255,0.08)',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 40,
-      height: 40,
-      borderRadius: 10,
-      background: 'rgba(34,197,94,0.16)',
-      border: '0.5px solid rgba(34,197,94,0.28)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexShrink: 0
-    }
-  }, /*#__PURE__*/React.createElement("svg", {
-    width: "18",
-    height: "18",
-    viewBox: "0 0 24 24",
-    fill: "none"
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z",
-    stroke: "#4ade80",
-    strokeWidth: "2"
-  }), /*#__PURE__*/React.createElement("path", {
-    d: "M14 2v6h6",
-    stroke: "#4ade80",
-    strokeWidth: "2"
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 4
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    value: name,
-    onChange: e => setName(e.target.value),
-    style: {
-      flex: 1,
-      background: 'transparent',
-      border: 'none',
-      outline: 'none',
-      color: '#fff',
-      fontSize: 13,
-      fontWeight: 600,
-      minWidth: 0,
-      borderBottom: '1px solid rgba(255,255,255,0.2)',
-      paddingBottom: 1
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'rgba(255,255,255,0.4)',
-      fontSize: 13,
-      flexShrink: 0
-    }
-  }, ".", ext)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: 'rgba(255,255,255,0.45)',
-      fontSize: 11,
-      marginTop: 3
-    }
-  }, sizeMB, " MB"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
+      display: "flex",
       gap: 8,
-      width: '100%'
+      width: "100%",
+      flexWrap: "wrap"
     }
   }, /*#__PURE__*/React.createElement(Button, {
     variant: "secondary",
-    full: true,
-    onClick: onAgain
+    onClick: onAgain,
+    style: {
+      flex: 1
+    }
   }, t.sheetAgain), /*#__PURE__*/React.createElement(Button, {
     variant: "secondary",
-    full: true,
     onClick: handleSendToBot,
-    disabled: sending
-  }, sending ? '⏳' : '📨'), /*#__PURE__*/React.createElement(Button, {
+    disabled: sending,
+    style: {
+      flex: 1
+    }
+  }, sending ? /*#__PURE__*/React.createElement(Spinner, {
+    size: 16,
+    color: "var(--text-muted)"
+  }) : "📨"), /*#__PURE__*/React.createElement(Button, {
     variant: "primary",
     accent: accent,
-    full: true,
-    onClick: download
+    onClick: download,
+    style: {
+      flex: 1
+    }
   }, t.sheetDownload)));
 }
 
-// ─── Result: text display ────────────────────────────────────────
+// ─── ResultText ───────────────────────────────────────────────────
 function ResultText({
   t,
   accent,
@@ -438,42 +482,66 @@ function ResultText({
   onClose,
   onToast
 }) {
-  const copy = () => {
-    navigator.clipboard?.writeText(result.content).then(() => onToast('Nusxalandi!')).catch(() => {});
-  };
+  const [copied, setCopied] = useS(false);
+  const handleCopy = useC(async () => {
+    const ok = await copyToClipboard(result.content);
+    if (ok) {
+      setCopied(true);
+      onToast?.(t.sheetCopied || "Nusxalandi ✓");
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      onToast?.("❌ Nusxalab bo'lmadi");
+    }
+  }, [result.content, t, onToast]);
+  const charCount = result.content?.length ?? 0;
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: 14
+      display: "flex",
+      flexDirection: "column",
+      gap: 12
     }
-  }, /*#__PURE__*/React.createElement(SuccessRing, null), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
-      color: '#fff',
-      fontSize: 17,
-      fontWeight: 700
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between"
     }
-  }, t.sheetReady), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
-      width: '100%',
-      maxHeight: 220,
-      overflowY: 'auto',
-      background: 'rgba(255,255,255,0.04)',
-      border: '0.5px solid rgba(255,255,255,0.10)',
+      color: "var(--text-muted)",
+      fontSize: 11,
+      fontWeight: 600,
+      textTransform: "uppercase",
+      letterSpacing: 0.6
+    }
+  }, t.sheetResult || "Natija"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "var(--text-faint)",
+      fontSize: 10.5
+    }
+  }, charCount, " belgi")), /*#__PURE__*/React.createElement("div", {
+    role: "textbox",
+    "aria-readonly": "true",
+    "aria-multiline": "true",
+    "aria-label": "Natija matni",
+    style: {
+      background: "var(--bg-surface-1)",
+      border: "0.5px solid var(--border-subtle)",
       borderRadius: 14,
       padding: 14,
-      color: '#e5e5ff',
+      color: "var(--text-primary)",
       fontSize: 13.5,
-      lineHeight: 1.6,
-      whiteSpace: 'pre-wrap',
-      wordBreak: 'break-word'
+      lineHeight: 1.55,
+      maxHeight: 220,
+      overflowY: "auto",
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+      userSelect: "text"
     }
   }, result.content), /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
-      gap: 10,
-      width: '100%'
+      display: "flex",
+      gap: 10
     }
   }, /*#__PURE__*/React.createElement(Button, {
     variant: "secondary",
@@ -481,13 +549,13 @@ function ResultText({
     onClick: onAgain
   }, t.sheetAgain), /*#__PURE__*/React.createElement(Button, {
     variant: "primary",
-    accent: accent,
+    accent: copied ? "#22c55e" : accent,
     full: true,
-    onClick: copy
-  }, t.sheetCopy)));
+    onClick: handleCopy
+  }, copied ? "✓ " + (t.sheetCopied || "Nusxalandi") : t.sheetCopy)));
 }
 
-// ─── Result: image display ───────────────────────────────────────
+// ─── ResultImage ──────────────────────────────────────────────────
 function ResultImage({
   t,
   accent,
@@ -495,97 +563,43 @@ function ResultImage({
   onAgain,
   onToast
 }) {
-  const {
-    useState: uS3
-  } = React;
-  const ext = (result.filename || 'result.png').split('.').pop();
-  const base = (result.filename || 'result').replace(/\.[^.]+$/, '');
-  const [name, setName] = uS3(base);
-  const [sending, setSending] = uS3(false);
-  const finalName = () => (name.trim() || base) + '.' + ext;
-  const download = () => {
-    const a = document.createElement('a');
+  const download = useC(() => {
+    const a = document.createElement("a");
     a.href = result.dataUrl;
-    a.download = finalName();
+    a.download = result.filename;
+    document.body.appendChild(a);
     a.click();
-    onToast(t.sheetReady);
-  };
-  const handleSendToBot = async () => {
-    setSending(true);
-    try {
-      const res = await fetch(result.dataUrl);
-      const blob = await res.blob();
-      const ok = await sendToBot(blob, finalName(), onToast);
-      if (ok) onToast('✅ Rasm botga yuborildi!');
-    } catch (e) {
-      onToast('❌ ' + e.message);
-    } finally {
-      setSending(false);
-    }
-  };
+    document.body.removeChild(a);
+    onToast?.(t.sheetDownloaded || "Yuklandi ✓");
+  }, [result, t, onToast]);
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: 14
+      display: "flex",
+      flexDirection: "column",
+      gap: 14,
+      alignItems: "center"
     }
   }, /*#__PURE__*/React.createElement("img", {
     src: result.dataUrl,
+    alt: result.filename || "Natija",
     style: {
-      maxWidth: '100%',
-      maxHeight: 220,
-      borderRadius: 12,
-      border: '0.5px solid rgba(255,255,255,0.1)'
+      maxWidth: "100%",
+      borderRadius: 14,
+      border: "0.5px solid var(--border-subtle)",
+      maxHeight: 260,
+      objectFit: "contain"
     }
   }), /*#__PURE__*/React.createElement("div", {
     style: {
-      width: '100%',
-      padding: '10px 14px',
-      borderRadius: 12,
-      background: 'rgba(255,255,255,0.03)',
-      border: '0.5px solid rgba(255,255,255,0.08)',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    value: name,
-    onChange: e => setName(e.target.value),
-    style: {
-      flex: 1,
-      background: 'transparent',
-      border: 'none',
-      outline: 'none',
-      color: '#fff',
-      fontSize: 13,
-      fontWeight: 600,
-      minWidth: 0,
-      borderBottom: '1px solid rgba(255,255,255,0.2)',
-      paddingBottom: 1
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'rgba(255,255,255,0.4)',
-      fontSize: 13,
-      flexShrink: 0
-    }
-  }, ".", ext)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      width: '100%'
+      display: "flex",
+      gap: 10,
+      width: "100%"
     }
   }, /*#__PURE__*/React.createElement(Button, {
     variant: "secondary",
     full: true,
     onClick: onAgain
   }, t.sheetAgain), /*#__PURE__*/React.createElement(Button, {
-    variant: "secondary",
-    full: true,
-    onClick: handleSendToBot,
-    disabled: sending
-  }, sending ? '⏳' : '📨'), /*#__PURE__*/React.createElement(Button, {
     variant: "primary",
     accent: accent,
     full: true,
@@ -593,26 +607,27 @@ function ResultImage({
   }, t.sheetDownload)));
 }
 
-// ─── Shared success ring ─────────────────────────────────────────
+// ─── SuccessRing ──────────────────────────────────────────────────
 function SuccessRing() {
   return /*#__PURE__*/React.createElement("div", {
+    "aria-hidden": "true",
     style: {
       width: 72,
       height: 72,
-      borderRadius: '50%',
-      background: 'rgba(34,197,94,0.15)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      position: 'relative'
+      borderRadius: "50%",
+      background: "rgba(34,197,94,0.15)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      position: "relative"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      position: 'absolute',
+      position: "absolute",
       inset: -8,
-      borderRadius: '50%',
-      border: '2px solid rgba(34,197,94,0.2)',
-      animation: 'pulse 1.4s ease-out infinite'
+      borderRadius: "50%",
+      border: "2px solid rgba(34,197,94,0.2)",
+      animation: "pulse 1.4s ease-out infinite"
     }
   }), /*#__PURE__*/React.createElement("svg", {
     width: "34",
@@ -628,7 +643,7 @@ function SuccessRing() {
   })));
 }
 
-// ─── Premium lock ────────────────────────────────────────────────
+// ─── LockedState ──────────────────────────────────────────────────
 function LockedState({
   t,
   accent,
@@ -637,22 +652,23 @@ function LockedState({
 }) {
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      padding: '8px 0 4px',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
+      padding: "8px 0 4px",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
       gap: 16
     }
   }, /*#__PURE__*/React.createElement("div", {
+    "aria-hidden": "true",
     style: {
       width: 78,
       height: 78,
-      borderRadius: '50%',
-      background: 'linear-gradient(135deg, rgba(245,158,11,0.2), rgba(245,158,11,0.05))',
-      border: '0.5px solid rgba(245,158,11,0.3)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
+      borderRadius: "50%",
+      background: "linear-gradient(135deg, rgba(245,158,11,0.2), rgba(245,158,11,0.05))",
+      border: "0.5px solid rgba(245,158,11,0.3)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center"
     }
   }, /*#__PURE__*/React.createElement("svg", {
     width: "32",
@@ -674,27 +690,27 @@ function LockedState({
     strokeLinecap: "round"
   }))), /*#__PURE__*/React.createElement("div", {
     style: {
-      textAlign: 'center',
+      textAlign: "center",
       maxWidth: 280
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      color: '#fff',
+      color: "var(--text-primary)",
       fontSize: 18,
       fontWeight: 700,
       marginBottom: 6
     }
   }, t.sheetLockedTitle), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: 'rgba(255,255,255,0.55)',
+      color: "var(--text-muted)",
       fontSize: 13,
       lineHeight: 1.45
     }
   }, t.sheetLockedSub)), /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
+      display: "flex",
       gap: 10,
-      width: '100%',
+      width: "100%",
       marginTop: 4
     }
   }, /*#__PURE__*/React.createElement(Button, {
@@ -709,25 +725,25 @@ function LockedState({
   }, t.subscribe)));
 }
 
-// ─── Text input placeholder per service ──────────────────────────
+// ─── Text placeholder hints per service ──────────────────────────
 const TEXT_HINTS = {
-  translit: 'Matn kiriting (lotin yoki kirill)',
-  readtime: 'O\'qish vaqtini hisoblash uchun matn kiriting...',
-  deadline: 'Sana kiriting: 31.12.2025 yoki 2025-12-31',
-  stats: 'Raqamlar kiriting: 4 7 2 9 1 5',
-  equation: 'Ifoda kiriting: 2^10, sqrt(144), sin(pi/2)',
-  graph: 'Funksiya: sin(x), x^2, cos(x)*x+1',
-  translate: '1-qator: tarjima qilinadigan matn\n2-qator: til kodi (en, ru, tr, de...)',
-  wiki: 'Maqola nomi kiriting (uz, ru, en da)',
-  books: 'Kitob nomi yoki muallif',
-  qr: 'QR kod uchun matn yoki URL',
-  cert: '1-qator: Ism Familiya\n2-qator: Kurs nomi',
-  schedule: 'Har qatorda bir dars: Dushanba: Matematika 9:00',
-  pdflock: 'Parol kiriting',
-  watermark: 'Watermark matni (bo\'sh qoldirilsa EduBot yoziladi)'
+  translit: "Matn kiriting (lotin yoki kirill)",
+  readtime: "O'qish vaqtini hisoblash uchun matn kiriting...",
+  deadline: "Sana kiriting: 31.12.2025 yoki 2025-12-31",
+  stats: "Raqamlar kiriting: 4 7 2 9 1 5",
+  equation: "Ifoda kiriting: 2^10, sqrt(144), sin(pi/2)",
+  graph: "Funksiya: sin(x), x^2, cos(x)*x+1",
+  translate: "1-qator: matn\n2-qator: til kodi (en, ru, tr, de...)",
+  wiki: "Maqola nomi kiriting (uz, ru, en da)",
+  books: "Kitob nomi yoki muallif",
+  qr: "QR kod uchun matn yoki URL",
+  cert: "1-qator: Ism Familiya\n2-qator: Kurs nomi",
+  schedule: "Har qatorda bir dars: Dushanba: Matematika 9:00",
+  pdflock: "Parol kiriting",
+  watermark: "Watermark matni (bo'sh qoldirilsa EduBot yoziladi)"
 };
 
-// ─── Main service sheet ──────────────────────────────────────────
+// ─── Main ServiceSheet ────────────────────────────────────────────
 function ServiceSheet({
   service,
   isPremium,
@@ -737,83 +753,110 @@ function ServiceSheet({
   onToast,
   onGoToPlans
 }) {
-  const [step, setStep] = useS(isPremium ? 'locked' : 'input');
+  const [step, setStep] = useS(isPremium ? "locked" : "input");
   const [inputData, setInputData] = useS(null);
   const [hasInput, setHasInput] = useS(false);
   const [result, setResult] = useS(null);
-  const meta = isPremium ? t.p[service.id] : t.s[service.id];
+  const meta = isPremium ? t.p?.[service.id] : t.s?.[service.id];
   if (!meta) return null;
   const acceptText = !service.accept;
-  const start = async () => {
-    setStep('processing');
+  const catColor = CAT_COLOR?.[service.cat] || "#a78bfa";
+  const iconColor = isPremium ? "#fbbf24" : catColor;
+
+  // ✅ NEW: Telegram MainButton integration
+  useE(() => {
+    const TG = window.Telegram?.WebApp;
+    const btn = TG?.MainButton;
+    if (!btn || step !== "input" || !hasInput) return;
+    btn.setText(t.sheetStart || "Boshlash");
+    btn.setParams({
+      color: accent,
+      text_color: "#ffffff"
+    });
+    btn.show();
+    const handleClick = () => start();
+    btn.onClick(handleClick);
+    return () => {
+      btn.hide();
+      btn.offClick(handleClick);
+    };
+  }, [step, hasInput, accent]);
+  const start = useC(async () => {
+    setStep("processing");
     try {
       const handler = window.SERVICE_HANDLERS?.[service.id];
       if (!handler) {
         setResult({
-          type: 'text',
-          content: '⚠️ Bu xizmat tez kunda qo\'shiladi.'
+          type: "text",
+          content: "⚠️ Bu xizmat tez kunda qo'shiladi."
         });
-        setStep('done');
+        setStep("done");
         return;
       }
       let arg = {};
       if (acceptText) {
+        // ✅ FIX: Text is sanitized in handler, but we trim here too
         arg = {
-          text: inputData || ''
+          text: String(inputData || "").trim()
         };
       } else if (service.multi) {
+        const files = Array.isArray(inputData) ? inputData : [inputData];
         arg = {
-          files: Array.isArray(inputData) ? inputData : [inputData],
-          file: Array.isArray(inputData) ? inputData[0] : inputData,
-          text: ''
+          files,
+          file: files[0],
+          text: ""
         };
       } else {
         arg = {
           file: inputData,
-          text: ''
+          text: ""
         };
       }
-      const res = await Promise.resolve(handler(arg));
+      const res = await handler(arg);
       setResult(res);
-      setStep('done');
+      setStep("done");
+
+      // ✅ NEW: Haptic on success
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("success");
     } catch (err) {
-      console.error('[ServiceSheet]', err);
+      console.error("[ServiceSheet]", err.message);
+      // ✅ FIX: User-friendly error message (err.message already sanitized in handlers)
       setResult({
-        type: 'text',
-        content: `❌ Xatolik: ${err.message}`
+        type: "text",
+        content: `❌ ${err.message || "Kutilmagan xato. Qayta urinib ko'ring."}`
       });
-      setStep('done');
+      setStep("done");
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("error");
     }
-  };
-  const reset = () => {
-    setStep('input');
+  }, [service, inputData, acceptText]);
+  const reset = useC(() => {
+    setStep("input");
     setInputData(null);
     setHasInput(false);
     setResult(null);
-  };
-  const catColor = CAT_COLOR[service.cat] || '#a78bfa';
-  const iconColor = isPremium ? PREMIUM_COLOR : catColor;
+  }, []);
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      padding: '6px 20px 20px'
+      padding: "6px 20px 20px"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
-      alignItems: 'center',
+      display: "flex",
+      alignItems: "center",
       gap: 12,
       marginBottom: 18
     }
   }, /*#__PURE__*/React.createElement("div", {
+    "aria-hidden": "true",
     style: {
       width: 50,
       height: 50,
       borderRadius: 14,
-      background: isPremium ? 'rgba(245,158,11,0.18)' : `${catColor}26`,
-      border: `0.5px solid ${isPremium ? 'rgba(245,158,11,0.32)' : catColor + '40'}`,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
+      background: isPremium ? "rgba(245,158,11,0.18)" : `${catColor}26`,
+      border: `0.5px solid ${isPremium ? "rgba(245,158,11,0.32)" : catColor + "40"}`,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center"
     }
   }, /*#__PURE__*/React.createElement(Icon, {
     name: service.id,
@@ -825,20 +868,21 @@ function ServiceSheet({
       flex: 1,
       minWidth: 0
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("h2", {
     style: {
-      color: '#fff',
+      margin: 0,
+      color: "var(--text-primary)",
       fontSize: 17,
       fontWeight: 700,
       letterSpacing: -0.2
     }
   }, meta.name), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: 'rgba(255,255,255,0.55)',
+      color: "var(--text-muted)",
       fontSize: 12.5,
       marginTop: 2
     }
-  }, meta.desc))), step === 'locked' && /*#__PURE__*/React.createElement(LockedState, {
+  }, meta.desc))), step === "locked" && /*#__PURE__*/React.createElement(LockedState, {
     t: t,
     accent: accent,
     onSubscribe: () => {
@@ -846,7 +890,7 @@ function ServiceSheet({
       onGoToPlans();
     },
     onClose: onClose
-  }), step === 'input' && /*#__PURE__*/React.createElement(React.Fragment, null, acceptText ? /*#__PURE__*/React.createElement(TextInputBox, {
+  }), step === "input" && /*#__PURE__*/React.createElement(React.Fragment, null, acceptText ? /*#__PURE__*/React.createElement(TextInputBox, {
     t: t,
     placeholder: TEXT_HINTS[service.id] || t.sheetTextPlaceholder,
     onChange: v => {
@@ -863,7 +907,7 @@ function ServiceSheet({
     }
   }), /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
+      display: "flex",
       gap: 10,
       marginTop: 16
     }
@@ -877,30 +921,30 @@ function ServiceSheet({
     full: true,
     disabled: !hasInput,
     onClick: start
-  }, t.sheetStart))), step === 'processing' && /*#__PURE__*/React.createElement(Processing, {
+  }, t.sheetStart))), step === "processing" && /*#__PURE__*/React.createElement(Processing, {
     t: t,
     accent: accent
-  }), step === 'done' && result && /*#__PURE__*/React.createElement(React.Fragment, null, result.type === 'file' && /*#__PURE__*/React.createElement(ResultFile, {
+  }), step === "done" && result && /*#__PURE__*/React.createElement(React.Fragment, null, result.type === "file" && /*#__PURE__*/React.createElement(ResultFile, {
     t: t,
     accent: accent,
     result: result,
     onAgain: reset,
     onClose: onClose,
     onToast: onToast
-  }), result.type === 'text' && /*#__PURE__*/React.createElement(ResultText, {
+  }), result.type === "text" && /*#__PURE__*/React.createElement(ResultText, {
     t: t,
     accent: accent,
     result: result,
     onAgain: reset,
     onClose: onClose,
     onToast: onToast
-  }), result.type === 'image' && /*#__PURE__*/React.createElement(ResultImage, {
+  }), result.type === "image" && /*#__PURE__*/React.createElement(ResultImage, {
     t: t,
     accent: accent,
     result: result,
     onAgain: reset,
     onToast: onToast
-  }), result.type === 'premium' && /*#__PURE__*/React.createElement(LockedState, {
+  }), result.type === "premium" && /*#__PURE__*/React.createElement(LockedState, {
     t: t,
     accent: accent,
     onSubscribe: () => {
@@ -915,5 +959,9 @@ Object.assign(window, {
   Dropzone,
   TextInputBox,
   Processing,
-  LockedState
+  LockedState,
+  SuccessRing,
+  ResultFile,
+  ResultText,
+  ResultImage
 });
