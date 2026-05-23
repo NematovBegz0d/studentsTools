@@ -389,7 +389,17 @@ async function watermark({ file, text }) {
 
 async function pdf2img({ file }) {
   validateFile(file, ".pdf");
-  return apiFile("/api/pdf2img", buildFormData("file", file), "pages.zip");
+  // 25 sahifa render 90s gacha olishi mumkin
+  const form = buildFormData("file", file);
+  const response = await fetchWithTimeout(
+    `${BACKEND_URL}/api/pdf2img`,
+    { method: "POST", headers: getAuthHeaders(), body: form },
+    90000,
+  );
+  await handleResponseError(response);
+  const blob = await response.blob();
+  const info = response.headers.get("X-Info");
+  return { type: "file", blob, filename: "pages.zip", ...(info ? { info } : {}) };
 }
 
 async function compresspdf({ file }) {

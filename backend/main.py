@@ -408,28 +408,90 @@ async def watermark_pdf(request: Request, file: UploadFile = File(...)):
 
 # ─── PDF: To image ────────────────────────────────────────────────────────────
 
+_PDF2IMG_MAX_PAGES = 25   # more than enough for presentations & reports
+
+def _do_pdf2img(data: bytes) -> tuple:
+    """
+    PDF → ZIP of PNG images (150 DPI, one file per page).
+    150 DPI = ilovepdf standard. ZIP_STORED because PNG is already compressed.
+    Page-by-page rendering keeps memory usage flat (no full batch in RAM).
+    """
+    import fitz
+
+    doc = fitz.open(stream=data, filetype="pdf")
+    total_pages  = doc.page_count
+
+    if total_pages == 0:
+        doc.close()
+        raise ValueError("PDF bo'sh (0 sahifa).")
+
+    render_n  = min(total_pages, _PDF2IMG_MAX_PAGES)
+    truncated = total_pages > _PDF2IMG_MAX_PAGES
+
+    # 150 DPI — matches ilovepdf default (72 pt × zoom = DPI)
+    zoom = 150 / 72          # ≈ 2.083
+    mat  = fitz.Matrix(zoom, zoom)
+
+    zf_buf     = io.BytesIO()
+    total_size = 0
+    padding    = len(str(render_n))   # zero-padding: "01", "02" … or "1", "2"
+
+    # ZIP_STORED — no redundant compression on already-compressed PNG
+    with zipfile.ZipFile(zf_buf, 'w', zipfile.ZIP_STORED) as zf:
+        for i in range(render_n):
+            page      = doc[i]
+            pix       = page.get_pixmap(matrix=mat, alpha=False)
+            png_bytes = pix.tobytes("png")
+            total_size += len(png_bytes)
+            zf.writestr(f"page_{str(i + 1).zfill(padding)}.png", png_bytes)
+            del pix          # free GPU/CPU memory immediately
+
+    doc.close()
+
+    avg_kb   = total_size // 1024 // render_n if render_n else 0
+    info_parts = [f"✅ {render_n} sahifa · 150 DPI · PNG · ~{avg_kb} KB/sahifa"]
+    if truncated:
+        info_parts.append(
+            f"⚠️ Faqat {_PDF2IMG_MAX_PAGES} sahifa ko'rsatildi "
+            f"(PDF jami {total_pages} sahifa)"
+        )
+    return zf_buf.getvalue(), " · ".join(info_parts)
+
+
 @app.post("/api/pdf2img")
 @limiter.limit("10/minute")
 async def pdf_to_img(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
     try:
-        import fitz
         data = await file.read()
         check_size(data, "/api/pdf2img")
-        doc = fitz.open(stream=data, filetype="pdf")
-        mat = fitz.Matrix(2, 2)
-        zf_buf = io.BytesIO()
-        with zipfile.ZipFile(zf_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for i, page in enumerate(doc, 1):
-                pix = page.get_pixmap(matrix=mat, alpha=False)
-                zf.writestr(f"page_{i}.png", pix.tobytes("png"))
-        logger.info(f"pdf2img: {doc.page_count} sahifa, {time.time()-t0:.1f}s")
-        return Response(content=zf_buf.getvalue(), media_type="application/zip",
-                        headers={"Content-Disposition": "attachment; filename=pages.zip"})
+
+        loop = asyncio.get_event_loop()
+        try:
+            zip_bytes, info = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_pdf2img, data),
+                timeout=90.0,   # 25 pages × ~3s/page
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail=f"Konversiya 90 soniyadan oshdi. "
+                       f"PDF juda katta — maksimal {_PDF2IMG_MAX_PAGES} sahifa.")
+
+        logger.info(f"pdf2img: {len(data)//1024}KB → {len(zip_bytes)//1024}KB, {time.time()-t0:.1f}s")
+        return Response(
+            content=zip_bytes,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": "attachment; filename=pages.zip",
+                "X-Info": info,
+            },
+        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"pdf2img xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="PDF rasmga aylantiri bo'lmadi. Fayl buzilgan yoki himoyalangan.")
 
 # ─── PDF: Compress ────────────────────────────────────────────────────────────
 
