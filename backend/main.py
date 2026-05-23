@@ -453,32 +453,69 @@ async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
 
 # ─── DOCX → PDF ───────────────────────────────────────────────────────────────
 
+def _rl_fonts():
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    try:
+        pdfmetrics.registerFont(TTFont('DV', FONT_REGULAR))
+        pdfmetrics.registerFont(TTFont('DV-Bold', FONT_BOLD))
+        return 'DV', 'DV-Bold'
+    except Exception:
+        return 'Helvetica', 'Helvetica-Bold'
+
 @app.post("/api/docx2pdf")
 @limiter.limit("10/minute")
 async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
     try:
         import mammoth
-        from weasyprint import HTML
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+
         data = await file.read()
         check_size(data, "/api/docx2pdf")
-        with io.BytesIO(data) as buf:
-            result = mammoth.convert_to_html(buf)
-        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-            body{{font-family:'DejaVu Sans',Arial,sans-serif;font-size:12pt;margin:2cm;line-height:1.6;color:#111}}
-            h1{{font-size:20pt;margin:16pt 0 8pt}}h2{{font-size:16pt;margin:12pt 0 6pt}}h3{{font-size:14pt;margin:10pt 0 4pt}}
-            p{{margin:0 0 8pt}}ul,ol{{margin:0 0 8pt;padding-left:20pt}}li{{margin-bottom:3pt}}
-            table{{border-collapse:collapse;width:100%;margin-bottom:8pt}}
-            td,th{{border:1pt solid #ccc;padding:4pt 8pt}}th{{background:#f0f0f0;font-weight:bold}}
-            strong{{font-weight:bold}}em{{font-style:italic}}
-        </style></head><body>{result.value}</body></html>"""
-        pdf_bytes = HTML(string=html).write_pdf()
+        fn, fn_bold = _rl_fonts()
+
+        result = mammoth.convert_to_html(io.BytesIO(data))
+        # Strip HTML tags to get readable text with basic structure
+        html = result.value
+        import re as _re
+        # Convert headings
+        html = _re.sub(r'<h[1-3][^>]*>(.*?)</h[1-3]>', r'\n### \1\n', html, flags=_re.DOTALL)
+        html = _re.sub(r'<li[^>]*>(.*?)</li>', r'\n• \1', html, flags=_re.DOTALL)
+        html = _re.sub(r'<p[^>]*>(.*?)</p>', r'\1\n', html, flags=_re.DOTALL)
+        html = _re.sub(r'<br\s*/?>', '\n', html)
+        html = _re.sub(r'<[^>]+>', '', html)
+        import html as _html
+        text = _html.unescape(html)
+
+        out = io.BytesIO()
+        doc = SimpleDocTemplate(out, pagesize=A4,
+                                leftMargin=2*cm, rightMargin=2*cm,
+                                topMargin=2*cm, bottomMargin=2*cm)
+        h_style = ParagraphStyle('h', fontName=fn_bold, fontSize=14, spaceAfter=6, spaceBefore=10)
+        p_style = ParagraphStyle('p', fontName=fn, fontSize=11, leading=16, spaceAfter=6)
+
+        story = []
+        for line in text.split('\n'):
+            s = line.strip()
+            if not s:
+                story.append(Spacer(1, 6))
+            elif s.startswith('###'):
+                story.append(Paragraph(s[3:].strip(), h_style))
+            else:
+                story.append(Paragraph(s, p_style))
+        doc.build(story)
+        pdf_bytes = out.getvalue()
         logger.info(f"docx2pdf: {len(data)//1024}KB → {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
         return Response(content=pdf_bytes, media_type="application/pdf",
                         headers={"Content-Disposition": "attachment; filename=document.pdf"})
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"docx2pdf xato: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ─── Image → PDF ──────────────────────────────────────────────────────────────
@@ -530,32 +567,49 @@ async def xlsx_to_pdf(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
     try:
         from openpyxl import load_workbook
-        from weasyprint import HTML
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        from reportlab.lib import colors
+
         data = await file.read()
         check_size(data, "/api/xlsx2pdf")
+        fn, fn_bold = _rl_fonts()
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        parts = []
-        for name in wb.sheetnames:
+
+        out = io.BytesIO()
+        doc = SimpleDocTemplate(out, pagesize=A4,
+                                leftMargin=1*cm, rightMargin=1*cm,
+                                topMargin=2*cm, bottomMargin=2*cm)
+        title_st = ParagraphStyle('t', fontName=fn_bold, fontSize=13, spaceAfter=8, spaceBefore=4)
+        story = []
+        for i, name in enumerate(wb.sheetnames):
+            if i > 0:
+                story.append(PageBreak())
+            story.append(Paragraph(name, title_st))
             ws = wb[name]
-            parts.append(f"<h2>{name}</h2><table>")
-            for i, row in enumerate(ws.iter_rows(values_only=True, max_row=500)):
-                tag = "th" if i == 0 else "td"
-                cells = "".join(f"<{tag}>{'' if v is None else str(v)}</{tag}>" for v in row)
-                parts.append(f"<tr>{cells}</tr>")
-            parts.append("</table>")
-        html = (
-            "<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
-            "body{font-family:'DejaVu Sans',Arial,sans-serif;font-size:9pt;margin:1.5cm}"
-            "h2{font-size:13pt;margin:14pt 0 6pt;color:#333}"
-            "table{border-collapse:collapse;width:100%;margin-bottom:16pt}"
-            "th{background:#e8e8e8;font-weight:bold;padding:4pt 7pt;border:0.5pt solid #aaa}"
-            "td{padding:3pt 7pt;border:0.5pt solid #ccc}"
-            "tr:nth-child(even) td{background:#f8f8f8}"
-            "</style></head><body>" + "".join(parts) + "</body></html>"
-        )
-        pdf_bytes = HTML(string=html).write_pdf()
+            rows = list(ws.iter_rows(values_only=True, max_row=300, max_col=20))
+            if not rows:
+                continue
+            table_data = [[str(v) if v is not None else '' for v in row] for row in rows]
+            col_n = max(len(r) for r in table_data)
+            col_w = (A4[0] - 2*cm) / col_n if col_n else A4[0]
+            t = Table(table_data, colWidths=[col_w]*col_n, repeatRows=1)
+            t.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), fn),
+                ('FONTNAME', (0,0), (-1,0), fn_bold),
+                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#e8e8e8')),
+                ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor('#cccccc')),
+                ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8f8f8')]),
+                ('TOPPADDING', (0,0), (-1,-1), 3),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+            ]))
+            story.append(t)
+        doc.build(story)
         logger.info(f"xlsx2pdf: {time.time()-t0:.1f}s")
-        return Response(content=pdf_bytes, media_type="application/pdf",
+        return Response(content=out.getvalue(), media_type="application/pdf",
                         headers={"Content-Disposition": "attachment; filename=spreadsheet.pdf"})
     except HTTPException:
         raise

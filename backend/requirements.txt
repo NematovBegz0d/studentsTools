@@ -9,7 +9,6 @@ pdf2docx==0.5.8
 slowapi==0.1.9
 loguru==0.7.2
 mammoth
-weasyprint
 pypdf
 PyMuPDF
 reportlab
