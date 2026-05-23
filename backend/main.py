@@ -573,35 +573,115 @@ async def pdf_to_img(request: Request, file: UploadFile = File(...)):
 
 # ─── PDF: Compress ────────────────────────────────────────────────────────────
 
+def _do_compresspdf(data: bytes) -> tuple:
+    import fitz
+
+    orig_size = len(data)
+    doc = fitz.open(stream=data, filetype="pdf")
+    n = doc.page_count
+
+    if n == 0:
+        doc.close()
+        raise ValueError("PDF bo'sh (0 sahifa).")
+    if n > 100:
+        doc.close()
+        raise ValueError(f"PDF {n} sahifa. Maksimal 100 sahifa qabul qilinadi.")
+
+    # ── Detect content type (text vs scanned/image) ─────────────────
+    sample_chars = sum(len(doc[i].get_text()) for i in range(min(3, n)))
+    is_text_pdf = sample_chars > 150
+
+    # ── Path A: text PDF — structure-level compression ───────────────
+    # Preserves searchable text, vectors, fonts. Never rasterizes.
+    try:
+        doc.scrub()  # strip unused metadata, embedded thumbnails
+    except Exception:
+        pass
+    buf_a = io.BytesIO()
+    doc.save(buf_a, garbage=4, deflate=True, clean=True)
+    doc.close()
+    result_a = buf_a.getvalue()
+
+    # ── Path B: scanned/image PDF — re-render at lower DPI ───────────
+    # Only used when PDF has no extractable text.
+    result_b = None
+    if not is_text_pdf:
+        orig_mb = orig_size / (1024 * 1024)
+        if orig_mb > 5:
+            quality, dpi = 52, 96
+        elif orig_mb > 2:
+            quality, dpi = 62, 110
+        else:
+            quality, dpi = 72, 130
+        zoom = dpi / 72
+        mat  = fitz.Matrix(zoom, zoom)
+
+        doc2    = fitz.open(stream=data, filetype="pdf")
+        out_doc = fitz.open()
+        for page in doc2:
+            pix       = page.get_pixmap(matrix=mat, alpha=False)
+            img_bytes = pix.tobytes("jpeg", quality=quality)
+            del pix
+            new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
+            new_page.insert_image(new_page.rect, stream=img_bytes)
+        doc2.close()
+        buf_b    = io.BytesIO()
+        out_doc.save(buf_b, garbage=4, deflate=True)
+        result_b = buf_b.getvalue()
+
+    # ── Choose best result ───────────────────────────────────────────
+    if result_b is not None and len(result_b) < len(result_a):
+        out = result_b
+        method = "rasterize"
+    else:
+        out = result_a
+        method = "deflate"
+
+    # Never return something larger than the original
+    if len(out) >= orig_size:
+        out    = data
+        method = "original"
+
+    saved = max(0, round((1 - len(out) / orig_size) * 100))
+    info  = (f"{n} sahifa • {orig_size // 1024} KB → {len(out) // 1024} KB"
+             f" • {saved}% tejaldi"
+             + (" (matn saqlanadi)" if method == "deflate" else ""))
+    return out, info, saved
+
 @app.post("/api/compresspdf")
 @limiter.limit("10/minute")
 async def compress_pdf(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
     try:
-        import fitz
         data = await file.read()
         check_size(data, "/api/compresspdf")
-        src = fitz.open(stream=data, filetype="pdf")
-        out_doc = fitz.open()
-        mat = fitz.Matrix(1.5, 1.5)
-        for page in src:
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            img_bytes = pix.tobytes("jpeg", quality=60)
-            rect = fitz.Rect(0, 0, page.rect.width, page.rect.height)
-            new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
-            new_page.insert_image(rect, stream=img_bytes)
-        buf = io.BytesIO()
-        out_doc.save(buf, garbage=4, deflate=True)
-        out_bytes = buf.getvalue()
-        saved = max(0, round((1 - len(out_bytes) / len(data)) * 100))
-        logger.info(f"compresspdf: {len(data)//1024}KB → {len(out_bytes)//1024}KB ({saved}%), {time.time()-t0:.1f}s")
-        return Response(content=out_bytes, media_type="application/pdf",
-                        headers={"Content-Disposition": "attachment; filename=compressed.pdf",
-                                 "X-Saved-Percent": str(saved)})
+        if data[:4] != b'%PDF':
+            raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+        loop = asyncio.get_event_loop()
+        try:
+            out_bytes, info, saved = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_compresspdf, data),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail="Siqish 60 soniyadan oshdi. Kichikroq fayl yoki kamroq sahifa tanlang.")
+        logger.info(f"compresspdf: {info}, {time.time()-t0:.1f}s")
+        return Response(
+            content=out_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=compressed.pdf",
+                "X-Saved-Percent": str(saved),
+                "X-Info": info,
+            },
+        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"compresspdf xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="PDF siqishda xato. Fayl buzilgan yoki himoyalangan bo'lishi mumkin.")
 
 # ─── PDF → DOCX ───────────────────────────────────────────────────────────────
 

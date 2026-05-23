@@ -412,11 +412,17 @@ async function pdf2img({ file }) {
 
 async function compresspdf({ file }) {
   validateFile(file, ".pdf");
-  return apiFileWithSavedInfo(
-    "/api/compresspdf",
-    buildFormData("file", file),
-    "compressed.pdf",
+  const response = await fetchWithTimeout(
+    `${BACKEND_URL}/api/compresspdf`,
+    { method: "POST", headers: getAuthHeaders(), body: buildFormData("file", file) },
+    60000,
   );
+  await handleResponseError(response);
+  const blob = await response.blob();
+  const info  = response.headers.get("X-Info");
+  const saved = response.headers.get("X-Saved-Percent");
+  const label = info || (saved ? `${saved}% kichiklashdi` : undefined);
+  return { type: "file", blob, filename: "compressed.pdf", ...(label ? { info: label } : {}) };
 }
 
 async function pdf2docx({ file }) {
