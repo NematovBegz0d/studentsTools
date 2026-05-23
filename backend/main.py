@@ -12,11 +12,14 @@ import os
 import re
 import math
 import time
+import uuid
+import asyncio
 import zipfile
 import tempfile
 import httpx
 import sys
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 import database as db
 import payment as pay
@@ -52,6 +55,22 @@ except Exception:
 # ─── Rate limiter ─────────────────────────────────────────────────────────────
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+
+# ─── Thread pool for CPU-intensive conversions ────────────────────────────────
+# pdf2docx blocks the event loop — run it in a thread pool
+
+_converter_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pdf2docx")
+
+
+def _do_pdf2docx(pdf_path: str, docx_path: str) -> None:
+    """CPU-bound, blocking — runs in _converter_pool thread."""
+    from pdf2docx import Converter
+    cv = Converter(pdf_path)
+    try:
+        cv.convert(docx_path, multi_processing=False, start=0)
+    finally:
+        cv.close()
+
 
 # ─── Rembg session ───────────────────────────────────────────────────────────
 
@@ -105,7 +124,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="EduBot Backend", version="2.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware,
+    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    expose_headers=["X-Info", "X-Page-Count", "X-Password", "X-Saved-Percent", "X-Warning"],
+)
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -447,31 +469,102 @@ async def compress_pdf(request: Request, file: UploadFile = File(...)):
 @limiter.limit("10/minute")
 async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
+    uid = uuid.uuid4().hex
+    pdf_path = f"/tmp/edubot_{uid}.pdf"
+    docx_path = f"/tmp/edubot_{uid}.docx"
     try:
-        from pdf2docx import Converter
         data = await file.read()
         check_size(data, "/api/pdf2docx")
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(data)
-            pdf_path = tmp.name
-        docx_path = pdf_path.replace(".pdf", ".docx")
+
+        # ── 1. Sahifalar sonini tekshirish ───────────────────────────
+        from pypdf import PdfReader
         try:
-            cv = Converter(pdf_path)
-            cv.convert(docx_path)
-            cv.close()
-            with open(docx_path, "rb") as f:
-                out = f.read()
-            logger.info(f"pdf2docx: {len(data)//1024}KB → {len(out)//1024}KB, {time.time()-t0:.1f}s")
-            return Response(content=out,
-                            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            headers={"Content-Disposition": "attachment; filename=converted.docx"})
-        finally:
-            if os.path.exists(pdf_path): os.unlink(pdf_path)
-            if os.path.exists(docx_path): os.unlink(docx_path)
+            reader = PdfReader(io.BytesIO(data))
+            page_count = len(reader.pages)
+        except Exception:
+            raise HTTPException(status_code=422,
+                detail="PDF fayl ochib bo'lmadi. Fayl buzilgan yoki parol bilan himoyalangan.")
+
+        if page_count == 0:
+            raise HTTPException(status_code=422, detail="PDF bo'sh (0 sahifa).")
+
+        MAX_PAGES = 50
+        if page_count > MAX_PAGES:
+            raise HTTPException(status_code=400,
+                detail=f"PDF {page_count} sahifali. Maksimal {MAX_PAGES} sahifa. "
+                       f"PDF'ni bo'lib (split) qayta urinib ko'ring.")
+
+        # ── 2. Skanerlangan PDF aniqlaish (matn yo'qligi) ────────────
+        sample = min(3, page_count)
+        total_chars = sum(
+            len((reader.pages[i].extract_text() or "").strip())
+            for i in range(sample)
+        )
+        is_scanned = total_chars < 20
+
+        # ── 3. Vaqtinchalik faylga yozish ────────────────────────────
+        with open(pdf_path, "wb") as f:
+            f.write(data)
+
+        # ── 4. Thread pool'da konversiya (event loop bloklanmaydi) ───
+        loop = asyncio.get_event_loop()
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_pdf2docx, pdf_path, docx_path),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail=f"Konversiya {page_count} sahifa uchun 120 soniyadan oshdi. "
+                       f"Faylni kichikroq qismlarga bo'lib qayta urinib ko'ring.")
+
+        # ── 5. Natijani o'qish ────────────────────────────────────────
+        if not os.path.exists(docx_path):
+            raise HTTPException(status_code=500, detail="Konversiya muvaffaqiyatsiz (fayl yaratilmadi).")
+
+        with open(docx_path, "rb") as f:
+            out = f.read()
+
+        if len(out) < 2000:
+            if is_scanned:
+                raise HTTPException(status_code=422,
+                    detail="Skanerlangan PDF aniqlandi — matn ajratib bo'lmadi. "
+                           "Avval OCR xizmatidan foydalaning, keyin qayta urinib ko'ring.")
+            raise HTTPException(status_code=422,
+                detail="Konversiya natijasi bo'sh. PDF tuzilishi qo'llab-quvvatlanmaydi.")
+
+        # ── 6. Info xabar ─────────────────────────────────────────────
+        info = f"✅ {page_count} sahifa aylantiriLdi"
+        if is_scanned:
+            info += " · ⚠️ Skanerlangan sahifalar bor — sifat past bo'lishi mumkin"
+
+        elapsed = time.time() - t0
+        logger.info(f"pdf2docx: {page_count}p {'scan' if is_scanned else 'text'}, "
+                    f"{len(data)//1024}KB → {len(out)//1024}KB, {elapsed:.1f}s")
+
+        return Response(
+            content=out,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": "attachment; filename=converted.docx",
+                "X-Info": info,
+                "X-Page-Count": str(page_count),
+            },
+        )
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"pdf2docx xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="Kutilmagan xatolik. Fayl buzilgan yoki qo'llab-quvvatlanmaydi.")
+    finally:
+        for path in (pdf_path, docx_path):
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+            except Exception:
+                pass
 
 # ─── DOCX → PDF ───────────────────────────────────────────────────────────────
 

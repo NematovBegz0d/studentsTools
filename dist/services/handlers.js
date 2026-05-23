@@ -370,7 +370,24 @@ async function pdf2docx({
   file
 }) {
   validateFile(file, ".pdf");
-  return apiFile("/api/pdf2docx", buildFormData("file", file), "converted.docx");
+  const form = buildFormData("file", file);
+  // Katta PDF'lar uchun 120 soniya — default 30s etarli emas
+  const response = await fetchWithTimeout(`${BACKEND_URL}/api/pdf2docx`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: form
+  }, 120000);
+  await handleResponseError(response);
+  const blob = await response.blob();
+  const info = response.headers.get("X-Info");
+  return {
+    type: "file",
+    blob,
+    filename: "converted.docx",
+    ...(info ? {
+      info
+    } : {})
+  };
 }
 async function docx2pdf({
   file
