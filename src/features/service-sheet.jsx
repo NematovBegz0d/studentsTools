@@ -803,7 +803,7 @@ const TEXT_HINTS = {
   books: "Kitob nomi yoki muallif",
   qr: "QR kod uchun matn yoki URL",
   cert: "1-qator: Ism Familiya\n2-qator: Kurs nomi",
-  schedule: "Har qatorda bir dars: Dushanba: Matematika 9:00",
+  schedule: "Dushanba: Matematika 8:00, Fizika 10:00\nSeshanba: Ingliz tili 9:00, Kimyo 11:00",
   pdflock: "Parol kiriting (bo'sh qolsa avtomatik yaratiladi)",
   watermark: "Watermark matni (bo'sh qoldirilsa EduBot yoziladi)",
 };

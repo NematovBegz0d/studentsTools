@@ -2033,52 +2033,164 @@ async def make_cert(request: Request):
 
 # ─── Schedule ─────────────────────────────────────────────────────────────────
 
+_TIME_RE = re.compile(r'\b(\d{1,2}:\d{2})\b')
+
+def _parse_schedule(text: str) -> list:
+    """Parse schedule input.
+    Input format (one day per line):
+        Dushanba: Matematika 8:00, Fizika 10:00
+        Seshanba: Ingliz tili 9:00
+    Returns: [(day, [(num, subject, time_str), ...]), ...]
+    """
+    result = []
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        if ':' in line:
+            # Split only on the first colon
+            colon = line.index(':')
+            day   = line[:colon].strip()
+            rest  = line[colon + 1:].strip()
+        else:
+            result.append((line, []))
+            continue
+
+        lessons = []
+        for num, part in enumerate(rest.split(','), 1):
+            part = part.strip()
+            if not part:
+                continue
+            m = _TIME_RE.search(part)
+            if m:
+                time_str = m.group(1)
+                subject  = (part[:m.start()] + part[m.end():]).strip()
+                subject  = subject or part
+            else:
+                subject  = part
+                time_str = ""
+            lessons.append((num, subject[:45], time_str))
+        result.append((day[:20], lessons))
+    return result
+
+def _do_schedule(text: str) -> bytes:
+    from PIL import Image, ImageDraw, ImageFont
+
+    schedule = _parse_schedule(text)
+    if not schedule:
+        raise ValueError("Bo'sh jadval. Format:\nDushanba: Matematika 8:00, Fizika 10:00")
+
+    # Flatten schedule → rows: (day_label, num_str, subject, time_str)
+    flat = []
+    for day, lessons in schedule:
+        if not lessons:
+            flat.append((day, "", "", ""))
+        else:
+            for idx, (num, subject, time_str) in enumerate(lessons):
+                flat.append((day if idx == 0 else "", f"{num}.", subject, time_str))
+
+    # ── Layout constants ────────────────────────────────────────────
+    W         = 720
+    PAD       = 14
+    ROW_H     = 46
+    TITLE_H   = 56
+    HDR_H     = 32         # column header strip
+    H         = TITLE_H + HDR_H + ROW_H * len(flat) + PAD
+
+    # Column x-positions and widths: Day | # | Subject | Time
+    COL_X = [PAD, PAD + 148, PAD + 148 + 32, PAD + 148 + 32 + 400]
+    COL_W = [148, 32, 400, 100]
+
+    # Colours
+    C_BG      = (10,  10,  20)
+    C_HDR_BG  = (22,  14,  48)
+    C_ROW_A   = (18,  14,  38)
+    C_ROW_B   = (12,  10,  26)
+    C_BORDER  = (55,  42,  88)
+    C_ACCENT  = (139, 92,  246)
+    C_DAY     = (180, 150, 255)
+    C_TEXT    = (225, 220, 255)
+    C_TIME    = (251, 191, 36)
+    C_NUM     = (100, 95,  155)
+    C_HDR_TXT = (160, 140, 210)
+
+    img  = Image.new("RGB", (W, H), C_BG)
+    draw = ImageDraw.Draw(img)
+
+    try:
+        fn_title = ImageFont.truetype(FONT_BOLD,    22)
+        fn_hdr   = ImageFont.truetype(FONT_BOLD,    13)
+        fn_day   = ImageFont.truetype(FONT_BOLD,    15)
+        fn_body  = ImageFont.truetype(FONT_REGULAR, 14)
+        fn_time  = ImageFont.truetype(FONT_BOLD,    14)
+        fn_num   = ImageFont.truetype(FONT_REGULAR, 13)
+    except Exception:
+        fn_title = fn_hdr = fn_day = fn_body = fn_time = fn_num = ImageFont.load_default()
+
+    def cx(t, f):
+        bb = draw.textbbox((0, 0), t, font=f)
+        return (W - (bb[2] - bb[0])) // 2
+
+    # ── Title ───────────────────────────────────────────────────────
+    draw.text((cx("Dars Jadvali", fn_title), 17), "Dars Jadvali",
+              font=fn_title, fill=C_ACCENT)
+
+    # ── Column header strip ─────────────────────────────────────────
+    y_hdr = TITLE_H
+    draw.rectangle([(0, y_hdr), (W, y_hdr + HDR_H)], fill=C_HDR_BG)
+    for col, label in enumerate(["Kun", "#", "Fan / Dars", "Vaqt"]):
+        draw.text((COL_X[col] + 4, y_hdr + 9), label, font=fn_hdr, fill=C_HDR_TXT)
+    draw.line([(0, y_hdr + HDR_H), (W, y_hdr + HDR_H)], fill=C_BORDER)
+
+    # ── Data rows ───────────────────────────────────────────────────
+    y0 = TITLE_H + HDR_H
+    for i, (day_label, num_str, subject, time_str) in enumerate(flat):
+        y  = y0 + i * ROW_H
+        vy = y + (ROW_H - 16) // 2
+        draw.rectangle([(0, y), (W, y + ROW_H)], fill=C_ROW_A if i % 2 == 0 else C_ROW_B)
+        draw.line([(0, y + ROW_H - 1), (W, y + ROW_H - 1)], fill=C_BORDER)
+
+        if day_label:
+            draw.text((COL_X[0] + 4, vy), day_label, font=fn_day, fill=C_DAY)
+        if num_str:
+            draw.text((COL_X[1], vy), num_str, font=fn_num, fill=C_NUM)
+        if subject:
+            draw.text((COL_X[2], vy), subject, font=fn_body, fill=C_TEXT)
+        if time_str:
+            draw.text((COL_X[3], vy), time_str, font=fn_time, fill=C_TIME)
+
+    # ── Vertical column dividers ────────────────────────────────────
+    for col in range(1, 4):
+        x_div = COL_X[col] - 2
+        draw.line([(x_div, y_hdr), (x_div, H - PAD)], fill=C_BORDER)
+
+    # ── Outer border ────────────────────────────────────────────────
+    draw.rectangle([(0, 0), (W - 1, H - 1)], outline=C_ACCENT, width=2)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
 @app.post("/api/schedule")
 @limiter.limit("20/minute")
 async def make_schedule(request: Request):
     try:
-        from PIL import Image, ImageDraw, ImageFont
         body = await request.json()
         text = body.get("text", "").strip()
-        rows = [l.strip() for l in text.split("\n") if l.strip()]
-        if not rows:
-            raise HTTPException(status_code=400, detail="Jadval qatorlarini kiriting")
-
-        W, rowH = 680, 52
-        H = rowH * (len(rows) + 1) + 80
-        img = Image.new("RGB", (W, H), (13, 13, 24))
-        draw = ImageDraw.Draw(img)
-        try:
-            fn_title = ImageFont.truetype(FONT_BOLD, 22)
-            fn_row   = ImageFont.truetype(FONT_REGULAR, 15)
-        except Exception:
-            fn_title = fn_row = ImageFont.load_default()
-
-        title = "Dars Jadvali"
-        try:
-            bb = draw.textbbox((0, 0), title, font=fn_title)
-            tx = (W - (bb[2] - bb[0])) // 2
-        except Exception:
-            tx = W // 4
-        draw.text((tx, 26), title, font=fn_title, fill=(139, 92, 246))
-
-        for i, line in enumerate(rows):
-            y = 70 + i * rowH
-            bg = (35, 22, 65) if i % 2 == 0 else (20, 20, 35)
-            try:
-                draw.rounded_rectangle([(16, y), (W-16, y+rowH-4)], radius=8, fill=bg)
-            except Exception:
-                draw.rectangle([(16, y), (W-16, y+rowH-4)], fill=bg)
-            draw.text((28, y + 16), line, font=fn_row, fill=(229, 229, 255))
-
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        return Response(content=buf.read(), media_type="image/png")
+        if not text:
+            raise HTTPException(status_code=400,
+                detail="Jadval kiriting.\nFormat: Dushanba: Matematika 8:00, Fizika 10:00")
+        if len(text) > 3000:
+            text = text[:3000]
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _do_schedule, text)
+        return Response(content=result, media_type="image/png")
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"schedule xato: {e}")
+        raise HTTPException(status_code=500,
+            detail="Jadval yaratishda xato. Formatni tekshiring: Dushanba: Matematika 8:00, Fizika 10:00")
 
 # ─── Translate ────────────────────────────────────────────────────────────────
 
