@@ -141,7 +141,10 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
-    expose_headers=["X-Info", "X-Page-Count", "X-Password", "X-Saved-Percent", "X-Warning"],
+    expose_headers=[
+        "X-Info", "X-Page-Count", "X-Password", "X-Saved-Percent", "X-Warning",
+        "Content-Disposition",  # so frontend can read attachment filenames
+    ],
 )
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

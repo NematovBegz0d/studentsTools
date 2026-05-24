@@ -98,7 +98,6 @@ function validateFiles(files, allowedTypes = null, maxSize = DEFAULT_MAX_SIZE) {
 }
 
 // ─── Fetch with timeout & abort ───────────────────────────────────
-// ✅ NEW: AbortController + timeout wrapper
 async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -112,28 +111,45 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
   } catch (err) {
     clearTimeout(timeoutId);
     if (err.name === "AbortError") {
-      throw new Error("So'rov vaqti tugadi (30 soniya). Internet aloqasini tekshiring.");
+      const seconds = Math.round(timeoutMs / 1000);
+      throw new Error(`So'rov vaqti tugadi (${seconds}s). Internet aloqasini tekshiring.`);
     }
     if (!navigator.onLine) {
       throw new Error("Internet aloqasi yo'q. Ulanishni tekshiring.");
     }
-    throw new Error("Tarmoq xatosi. Qayta urinib ko'ring.");
+    // Surface the real network error so we can see DNS / TLS / CORS issues
+    console.error("[Network]", url, err);
+    throw new Error(`Tarmoq xatosi: ${err.message || "noma'lum"}`);
   }
 }
 
 // ─── Response error handling ──────────────────────────────────────
-// ✅ NEW: User-friendly HTTP errors — no internal leakage
+// Reads the actual server error detail so users see WHY it failed,
+// not just a generic message. Without this, every backend error looks
+// identical and is impossible to debug from the user side.
 async function handleResponseError(response) {
   if (response.ok) return;
-  const message = HTTP_ERROR_MESSAGES[response.status] || `Xato ${response.status}. Qayta urinib ko\'ring.`;
 
-  // Development'da original xatoni ko'rsatish
-  if (window.location.hostname === "localhost" || !window.Telegram?.WebApp?.initData) {
+  // Always try to read the server's error message (FastAPI returns
+  // { "detail": "..." } for HTTPException)
+  let serverDetail = "";
+  try {
+    const text = await response.text();
     try {
-      const text = await response.text();
-      console.error(`[API ${response.status}]`, text);
-    } catch (_) {}
-  }
+      const json = JSON.parse(text);
+      serverDetail = json.detail || json.message || json.error || "";
+    } catch {
+      // Not JSON — use raw text (trimmed)
+      serverDetail = (text || "").slice(0, 300);
+    }
+  } catch (_) {}
+  const base = HTTP_ERROR_MESSAGES[response.status] || `Xato ${response.status}. Qayta urinib ko\'ring.`;
+
+  // Combine: short server detail wins (more useful), otherwise base
+  const message = serverDetail ? `${serverDetail} (${response.status})` : base;
+
+  // Always log (helps in any environment with a console)
+  console.error(`[API ${response.status}] ${response.url}`, serverDetail || "(no detail)");
   throw new Error(message);
 }
 
