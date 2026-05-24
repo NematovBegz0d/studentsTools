@@ -1254,96 +1254,115 @@ def _do_docx2pdf(data: bytes, fn_regular: str, fn_bold: str) -> bytes:
 
         # ── Paragraph ─────────────────────────────────────────────
         if tag == "p":
-            para = DocxParagraph(element, doc)
-            style_name = (para.style.name or "").lower()
+            try:
+                para = DocxParagraph(element, doc)
+                try:
+                    style_name = (para.style.name or "").lower()
+                except Exception:
+                    style_name = ""
 
-            # Images inside this paragraph
-            for blip in element.findall(".//" + qn("a:blip")):
-                rId = blip.get(qn("r:embed")) or blip.get(qn("r:link"))
-                if rId and rId in images:
+                # Images inside this paragraph
+                for blip in element.findall(".//" + qn("a:blip")):
+                    rId = blip.get(qn("r:embed")) or blip.get(qn("r:link"))
+                    if rId and rId in images:
+                        try:
+                            buf = io.BytesIO(images[rId])
+                            pil = PILImage.open(buf)
+                            iw, ih = pil.size
+                            if iw > PAGE_W:
+                                ratio = PAGE_W / iw
+                                iw, ih = PAGE_W, ih * ratio
+                            out_buf = io.BytesIO()
+                            pil.convert("RGB").save(out_buf, format="PNG")
+                            out_buf.seek(0)
+                            story.append(RLImage(out_buf, width=iw, height=ih))
+                            story.append(Spacer(1, 6))
+                        except Exception:
+                            pass
+
+                markup = runs_to_markup(para)
+                if not markup.strip():
+                    story.append(Spacer(1, 3))
+                    continue
+
+                try:
+                    align = ALIGN_MAP.get(para.alignment, TA_LEFT)
+                except Exception:
+                    align = TA_LEFT
+                hlvl = heading_level(element, para)
+
+                if hlvl == 1:
+                    st = derived(S["h1"], align)
+                elif hlvl == 2:
+                    st = derived(S["h2"], align)
+                elif hlvl == 3:
+                    st = derived(S["h3"], align)
+                elif hlvl >= 4:
+                    st = derived(S["h4"], align)
+                elif "list bullet" in style_name or "list paragraph" in style_name:
+                    markup = f"• {markup}"
+                    st = derived(S["lb"], align)
+                elif "list number" in style_name:
                     try:
-                        buf = io.BytesIO(images[rId])
-                        pil = PILImage.open(buf)
-                        iw, ih = pil.size
-                        if iw > PAGE_W:
-                            ratio = PAGE_W / iw
-                            iw, ih = PAGE_W, ih * ratio
-                        out_buf = io.BytesIO()
-                        pil.convert("RGB").save(out_buf, format="PNG")
-                        out_buf.seek(0)
-                        story.append(RLImage(out_buf, width=iw, height=ih))
-                        story.append(Spacer(1, 6))
+                        numId = element.find(".//" + qn("w:numId"))
+                        key = numId.get(qn("w:val"), "0") if numId is not None else "0"
+                    except Exception:
+                        key = "0"
+                    list_counters[key] = list_counters.get(key, 0) + 1
+                    markup = f"{list_counters[key]}. {markup}"
+                    st = derived(S["ln"], align)
+                else:
+                    st = derived(S["body"], align)
+
+                try:
+                    story.append(Paragraph(markup, st))
+                except Exception:
+                    try:
+                        story.append(Paragraph(esc(para.text or ""), S["body"]))
                     except Exception:
                         pass
-
-            markup = runs_to_markup(para)
-            if not markup.strip():
-                story.append(Spacer(1, 3))
-                continue
-
-            align = ALIGN_MAP.get(para.alignment, TA_LEFT)
-            hlvl = heading_level(element, para)
-
-            if hlvl == 1:
-                st = derived(S["h1"], align)
-            elif hlvl == 2:
-                st = derived(S["h2"], align)
-            elif hlvl == 3:
-                st = derived(S["h3"], align)
-            elif hlvl >= 4:
-                st = derived(S["h4"], align)
-            elif "list bullet" in style_name or "list paragraph" in style_name:
-                markup = f"• {markup}"
-                st = derived(S["lb"], align)
-            elif "list number" in style_name:
-                # Simple auto-numbering per numId
-                try:
-                    numId = element.find(".//" + qn("w:numId"))
-                    key = numId.get(qn("w:val"), "0") if numId is not None else "0"
-                except Exception:
-                    key = "0"
-                list_counters[key] = list_counters.get(key, 0) + 1
-                markup = f"{list_counters[key]}. {markup}"
-                st = derived(S["ln"], align)
-            else:
-                st = derived(S["body"], align)
-
-            try:
-                story.append(Paragraph(markup, st))
             except Exception:
-                # Markup parse error — fall back to plain text
-                story.append(Paragraph(esc(para.text or ""), S["body"]))
+                pass  # skip problematic paragraph elements
 
         # ── Table ─────────────────────────────────────────────────
         elif tag == "tbl":
-            table = DocxTable(element, doc)
-            rows_data = []
-            for r_idx, row in enumerate(table.rows):
-                row_cells = []
-                is_header = r_idx == 0
-                for cell in row.cells:
-                    cell_para_text = " ".join(p.text for p in cell.paragraphs).strip()
-                    row_cells.append(Paragraph(esc(cell_para_text),
-                                               S["tch"] if is_header else S["tc"]))
-                rows_data.append(row_cells)
+            try:
+                table = DocxTable(element, doc)
+                rows_data = []
+                for r_idx, row in enumerate(table.rows):
+                    try:
+                        row_cells = []
+                        is_header = r_idx == 0
+                        for cell in row.cells:
+                            try:
+                                cell_para_text = " ".join(p.text for p in cell.paragraphs).strip()
+                            except Exception:
+                                cell_para_text = ""
+                            row_cells.append(Paragraph(esc(cell_para_text),
+                                                       S["tch"] if is_header else S["tc"]))
+                        rows_data.append(row_cells)
+                    except Exception:
+                        pass
 
-            if rows_data:
-                col_n = max(len(r) for r in rows_data)
-                col_w = PAGE_W / col_n if col_n else PAGE_W
-                tbl = Table(rows_data, colWidths=[col_w] * col_n, repeatRows=1)
-                tbl.setStyle(TableStyle([
-                    ("BACKGROUND",    (0, 0), (-1,  0), colors.HexColor("#e8e8e8")),
-                    ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f7f7")]),
-                    ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#bbbbbb")),
-                    ("TOPPADDING",    (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                    ("LEFTPADDING",   (0, 0), (-1, -1), 6),
-                    ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
-                    ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-                    ("WORDWRAP",      (0, 0), (-1, -1), "WORD"),
-                ]))
-                story.append(tbl)
-                story.append(Spacer(1, 10))
+                if rows_data:
+                    col_n = max(len(r) for r in rows_data)
+                    col_w = PAGE_W / col_n if col_n else PAGE_W
+                    tbl = Table(rows_data, colWidths=[col_w] * col_n, repeatRows=1)
+                    tbl.setStyle(TableStyle([
+                        ("BACKGROUND",    (0, 0), (-1,  0), colors.HexColor("#e8e8e8")),
+                        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f7f7")]),
+                        ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#bbbbbb")),
+                        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+                        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+                        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+                        ("WORDWRAP",      (0, 0), (-1, -1), "WORD"),
+                    ]))
+                    story.append(tbl)
+                    story.append(Spacer(1, 10))
+            except Exception:
+                pass  # skip problematic table elements
 
         # ── Page break ────────────────────────────────────────────
         elif tag == "sectPr":
@@ -1361,7 +1380,23 @@ def _do_docx2pdf(data: bytes, fn_regular: str, fn_bold: str) -> bytes:
         title=doc.core_properties.title or "EduBot Document",
         author="EduBot",
     )
-    pdf_doc.build(story)
+    try:
+        pdf_doc.build(story)
+    except Exception:
+        # Fallback: rebuild with only safe text/spacer elements
+        safe = [item for item in story
+                if isinstance(item, (Paragraph, Spacer, PageBreak))]
+        if not safe:
+            safe = [Paragraph("(Hujjatni aylantirish qisman bajarildi)", S["body"])]
+        out2 = io.BytesIO()
+        pdf_doc2 = SimpleDocTemplate(
+            out2, pagesize=A4,
+            leftMargin=2 * cm, rightMargin=2 * cm,
+            topMargin=2.5 * cm, bottomMargin=2.5 * cm,
+            title="EduBot Document", author="EduBot",
+        )
+        pdf_doc2.build(safe)
+        return out2.getvalue()
     return out.getvalue()
 
 
@@ -1987,6 +2022,10 @@ async def xlsx_to_pdf(request: Request, file: UploadFile = File(...)):
     try:
         data = await file.read()
         check_size(data, "/api/xlsx2pdf")
+        # xlsx is a ZIP-based format; check magic bytes PK
+        if len(data) < 4 or data[:2] != b'PK':
+            raise HTTPException(status_code=422,
+                detail="Bu fayl Excel (.xlsx) emas. .xlsx yoki .xls fayl yuklang.")
 
         loop = asyncio.get_event_loop()
         try:
@@ -2175,7 +2214,17 @@ async def img_compress(
         data = await file.read()
         check_size(data, "/api/imgcompress")
         if len(data) < 4:
-            raise HTTPException(status_code=400, detail="Invalid image file")
+            raise HTTPException(status_code=422, detail="Rasm fayli ochib bo'lmadi. JPG, PNG yoki WebP yuklang.")
+        # Quick magic-byte check: JPEG (FF D8), PNG (89 50 4E 47), WebP (52 49 46 46), GIF (47 49 46)
+        sig = data[:4]
+        is_image = (
+            sig[:2] == b'\xff\xd8' or   # JPEG
+            sig == b'\x89PNG' or        # PNG
+            sig == b'RIFF' or           # WebP
+            sig[:3] == b'GIF'           # GIF
+        )
+        if not is_image:
+            raise HTTPException(status_code=422, detail="Rasm fayli emas. JPG, PNG yoki WebP yuklang.")
         output_format = output_format if output_format in ("jpeg", "png", "webp") else "jpeg"
         loop = asyncio.get_event_loop()
         try:
@@ -3316,7 +3365,14 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
                 pass  # fallback to ZIP path below
 
         # ── ZIP ───────────────────────────────────────────────────────────
-        zf = zipfile.ZipFile(io.BytesIO(data))
+        if data[:2] != b'PK':
+            raise HTTPException(status_code=422,
+                detail="Bu fayl ZIP arxivi emas. .zip fayl yuklang.")
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(data))
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=422,
+                detail="ZIP fayl buzilgan yoki noto'g'ri format. Boshqa .zip fayl yuklang.")
         all_infos = [i for i in zf.infolist() if not i.filename.endswith("/")]
         if not all_infos:
             raise HTTPException(status_code=400, detail="ZIP ichida fayl yo'q")

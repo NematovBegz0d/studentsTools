@@ -412,7 +412,8 @@ async function sendToBot(blob, filename, onToast) {
     const form = new FormData();
     form.append("file", blob, filename);
     form.append("user_id", String(userId));
-    const r = await fetch(`${window.BACKEND_URL}/api/send-to-bot`, {
+    form.append("filename", filename);
+    const r = await fetch(`${window.BACKEND_URL}/api/send-file`, {
       method: "POST",
       headers: { "X-User-Id": String(userId) },
       body: form,
