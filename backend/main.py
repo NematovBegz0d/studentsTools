@@ -425,8 +425,9 @@ async def merge_pdf(request: Request, files: List[UploadFile] = File(...)):
         )
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="PDF birlashtirish xato")
+    except Exception as e:
+        logger.error(f"mergepdf xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"mergepdf: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── PDF: Split ───────────────────────────────────────────────────────────────
 
@@ -521,8 +522,9 @@ async def split_pdf(
         )
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="PDF ajratish xato")
+    except Exception as e:
+        logger.error(f"splitpdf xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"splitpdf: {type(e).__name__}: {str(e)[:160]}")
 
 
 # ─── PDF: Page selection ──────────────────────────────────────────────────────
@@ -579,8 +581,9 @@ async def pdf_select_pages(
         )
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Sahifa ajratishda xato")
+    except Exception as e:
+        logger.error(f"pdfpages xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"pdfpages: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── PDF: Text extraction ─────────────────────────────────────────────────────
 
@@ -665,9 +668,8 @@ async def pdf_text(request: Request, file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"pdftext xato: {e}")
-        raise HTTPException(status_code=500,
-            detail="PDF matn ajratishda xato. Fayl buzilgan bo'lishi mumkin.")
+        logger.error(f"pdftext xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"pdftext: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── PDF: Lock ────────────────────────────────────────────────────────────────
 
@@ -760,9 +762,8 @@ async def lock_pdf(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"pdflock xato: {e}")
-        raise HTTPException(status_code=500,
-            detail="Parol qo'yishda xato. Fayl buzilgan bo'lishi mumkin.")
+        logger.error(f"pdflock xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"pdflock: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── PDF: Watermark ───────────────────────────────────────────────────────────
 
@@ -865,9 +866,8 @@ async def watermark_pdf(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"watermark xato: {e}")
-        raise HTTPException(status_code=500,
-            detail="Watermark qo'yishda xato. Fayl buzilgan yoki himoyalangan bo'lishi mumkin.")
+        logger.error(f"watermark xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"watermark: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── PDF: To image ────────────────────────────────────────────────────────────
 
@@ -966,9 +966,8 @@ async def pdf_to_img(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"pdf2img xato: {e}")
-        raise HTTPException(status_code=500,
-            detail="PDF rasmga aylantiri bo'lmadi. Fayl buzilgan yoki himoyalangan.")
+        logger.error(f"pdf2img xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"pdf2img: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── PDF: Compress ────────────────────────────────────────────────────────────
 
@@ -1097,9 +1096,9 @@ async def compress_pdf(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"compresspdf xato: {e}")
+        logger.error(f"compresspdf xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
-            detail="PDF siqishda xato. Fayl buzilgan yoki himoyalangan bo'lishi mumkin.")
+            detail=f"compresspdf: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── PDF → DOCX ───────────────────────────────────────────────────────────────
 
@@ -1193,9 +1192,9 @@ async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"pdf2docx xato: {e}")
+        logger.error(f"pdf2docx xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
-            detail="Kutilmagan xatolik. Fayl buzilgan yoki qo'llab-quvvatlanmaydi.")
+            detail=f"pdf2docx: {type(e).__name__}: {str(e)[:160]}")
     finally:
         for path in (pdf_path, docx_path):
             try:
@@ -1561,9 +1560,9 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"docx2pdf xato: {e}")
+        logger.error(f"docx2pdf xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
-            detail="Kutilmagan xatolik. Fayl buzilgan yoki qo'llab-quvvatlanmaydi.")
+            detail=f"docx2pdf: {type(e).__name__}: {str(e)[:160]}")
 
 
 # ─── DOCX Edit ────────────────────────────────────────────────────────────────
@@ -1659,9 +1658,9 @@ async def docx_edit(
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Vaqt tugadi. Kichikroq fayl yuboring.")
     except Exception as e:
-        logger.error(f"docxedit xato: {e}")
+        logger.error(f"docxedit xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
-            detail="Kutilmagan xatolik. Fayl buzilgan yoki qo'llab-quvvatlanmaydi.")
+            detail=f"docxedit: {type(e).__name__}: {str(e)[:160]}")
 
 
 # ─── Image → PDF helpers ──────────────────────────────────────────────────────
@@ -1764,6 +1763,7 @@ def _do_imgs2pdf(all_data: list) -> tuple:
     out_buf = io.BytesIO()
     c = None
     count = 0
+    first_err = None  # keep the first per-image error so we don't silently lose it
 
     for idx, data in enumerate(all_data):
         try:
@@ -1791,11 +1791,15 @@ def _do_imgs2pdf(all_data: list) -> tuple:
             c.drawImage(ImageReader(img_buf), x, y, width=draw_w, height=draw_h,
                         preserveAspectRatio=True)
             count += 1
-        except Exception:
-            pass  # skip unreadable images
+        except Exception as e:
+            if first_err is None:
+                first_err = f"#{idx + 1} ({len(data)} bayt): {type(e).__name__}: {str(e)[:80]}"
 
     if c is None or count == 0:
-        raise ValueError("Hech qanday rasm ochib bo'lmadi.")
+        msg = "Hech qanday rasm ochib bo'lmadi."
+        if first_err:
+            msg += f" 1-xato: {first_err}"
+        raise ValueError(msg)
 
     c.save()
     info = f"✅ {count} ta rasm · {count} sahifali PDF"
@@ -1833,9 +1837,8 @@ async def img_to_pdf(request: Request, file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"img2pdf xato: {e}")
-        raise HTTPException(status_code=500,
-            detail="Rasm ochib bo'lmadi. JPG yoki PNG fayl yuklang.")
+        logger.error(f"img2pdf xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"img2pdf: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── Images → PDF ─────────────────────────────────────────────────────────────
 
@@ -1881,9 +1884,8 @@ async def imgs_to_pdf(request: Request, files: List[UploadFile] = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"imgs2pdf xato: {e}")
-        raise HTTPException(status_code=500,
-            detail="Rasmlarni ochib bo'lmadi. JPG yoki PNG fayllar yuklang.")
+        logger.error(f"imgs2pdf xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"imgs2pdf: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── Excel → PDF ──────────────────────────────────────────────────────────────
 
@@ -2144,9 +2146,8 @@ async def xlsx_to_pdf(request: Request, file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"xlsx2pdf xato: {e}")
-        raise HTTPException(status_code=500,
-            detail="Excel fayl ochib bo'lmadi. .xlsx yoki .xls fayl yuklang.")
+        logger.error(f"xlsx2pdf xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"xlsx2pdf: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── PPTX Compress (ZIP approach) ────────────────────────────────────────────
 
@@ -2236,8 +2237,9 @@ async def compress_pptx(request: Request, file: UploadFile = File(...)):
         )
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="PPTX compression failed")
+    except Exception as e:
+        logger.error(f"compresspptx xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"compresspptx: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── Image compress ───────────────────────────────────────────────────────────
 
@@ -2343,8 +2345,9 @@ async def img_compress(
         )
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Image compression failed")
+    except Exception as e:
+        logger.error(f"imgcompress xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"imgcompress: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── Background removal ───────────────────────────────────────────────────────
 
@@ -2411,9 +2414,8 @@ async def bgremove(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"bgremove xato: {e}")
-        raise HTTPException(status_code=500,
-            detail="Fon olib tashlashda xato. JPG yoki PNG rasm yuklang.")
+        logger.error(f"bgremove xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"bgremove: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── OCR helpers ──────────────────────────────────────────────────────────────
 
@@ -2594,9 +2596,8 @@ async def ocr(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"ocr xato: {e}")
-        raise HTTPException(status_code=500,
-            detail="OCR xatosi. Tiniq JPG/PNG rasm yoki skanerlangan PDF yuklang.")
+        logger.error(f"ocr xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"ocr: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── Translit ─────────────────────────────────────────────────────────────────
 
@@ -2874,8 +2875,9 @@ async def make_qr(request: Request):
         )
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="QR yaratishda xato")
+    except Exception as e:
+        logger.error(f"qr xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"qr: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── Certificate ──────────────────────────────────────────────────────────────
 
@@ -3026,8 +3028,9 @@ async def make_cert(request: Request):
         )
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Sertifikat yaratishda xato")
+    except Exception as e:
+        logger.error(f"cert xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"cert: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── Schedule ─────────────────────────────────────────────────────────────────
 
@@ -3186,9 +3189,8 @@ async def make_schedule(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"schedule xato: {e}")
-        raise HTTPException(status_code=500,
-            detail="Jadval yaratishda xato. Formatni tekshiring: Dushanba: Matematika 8:00, Fizika 10:00")
+        logger.error(f"schedule xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"schedule: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── Translate ────────────────────────────────────────────────────────────────
 
@@ -3384,8 +3386,9 @@ async def make_zip(
         )
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="ZIP yaratish xato")
+    except Exception as e:
+        logger.error(f"zip xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"zip: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── Unzip ────────────────────────────────────────────────────────────────────
 
@@ -3487,8 +3490,9 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
 
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Arxiv ochish xato")
+    except Exception as e:
+        logger.error(f"unzip xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"unzip: {type(e).__name__}: {str(e)[:160]}")
 
 
 # ─── Payment: Create ─────────────────────────────────────────────────────────
