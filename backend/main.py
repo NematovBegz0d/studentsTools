@@ -191,6 +191,98 @@ def health():
         "max_file_mb": MAX_FILE_MB,
     }
 
+# ─── Debug (temporary — remove after diagnosis) ───────────────────────────────
+
+@app.get("/debug/libs")
+def debug_libs():
+    """Test which library operations work. Remove after debugging."""
+    results = {}
+
+    # Test reportlab
+    try:
+        from reportlab.platypus import SimpleDocTemplate, Paragraph
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.pagesizes import A4
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4)
+        styles = getSampleStyleSheet()
+        doc.build([Paragraph("Test", styles["Normal"])])
+        pdf_bytes = buf.getvalue()
+        results["reportlab"] = f"ok ({len(pdf_bytes)} bytes)"
+    except Exception as e:
+        results["reportlab"] = f"FAIL: {type(e).__name__}: {e}"
+
+    # Test fitz open
+    try:
+        import fitz
+        results["fitz_version"] = fitz.version[0]
+    except Exception as e:
+        results["fitz_version"] = f"FAIL: {e}"
+
+    # Test fitz open + get_text
+    try:
+        import fitz
+        from reportlab.platypus import SimpleDocTemplate, Paragraph
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.pagesizes import A4
+        buf2 = io.BytesIO()
+        doc2 = SimpleDocTemplate(buf2, pagesize=A4)
+        styles2 = getSampleStyleSheet()
+        doc2.build([Paragraph("Test content for fitz", styles2["Normal"])])
+        pdf_bytes2 = buf2.getvalue()
+        fdoc = fitz.open(stream=pdf_bytes2, filetype="pdf")
+        text = fdoc[0].get_text()
+        fdoc.close()
+        results["fitz_get_text"] = f"ok: '{text[:30]}'"
+    except Exception as e:
+        results["fitz_get_text"] = f"FAIL: {type(e).__name__}: {e}"
+
+    # Test fitz get_pixmap
+    try:
+        import fitz
+        fdoc2 = fitz.open(stream=pdf_bytes2, filetype="pdf")
+        pix = fdoc2[0].get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)
+        img = pix.tobytes("png")
+        fdoc2.close()
+        results["fitz_get_pixmap"] = f"ok ({len(img)} bytes)"
+    except Exception as e:
+        results["fitz_get_pixmap"] = f"FAIL: {type(e).__name__}: {e}"
+
+    # Test fitz tobytes (doc save)
+    try:
+        import fitz
+        fdoc3 = fitz.open(stream=pdf_bytes2, filetype="pdf")
+        saved = fdoc3.tobytes(garbage=4, deflate=True)
+        fdoc3.close()
+        results["fitz_tobytes"] = f"ok ({len(saved)} bytes)"
+    except Exception as e:
+        results["fitz_tobytes"] = f"FAIL: {type(e).__name__}: {e}"
+
+    # Test fitz doc.save to BytesIO
+    try:
+        import fitz
+        fdoc4 = fitz.open(stream=pdf_bytes2, filetype="pdf")
+        buf4 = io.BytesIO()
+        fdoc4.save(buf4, garbage=4, deflate=True)
+        fdoc4.close()
+        results["fitz_save_bytesio"] = f"ok ({len(buf4.getvalue())} bytes)"
+    except Exception as e:
+        results["fitz_save_bytesio"] = f"FAIL: {type(e).__name__}: {e}"
+
+    # Test pypdf
+    try:
+        from pypdf import PdfReader, PdfWriter
+        reader = PdfReader(io.BytesIO(pdf_bytes2))
+        writer = PdfWriter()
+        writer.add_page(reader.pages[0])
+        out = io.BytesIO()
+        writer.write(out)
+        results["pypdf"] = f"ok ({len(out.getvalue())} bytes)"
+    except Exception as e:
+        results["pypdf"] = f"FAIL: {type(e).__name__}: {e}"
+
+    return results
+
 # ─── Telegram Webhook ─────────────────────────────────────────────────────────
 
 @app.post("/webhook")
