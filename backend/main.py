@@ -154,6 +154,14 @@ def check_size(data: bytes, endpoint: str = ""):
         mb = round(len(data) / 1024 / 1024, 1)
         raise HTTPException(status_code=413, detail=f"Fayl {mb}MB. Maksimal: {MAX_FILE_MB}MB")
 
+def safe_header(value) -> str:
+    """HTTP/1.1 headers must be Latin-1 encodable. Strip emojis and other
+    non-Latin-1 chars (✅ • → ⚠️ 📎 ў ҳ ғ қ ...) — these would otherwise raise
+    UnicodeEncodeError when Starlette encodes the response."""
+    if not isinstance(value, str):
+        value = str(value)
+    return "".join(ch for ch in value if ord(ch) < 256).strip() or "ok"
+
 async def tg_send(chat_id: int, text: str, reply_markup: Optional[dict] = None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if reply_markup:
@@ -420,7 +428,7 @@ async def merge_pdf(request: Request, files: List[UploadFile] = File(...)):
             media_type="application/pdf",
             headers={
                 "Content-Disposition": "attachment; filename=merged.pdf",
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -517,7 +525,7 @@ async def split_pdf(
             media_type="application/zip",
             headers={
                 "Content-Disposition": "attachment; filename=pages.zip",
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -576,7 +584,7 @@ async def pdf_select_pages(
             media_type="application/pdf",
             headers={
                 "Content-Disposition": "attachment; filename=selected.pdf",
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -755,8 +763,8 @@ async def lock_pdf(
             media_type="application/pdf",
             headers={
                 "Content-Disposition": "attachment; filename=locked.pdf",
-                "X-Password": user_pwd,
-                "X-Info": info,
+                "X-Password": safe_header(user_pwd),
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -860,7 +868,7 @@ async def watermark_pdf(
             media_type="application/pdf",
             headers={
                 "Content-Disposition": "attachment; filename=watermarked.pdf",
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -960,7 +968,7 @@ async def pdf_to_img(
             media_type=media_type,
             headers={
                 "Content-Disposition": f"attachment; filename={filename}",
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -1090,7 +1098,7 @@ async def compress_pdf(
             headers={
                 "Content-Disposition": "attachment; filename=compressed.pdf",
                 "X-Saved-Percent": str(saved),
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -1184,7 +1192,7 @@ async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={
                 "Content-Disposition": "attachment; filename=converted.docx",
-                "X-Info": info,
+                "X-Info": safe_header(info),
                 "X-Page-Count": str(page_count),
             },
         )
@@ -1553,7 +1561,7 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
             media_type="application/pdf",
             headers={
                 "Content-Disposition": "attachment; filename=document.pdf",
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
 
@@ -1650,7 +1658,7 @@ async def docx_edit(
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{enc_name}",
-                "X-Info": f"{count} ta so'z almashtirildi",
+                "X-Info": safe_header(f"{count} ta so'z almashtirildi"),
             },
         )
     except HTTPException:
@@ -1831,7 +1839,7 @@ async def img_to_pdf(request: Request, file: UploadFile = File(...)):
             media_type="application/pdf",
             headers={
                 "Content-Disposition": "attachment; filename=image.pdf",
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -1878,7 +1886,7 @@ async def imgs_to_pdf(request: Request, files: List[UploadFile] = File(...)):
             media_type="application/pdf",
             headers={
                 "Content-Disposition": "attachment; filename=images.pdf",
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -2140,7 +2148,7 @@ async def xlsx_to_pdf(request: Request, file: UploadFile = File(...)):
             media_type="application/pdf",
             headers={
                 "Content-Disposition": "attachment; filename=spreadsheet.pdf",
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -2231,7 +2239,7 @@ async def compress_pptx(request: Request, file: UploadFile = File(...)):
             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
             headers={
                 "Content-Disposition": "attachment; filename=compressed.pptx",
-                "X-Info": info,
+                "X-Info": safe_header(info),
                 "X-Saved-Percent": str(saved),
             },
         )
@@ -2339,7 +2347,7 @@ async def img_compress(
             media_type=media_type,
             headers={
                 "Content-Disposition": f"attachment; filename=compressed.{ext}",
-                "X-Info": info,
+                "X-Info": safe_header(info),
                 "X-Saved-Percent": str(saved),
             },
         )
@@ -3381,7 +3389,7 @@ async def make_zip(
             media_type="application/zip",
             headers={
                 "Content-Disposition": "attachment; filename=archive.zip",
-                "X-Info": info,
+                "X-Info": safe_header(info),
             },
         )
     except HTTPException:
@@ -3416,7 +3424,7 @@ def _build_response_from_entries(entries: list) -> Response:
         media_type="application/zip",
         headers={
             "Content-Disposition": "attachment; filename=extracted.zip",
-            "X-Info": f"{len(entries)} fayl",
+            "X-Info": safe_header(f"{len(entries)} fayl"),
         },
     )
 
