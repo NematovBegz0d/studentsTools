@@ -1502,6 +1502,76 @@ def _do_docx2pdf(data: bytes, fn_regular: str, fn_bold: str) -> bytes:
     return out.getvalue()
 
 
+def _do_docx2pdf_libreoffice(data: bytes) -> bytes:
+    """LibreOffice headless → highest quality. HOME isolated per call to avoid concurrency conflicts."""
+    import subprocess
+    with tempfile.TemporaryDirectory() as tmpdir:
+        docx_path = os.path.join(tmpdir, "input.docx")
+        pdf_path  = os.path.join(tmpdir, "input.pdf")
+        with open(docx_path, "wb") as f:
+            f.write(data)
+        env = os.environ.copy()
+        env["HOME"] = tmpdir  # unique profile dir — prevents concurrent LibreOffice conflicts
+        result = subprocess.run(
+            ["libreoffice", "--headless", "--norestore",
+             "--convert-to", "pdf", "--outdir", tmpdir, docx_path],
+            env=env, capture_output=True, timeout=50,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or b"").decode(errors="replace")[:300]
+            raise RuntimeError(f"libreoffice exit {result.returncode}: {stderr}")
+        if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) < 100:
+            raise RuntimeError("libreoffice PDF chiqarilmadi yoki bo'sh")
+        with open(pdf_path, "rb") as f:
+            return f.read()
+
+
+def _do_docx2pdf_mammoth(data: bytes) -> bytes:
+    """mammoth → HTML → WeasyPrint PDF. Mid-quality, good Unicode/Cyrillic support."""
+    import mammoth
+    from weasyprint import HTML
+    result = mammoth.convert_to_html(io.BytesIO(data))
+    html_body = result.value or ""
+    if not html_body.strip():
+        raise ValueError("mammoth: bo'sh HTML natija")
+    html = (
+        "<!DOCTYPE html><html><head>"
+        "<meta charset='utf-8'>"
+        "<style>body{font-family:DejaVu Sans,sans-serif;font-size:11pt;margin:2cm;}"
+        "h1{font-size:18pt}h2{font-size:15pt}h3{font-size:13pt}"
+        "table{border-collapse:collapse;width:100%}"
+        "td,th{border:1px solid #bbb;padding:4px 6px}"
+        "</style></head><body>"
+        + html_body
+        + "</body></html>"
+    )
+    pdf_bytes = HTML(string=html).write_pdf()
+    if not pdf_bytes or len(pdf_bytes) < 100:
+        raise RuntimeError("weasyprint: bo'sh PDF natija")
+    return pdf_bytes
+
+
+def _do_docx2pdf_best(data: bytes, fn_regular: str, fn_bold: str) -> tuple:
+    """Tries LibreOffice → mammoth+WeasyPrint → ReportLab. Returns (pdf_bytes, method_name)."""
+    attempts = [
+        ("libreoffice", lambda: _do_docx2pdf_libreoffice(data)),
+        ("mammoth",     lambda: _do_docx2pdf_mammoth(data)),
+        ("reportlab",   lambda: _do_docx2pdf(data, fn_regular, fn_bold)),
+    ]
+    last_err = None
+    for name, fn in attempts:
+        try:
+            result = fn()
+            if result and len(result) > 500:
+                return result, name
+        except Exception as e:
+            last_err = e
+            logger.warning(f"docx2pdf [{name}] muvaffaqiyatsiz: {type(e).__name__}: {str(e)[:120]}")
+    raise RuntimeError(
+        f"Barcha 3 usul (LibreOffice, mammoth, ReportLab) muvaffaqiyatsiz: {type(last_err).__name__}: {str(last_err)[:100]}"
+    )
+
+
 @app.post("/api/docx2pdf")
 @limiter.limit("10/minute")
 async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
@@ -1532,28 +1602,28 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
         if para_count == 0 and table_count == 0:
             raise HTTPException(status_code=422, detail="Hujjat bo'sh (matn yoki jadval topilmadi).")
 
-        # ── 3. Thread pool'da konversiya (60s timeout) ────────────
+        # ── 3. Thread pool'da konversiya (90s timeout) ────────────
         loop = asyncio.get_event_loop()
         try:
-            pdf_bytes = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_docx2pdf, data, fn, fn_bold),
-                timeout=60.0,
+            pdf_bytes, conv_method = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_docx2pdf_best, data, fn, fn_bold),
+                timeout=90.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=408,
-                detail="Konversiya 60 soniyadan oshdi. Hujjat juda katta yoki murakkab.")
+                detail="Konversiya 90 soniyadan oshdi. Hujjat juda katta yoki murakkab.")
 
         if len(pdf_bytes) < 500:
             raise HTTPException(status_code=500, detail="Konversiya natijasi bo'sh. Qayta urinib ko'ring.")
 
         # ── 4. Info xabar ─────────────────────────────────────────
-        info_parts = [f"✅ {para_count} paragraf"]
+        info_parts = [f"{para_count} paragraf"]
         if table_count:
             info_parts.append(f"{table_count} jadval")
-        info_parts.append("aylantiriLdi")
-        info = " · ".join(info_parts)
+        info_parts.append(f"aylantiriLdi ({conv_method})")
+        info = " - ".join(info_parts)
 
-        logger.info(f"docx2pdf: {para_count}p+{table_count}t, "
+        logger.info(f"docx2pdf [{conv_method}]: {para_count}p+{table_count}t, "
                     f"{len(data)//1024}KB → {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
 
         return Response(

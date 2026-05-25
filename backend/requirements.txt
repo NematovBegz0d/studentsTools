@@ -10,6 +10,7 @@ python-docx
 slowapi==0.1.9
 loguru==0.7.2
 mammoth
+weasyprint
 pypdf
 PyMuPDF
 pdfplumber
