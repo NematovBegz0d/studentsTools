@@ -63,6 +63,171 @@ def _do_pdf2docx(pdf_path: str, docx_path: str) -> None:
         cv.close()
 
 
+def _do_pdf2docx_libreoffice(pdf_path: str, docx_path: str) -> None:
+    """LibreOffice writer_pdf_import filter → DOCX. Best quality, requires libreoffice in PATH."""
+    import subprocess, shutil
+    outdir = os.path.dirname(docx_path)
+    lo_home = tempfile.mkdtemp(prefix="lo_")
+    env = os.environ.copy()
+    env["HOME"] = lo_home
+    try:
+        result = subprocess.run(
+            ["libreoffice", "--headless", "--norestore",
+             "--convert-to", "docx", "--infilter=writer_pdf_import",
+             "--outdir", outdir, pdf_path],
+            env=env, capture_output=True, timeout=60,
+        )
+    finally:
+        shutil.rmtree(lo_home, ignore_errors=True)
+    if result.returncode != 0:
+        stderr = (result.stderr or b"").decode(errors="replace")[:300]
+        raise RuntimeError(f"libreoffice exit {result.returncode}: {stderr}")
+    expected = os.path.join(outdir, os.path.splitext(os.path.basename(pdf_path))[0] + ".docx")
+    if not os.path.exists(expected) or os.path.getsize(expected) < 100:
+        raise RuntimeError("LibreOffice DOCX chiqarilmadi yoki bo'sh")
+    if os.path.abspath(expected) != os.path.abspath(docx_path):
+        shutil.move(expected, docx_path)
+
+
+def _do_pdf2docx_pymupdf(pdf_path: str, docx_path: str) -> None:
+    """PyMuPDF block-level extraction → python-docx. Preserves headings, bold, italic, colors."""
+    import fitz
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+
+    pdf = fitz.open(pdf_path)
+    doc_out = Document()
+
+    # Median font size → body text baseline for heading detection
+    all_sizes = []
+    for page in pdf:
+        for block in page.get_text("dict")["blocks"]:
+            if block.get("type") == 0:
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        sz = span.get("size", 0)
+                        if sz > 0 and span.get("text", "").strip():
+                            all_sizes.append(sz)
+    body_size = sorted(all_sizes)[len(all_sizes) // 2] if all_sizes else 11.0
+
+    for page_num, page in enumerate(pdf):
+        if page_num > 0:
+            doc_out.add_paragraph()
+
+        for block in page.get_text("dict")["blocks"]:
+            if block.get("type") != 0:
+                continue
+            all_spans = [
+                s for ln in block.get("lines", [])
+                for s in ln.get("spans", [])
+                if s.get("text", "").strip()
+            ]
+            if not all_spans:
+                continue
+
+            avg_size = sum(s["size"] for s in all_spans) / len(all_spans)
+            block_text = " ".join(s["text"].strip() for s in all_spans)
+
+            if avg_size >= body_size * 1.6:
+                doc_out.add_heading(block_text, level=1)
+            elif avg_size >= body_size * 1.35:
+                doc_out.add_heading(block_text, level=2)
+            elif avg_size >= body_size * 1.15:
+                doc_out.add_heading(block_text, level=3)
+            else:
+                p = doc_out.add_paragraph()
+                for span in all_spans:
+                    text = span.get("text", "")
+                    if not text:
+                        continue
+                    run = p.add_run(text)
+                    flags = span.get("flags", 0)
+                    run.bold = bool(flags & 16)
+                    run.italic = bool(flags & 2)
+                    sz = span.get("size", body_size)
+                    if 4 <= sz <= 72:
+                        run.font.size = Pt(round(sz))
+                    color = span.get("color", 0)
+                    if color:
+                        r, g, b = (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF
+                        if (r, g, b) != (0, 0, 0):
+                            try:
+                                run.font.color.rgb = RGBColor(r, g, b)
+                            except Exception:
+                                pass
+
+    pdf.close()
+    doc_out.save(docx_path)
+
+
+def _do_pdf2docx_ocr(pdf_path: str, docx_path: str) -> None:
+    """Scanned PDF fallback: Tesseract OCR → python-docx (Tesseract already in Docker)."""
+    import fitz
+    import pytesseract
+    from PIL import Image as PILImage
+    from docx import Document
+
+    pdf = fitz.open(pdf_path)
+    doc_out = Document()
+    doc_out.add_heading("OCR natijasi", level=1)
+
+    for page_num, page in enumerate(pdf):
+        if page_num > 0:
+            doc_out.add_page_break()
+
+        mat = fitz.Matrix(2.0, 2.0)  # 2x zoom → OCR aniqligini oshiradi
+        pix = page.get_pixmap(matrix=mat)
+        img = PILImage.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+        try:
+            text = pytesseract.image_to_string(img, lang="uzb+rus+eng", timeout=30)
+        except Exception:
+            text = pytesseract.image_to_string(img, lang="eng", timeout=30)
+
+        for line in (text or "").split("\n"):
+            line = line.strip()
+            if line:
+                doc_out.add_paragraph(line)
+
+    pdf.close()
+    doc_out.save(docx_path)
+
+
+def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
+    """Tries best available method in order. Returns method name on success."""
+    if is_scanned:
+        chain = [
+            ("ocr-tesseract", lambda: _do_pdf2docx_ocr(pdf_path, docx_path)),
+            ("pdf2docx",      lambda: _do_pdf2docx(pdf_path, docx_path)),
+        ]
+    else:
+        chain = [
+            ("libreoffice",   lambda: _do_pdf2docx_libreoffice(pdf_path, docx_path)),
+            ("pdf2docx",      lambda: _do_pdf2docx(pdf_path, docx_path)),
+            ("pymupdf",       lambda: _do_pdf2docx_pymupdf(pdf_path, docx_path)),
+        ]
+
+    last_err = None
+    for name, fn in chain:
+        try:
+            fn()
+            if os.path.exists(docx_path) and os.path.getsize(docx_path) >= 2000:
+                return name
+        except Exception as e:
+            last_err = e
+            logger.warning(f"pdf2docx [{name}] muvaffaqiyatsiz: {type(e).__name__}: {str(e)[:120]}")
+        try:
+            if os.path.exists(docx_path):
+                os.unlink(docx_path)
+        except Exception:
+            pass
+
+    raise RuntimeError(
+        f"Barcha usullar muvaffaqiyatsiz: "
+        f"{type(last_err).__name__ if last_err else 'Unknown'}: {str(last_err)[:100]}"
+    )
+
+
 # ─── Rembg session ───────────────────────────────────────────────────────────
 
 _rembg_session = None
@@ -1154,8 +1319,8 @@ async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
         # ── 4. Thread pool'da konversiya (event loop bloklanmaydi) ───
         loop = asyncio.get_event_loop()
         try:
-            await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_pdf2docx, pdf_path, docx_path),
+            conv_method = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_pdf2docx_best, pdf_path, docx_path, is_scanned),
                 timeout=120.0,
             )
         except asyncio.TimeoutError:
@@ -1171,20 +1336,17 @@ async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
             out = f.read()
 
         if len(out) < 2000:
-            if is_scanned:
-                raise HTTPException(status_code=422,
-                    detail="Skanerlangan PDF aniqlandi — matn ajratib bo'lmadi. "
-                           "Avval OCR xizmatidan foydalaning, keyin qayta urinib ko'ring.")
             raise HTTPException(status_code=422,
                 detail="Konversiya natijasi bo'sh. PDF tuzilishi qo'llab-quvvatlanmaydi.")
 
         # ── 6. Info xabar ─────────────────────────────────────────────
-        info = f"✅ {page_count} sahifa aylantiriLdi"
+        info_parts = [f"{page_count} sahifa aylantiriLdi ({conv_method})"]
         if is_scanned:
-            info += " · ⚠️ Skanerlangan sahifalar bor — sifat past bo'lishi mumkin"
+            info_parts.append("OCR orqali")
+        info = " - ".join(info_parts)
 
         elapsed = time.time() - t0
-        logger.info(f"pdf2docx: {page_count}p {'scan' if is_scanned else 'text'}, "
+        logger.info(f"pdf2docx [{conv_method}]: {page_count}p {'scan' if is_scanned else 'text'}, "
                     f"{len(data)//1024}KB → {len(out)//1024}KB, {elapsed:.1f}s")
 
         return Response(
