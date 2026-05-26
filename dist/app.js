@@ -48,7 +48,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 const initialState = {
   tweaks: TWEAK_DEFAULTS,
   tab: "home",
-  sheetService: null,
+  servicePage: null,
   // { service, isPremium }
   paymentPlan: null,
   // planId string
@@ -71,21 +71,21 @@ function appReducer(state, action) {
       return {
         ...state,
         tab: action.tab,
-        sheetService: null,
+        servicePage: null,
         paymentPlan: null
       };
-    case "OPEN_SHEET":
+    case "OPEN_SERVICE_PAGE":
       return {
         ...state,
-        sheetService: {
+        servicePage: {
           service: action.service,
           isPremium: action.isPremium
         }
       };
-    case "CLOSE_SHEET":
+    case "CLOSE_SERVICE_PAGE":
       return {
         ...state,
-        sheetService: null
+        servicePage: null
       };
     case "OPEN_PAYMENT":
       return {
@@ -233,7 +233,7 @@ function App() {
   const {
     tweaks,
     tab,
-    sheetService,
+    servicePage,
     paymentPlan,
     toastQueue,
     currentPlan
@@ -257,24 +257,23 @@ function App() {
   // ─── BackButton ──────────────────────────────────────────────
   useEffect(() => {
     if (!TG) return;
-    const anyOpen = !!(sheetService || paymentPlan);
+    const anyOpen = !!(servicePage || paymentPlan);
     if (!anyOpen) {
       TG.BackButton.hide();
       return;
     }
     const handler = () => {
-      Haptic.light(); // ✅ NEW: haptic on back
-      dispatch({
-        type: "CLOSE_SHEET"
-      });
-      dispatch({
+      Haptic.light();
+      if (servicePage) dispatch({
+        type: "CLOSE_SERVICE_PAGE"
+      });else dispatch({
         type: "CLOSE_PAYMENT"
       });
     };
     TG.BackButton.show();
     TG.BackButton.onClick(handler);
     return () => TG.BackButton.offClick(handler);
-  }, [sheetService, paymentPlan]);
+  }, [servicePage, paymentPlan]);
 
   // ─── Handlers (all memoized) ──────────────────────────────────
   // ✅ FIX: All closures properly memoized with useCallback
@@ -295,9 +294,9 @@ function App() {
     });
   }, []);
   const openService = useCallback((service, isPremium) => {
-    Haptic.medium(); // ✅ NEW: haptic on service open
+    Haptic.medium();
     dispatch({
-      type: "OPEN_SHEET",
+      type: "OPEN_SERVICE_PAGE",
       service,
       isPremium
     });
@@ -312,9 +311,9 @@ function App() {
       val: t
     });
   }, []);
-  const closeSheet = useCallback(() => {
+  const closeServicePage = useCallback(() => {
     dispatch({
-      type: "CLOSE_SHEET"
+      type: "CLOSE_SERVICE_PAGE"
     });
   }, []);
   const closePayment = useCallback(() => {
@@ -421,18 +420,15 @@ function App() {
     setTab: setTab,
     t: str,
     accent: accent
-  }), /*#__PURE__*/React.createElement(BottomSheet, {
-    open: !!sheetService,
-    onClose: closeSheet
-  }, sheetService && /*#__PURE__*/React.createElement(ServiceSheet, {
-    service: sheetService.service,
-    isPremium: sheetService.isPremium && currentPlan === "free",
+  }), servicePage && /*#__PURE__*/React.createElement(ServicePage, {
+    service: servicePage.service,
+    isPremium: servicePage.isPremium && currentPlan === "free",
     t: str,
     accent: accent,
-    onClose: closeSheet,
+    onBack: closeServicePage,
     onToast: showToast,
     onGoToPlans: () => setTab("plans")
-  })), /*#__PURE__*/React.createElement(BottomSheet, {
+  }), /*#__PURE__*/React.createElement(BottomSheet, {
     open: !!paymentPlan,
     onClose: closePayment
   }, paymentPlan && /*#__PURE__*/React.createElement(PaymentSheet, {

@@ -26,6 +26,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import database as db
 import payment as pay
+from img2pdf_improved import (
+    do_img2pdf_single, do_imgs2pdf_multi, validate_params as img2pdf_validate, is_image_bytes,
+)
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -2050,22 +2053,41 @@ def _do_imgs2pdf(all_data: list) -> tuple:
 
 @app.post("/api/img2pdf")
 @limiter.limit("20/minute")
-async def img_to_pdf(request: Request, file: UploadFile = File(...)):
+async def img_to_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    page_size: str   = Form("a4"),    # a4 | a3 | a5 | letter | legal | original
+    margin_mm: float = Form(10.0),    # 0–30 mm
+    fit_mode: str    = Form("fit"),   # fit | fill | center
+    dpi: int         = Form(150),     # 72 | 96 | 150 | 300
+):
     t0 = time.time()
     try:
         data = await file.read()
         check_size(data, "/api/img2pdf")
 
+        if not is_image_bytes(data):
+            raise HTTPException(status_code=422,
+                detail="Rasm fayli emas. JPG, PNG, WebP, TIFF, BMP, GIF yuklang.")
+
+        page_size, margin_mm, fit_mode, dpi = img2pdf_validate(page_size, margin_mm, fit_mode, dpi)
+        fname = file.filename or "image"
+
         loop = asyncio.get_event_loop()
         try:
             pdf_bytes, info = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_img2pdf, data),
+                loop.run_in_executor(
+                    _converter_pool,
+                    functools.partial(do_img2pdf_single, data, page_size, margin_mm, fit_mode, dpi, fname),
+                ),
                 timeout=30.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=408, detail="Konversiya 30 soniyadan oshdi.")
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
 
-        logger.info(f"img2pdf: {len(data)//1024}KB → {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
+        logger.info(f"img2pdf: {len(data)//1024}KB → {len(pdf_bytes)//1024}KB [{page_size} {fit_mode}] {time.time()-t0:.1f}s")
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
@@ -2084,35 +2106,54 @@ async def img_to_pdf(request: Request, file: UploadFile = File(...)):
 
 @app.post("/api/imgs2pdf")
 @limiter.limit("10/minute")
-async def imgs_to_pdf(request: Request, files: List[UploadFile] = File(...)):
+async def imgs_to_pdf(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    page_size: str   = Form("a4"),
+    margin_mm: float = Form(10.0),
+    fit_mode: str    = Form("fit"),
+    dpi: int         = Form(150),
+):
     t0 = time.time()
     try:
         if not files:
             raise HTTPException(status_code=400, detail="Rasm yuklanmadi.")
-        if len(files) > 30:
+        if len(files) > 50:
             raise HTTPException(status_code=400,
-                detail=f"Juda ko'p rasm ({len(files)} ta). Maksimal 30 ta.")
+                detail=f"Juda ko'p rasm ({len(files)} ta). Maksimal 50 ta.")
 
-        all_data = []
-        total = 0
+        all_data, all_names, total = [], [], 0
         for f in files:
             d = await f.read()
             total += len(d)
             if total > MAX_FILE_BYTES * 3:
                 raise HTTPException(status_code=413,
-                    detail="Rasmlarning umumiy hajmi juda katta.")
+                    detail="Rasmlarning umumiy hajmi juda katta (max 60 MB).")
+            if not is_image_bytes(d):
+                continue  # rasm bo'lmagan fayllar o'tkazib yuboriladi
             all_data.append(d)
+            all_names.append(f.filename or f"image_{len(all_data)}")
+
+        if not all_data:
+            raise HTTPException(status_code=422, detail="Yuklangan fayllar ichida rasm topilmadi.")
+
+        page_size, margin_mm, fit_mode, dpi = img2pdf_validate(page_size, margin_mm, fit_mode, dpi)
 
         loop = asyncio.get_event_loop()
         try:
             pdf_bytes, info = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_imgs2pdf, all_data),
-                timeout=60.0,
+                loop.run_in_executor(
+                    _converter_pool,
+                    functools.partial(do_imgs2pdf_multi, all_data, all_names, page_size, margin_mm, fit_mode, dpi),
+                ),
+                timeout=90.0,
             )
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=408, detail="Konversiya 60 soniyadan oshdi.")
+            raise HTTPException(status_code=408, detail="Konversiya 90 soniyadan oshdi.")
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
 
-        logger.info(f"imgs2pdf: {len(files)} rasm, {total//1024}KB → {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
+        logger.info(f"imgs2pdf: {len(all_data)} rasm {total//1024}KB → {len(pdf_bytes)//1024}KB [{page_size}] {time.time()-t0:.1f}s")
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
@@ -2126,6 +2167,143 @@ async def imgs_to_pdf(request: Request, files: List[UploadFile] = File(...)):
     except Exception as e:
         logger.error(f"imgs2pdf xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"imgs2pdf: {type(e).__name__}: {str(e)[:160]}")
+
+# ─── 3x4 Passport foto ────────────────────────────────────────────────────────
+
+def _do_photo3x4(data: bytes, bg: str = "white", sheet: bool = True) -> tuple[bytes, str]:
+    """
+    Rasm → 3×4 sm passport foto (300 DPI).
+    1. OpenCV Haar Cascade orqali yuz aniqlanadi.
+    2. Yuz markaziga qarab crop qilinadi (foto balandligining ~70% yuz).
+    3. 354×472 px ga resize (3×4 sm @ 300 DPI).
+    4. sheet=True → A4 da 2×3 = 6 ta foto chiqariladi.
+    """
+    import cv2
+    import numpy as np
+    from PIL import Image, ImageOps, ImageDraw
+
+    W, H = 354, 472  # 3×4 sm @ 300 DPI
+
+    BG_COLORS = {"white": (255, 255, 255), "blue": (100, 149, 237), "gray": (200, 200, 200)}
+    bg_rgb = BG_COLORS.get(bg, (255, 255, 255))
+
+    img_pil = Image.open(io.BytesIO(data))
+    img_pil = ImageOps.exif_transpose(img_pil)
+    if img_pil.mode != "RGB":
+        img_pil = img_pil.convert("RGB")
+
+    iw, ih = img_pil.size
+
+    # OpenCV yuz aniqlash
+    img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2GRAY)
+    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    faces = cascade.detectMultiScale(img_cv, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+
+    if len(faces) > 0:
+        # Eng katta yuzni ol
+        fx, fy, fw, fh = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)[0]
+
+        # Foto balandligi: yuz → fotoning ~65% ni egallaydi
+        photo_h = int(fh / 0.65)
+        photo_w = int(photo_h * W / H)
+
+        # Yuz fotoning tepasidan ~25% pastda bo'lsin
+        cx = fx + fw // 2
+        cy = fy + fh // 2
+        x0 = cx - photo_w // 2
+        y0 = cy - int(photo_h * 0.30)
+
+        x0 = max(0, min(x0, iw - photo_w))
+        y0 = max(0, min(y0, ih - photo_h))
+        crop = img_pil.crop((x0, y0, x0 + photo_w, y0 + photo_h))
+        detected = True
+    else:
+        # Yuz topilmadi — rasmni markazdan portrait nisbatda crop qilish
+        target_ratio = W / H
+        if iw / ih > target_ratio:
+            crop_w = int(ih * target_ratio)
+            crop = img_pil.crop(((iw - crop_w) // 2, 0, (iw + crop_w) // 2, ih))
+        else:
+            crop_h = int(iw / target_ratio)
+            crop = img_pil.crop((0, 0, iw, crop_h))
+        detected = False
+
+    photo = crop.resize((W, H), Image.LANCZOS)
+
+    if not sheet:
+        buf = io.BytesIO()
+        photo.save(buf, format="JPEG", quality=95, dpi=(300, 300))
+        msg = "✅ 3×4 sm · 300 DPI" + ("" if detected else " · Yuz topilmadi, markaz crop")
+        return buf.getvalue(), msg
+
+    # A4 varaqdagi 6 ta foto (2 ustun × 3 qator) @ 300 DPI
+    A4W, A4H = 2480, 3508
+    MARGIN, GAP = 100, 50
+
+    canvas = Image.new("RGB", (A4W, A4H), (255, 255, 255))
+    draw = ImageDraw.Draw(canvas)
+
+    for row in range(3):
+        for col in range(2):
+            px = MARGIN + col * (W + GAP)
+            py = MARGIN + row * (H + GAP)
+            canvas.paste(photo, (px, py))
+            # Kesish chizig'i (yupqa kulrang ramka)
+            draw.rectangle([px - 1, py - 1, px + W, py + H], outline=(180, 180, 180), width=1)
+
+    buf = io.BytesIO()
+    canvas.save(buf, format="JPEG", quality=95, dpi=(300, 300))
+    msg = "✅ A4 · 6 ta 3×4 sm foto · 300 DPI" + ("" if detected else " · Yuz topilmadi")
+    return buf.getvalue(), msg
+
+
+@app.post("/api/photo3x4")
+@limiter.limit("15/minute")
+async def photo3x4(
+    request: Request,
+    file: UploadFile  = File(...),
+    bg: str           = Form("white"),   # white | blue | gray
+    sheet: str        = Form("true"),    # "true" → A4 da 6 ta, "false" → bitta
+):
+    t0 = time.time()
+    try:
+        data = await file.read()
+        check_size(data, "/api/photo3x4")
+
+        if not is_image_bytes(data):
+            raise HTTPException(status_code=422,
+                detail="Rasm fayli emas. JPG yoki PNG yuklang.")
+
+        bg      = bg if bg in ("white", "blue", "gray") else "white"
+        do_sheet = sheet.lower() not in ("false", "0", "no")
+
+        loop = asyncio.get_event_loop()
+        try:
+            jpg_bytes, info = await asyncio.wait_for(
+                loop.run_in_executor(
+                    _converter_pool,
+                    functools.partial(_do_photo3x4, data, bg, do_sheet),
+                ),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408, detail="Konversiya 30 soniyadan oshdi.")
+
+        fname = "photo3x4_sheet.jpg" if do_sheet else "photo3x4.jpg"
+        logger.info(f"photo3x4: {len(data)//1024}KB → {len(jpg_bytes)//1024}KB [{bg} sheet={do_sheet}] {time.time()-t0:.1f}s")
+        return Response(
+            content=jpg_bytes,
+            media_type="image/jpeg",
+            headers={
+                "Content-Disposition": f"attachment; filename={fname}",
+                "X-Info": safe_header(info),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"photo3x4 xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"photo3x4: {type(e).__name__}: {str(e)[:160]}")
 
 # ─── Excel → PDF ──────────────────────────────────────────────────────────────
 

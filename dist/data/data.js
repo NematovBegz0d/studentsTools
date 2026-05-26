@@ -197,6 +197,13 @@ const FREE_SERVICES = [
   new: true,
   ai: true,
   accept: '.jpg,.png'
+}, {
+  id: 'photo3x4',
+  cat: 'gen',
+  icon: '🪪',
+  new: true,
+  ai: false,
+  accept: '.jpg,.jpeg,.png'
 },
 // Rejalashtirish (2)
 {
@@ -507,6 +514,10 @@ const I18N = {
         name: 'Fon olib tashlash',
         desc: 'Rasmdan fonni avtomatik olib tashlash'
       },
+      photo3x4: {
+        name: '3×4 Passport foto',
+        desc: 'Yuzni avtomatik crop, A4 da 6 ta foto'
+      },
       schedule: {
         name: 'Dars jadvali',
         desc: 'Haftalik jadval PDF'
@@ -774,6 +785,10 @@ const I18N = {
         name: 'Удалить фон',
         desc: 'Авто-удаление фона с фото'
       },
+      photo3x4: {
+        name: 'Фото 3×4',
+        desc: 'Авто-кадрирование, 6 фото на листе A4'
+      },
       schedule: {
         name: 'Расписание',
         desc: 'Недельное расписание PDF'
@@ -1038,6 +1053,10 @@ const I18N = {
       bgremove: {
         name: 'Remove background',
         desc: 'Auto-remove image background'
+      },
+      photo3x4: {
+        name: '3×4 Passport photo',
+        desc: 'Auto face crop, 6 photos on A4 sheet'
       },
       schedule: {
         name: 'Class schedule',

@@ -1,18 +1,18 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="uz" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <!-- ✅ FIX: viewport-fit=cover — iPhone safe area uchun -->
+    <!-- вњ… FIX: viewport-fit=cover вЂ” iPhone safe area uchun -->
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <!-- ✅ NEW: Telegram theme color -->
+    <!-- вњ… NEW: Telegram theme color -->
     <meta name="theme-color" content="#0a0a0f" />
-    <!-- ✅ NEW: App meta -->
+    <!-- вњ… NEW: App meta -->
     <meta
       name="description"
-      content="EduBot — Talabalar uchun 38+ ta AI va bepul asboblar"
+      content="EduBot вЂ” Talabalar uchun 38+ ta AI va bepul asboblar"
     />
     <meta name="application-name" content="EduBot" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -20,26 +20,26 @@
       name="apple-mobile-web-app-status-bar-style"
       content="black-translucent"
     />
-    <!-- ✅ NEW: Open Graph -->
-    <meta property="og:title" content="EduBot — Student Tools" />
+    <!-- вњ… NEW: Open Graph -->
+    <meta property="og:title" content="EduBot вЂ” Student Tools" />
     <meta
       property="og:description"
       content="38+ ta bepul va AI xizmatlar talabalar uchun"
     />
     <meta property="og:type" content="website" />
-    <!-- ✅ NEW: CSP header hints (actual CSP header should be set server-side) -->
-    <title>EduBot — Telegram Mini App</title>
+    <!-- вњ… NEW: CSP header hints (actual CSP header should be set server-side) -->
+    <title>EduBot вЂ” Telegram Mini App</title>
 
-    <!-- ✅ NEW: Preconnect for faster CDN loading -->
+    <!-- вњ… NEW: Preconnect for faster CDN loading -->
     <link rel="preconnect" href="https://telegram.org" />
     <link rel="preconnect" href="https://unpkg.com" crossorigin />
 
     <style>
-      /* ═══════════════════════════════════════════════
-       CSS CUSTOM PROPERTIES — Theme System
-       ✅ FIX: Magic strings o'rniga CSS variables
+      /* в•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђ
+       CSS CUSTOM PROPERTIES вЂ” Theme System
+       вњ… FIX: Magic strings o'rniga CSS variables
        Supports both dark and light mode
-    ═══════════════════════════════════════════════ */
+    в•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђ */
       :root {
         /* Layout */
         --safe-top: env(safe-area-inset-top, 0px);
@@ -66,7 +66,7 @@
         --radius-full: 9999px;
       }
 
-      /* ─── Dark Theme (default) ─────────────────── */
+      /* в”Ђв”Ђв”Ђ Dark Theme (default) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       :root[data-theme="dark"] {
         --bg-page: radial-gradient(
           ellipse at top,
@@ -99,7 +99,7 @@
         );
       }
 
-      /* ─── Light Theme ──────────────────────────── */
+      /* в”Ђв”Ђв”Ђ Light Theme в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       :root[data-theme="light"] {
         --bg-page: radial-gradient(
           ellipse at top,
@@ -132,9 +132,9 @@
         );
       }
 
-      /* ═══════════════════════════════════════════════
+      /* в•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђ
        BASE RESET
-    ═══════════════════════════════════════════════ */
+    в•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђ */
       *,
       *::before,
       *::after {
@@ -159,14 +159,14 @@
         overflow: hidden;
       }
 
-      /* ✅ FIX: Focus visible for keyboard accessibility */
+      /* вњ… FIX: Focus visible for keyboard accessibility */
       :focus-visible {
         outline: 2px solid var(--accent);
         outline-offset: 2px;
         border-radius: var(--radius-sm);
       }
 
-      /* ✅ NEW: Reduced motion support */
+      /* вњ… NEW: Reduced motion support */
       @media (prefers-reduced-motion: reduce) {
         *,
         *::before,
@@ -176,7 +176,7 @@
         }
       }
 
-      /* ─── Scrollbar hiding ─────────────────────── */
+      /* в”Ђв”Ђв”Ђ Scrollbar hiding в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       .hide-scroll::-webkit-scrollbar {
         display: none;
       }
@@ -188,7 +188,7 @@
         width: 0;
       }
 
-      /* ─── Press micro-animation ────────────────── */
+      /* в”Ђв”Ђв”Ђ Press micro-animation в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       .press {
         transition:
           transform 0.13s cubic-bezier(0.3, 0.7, 0.4, 1),
@@ -200,7 +200,7 @@
         opacity: 0.86;
       }
 
-      /* ─── Page fade-in ─────────────────────────── */
+      /* в”Ђв”Ђв”Ђ Page fade-in в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       .page-fade {
         animation: pageFade 0.32s cubic-bezier(0.3, 0.7, 0.4, 1) both;
       }
@@ -215,7 +215,7 @@
         }
       }
 
-      /* ─── Skeleton loading ─────────────────────── */
+      /* в”Ђв”Ђв”Ђ Skeleton loading в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       @keyframes skel {
         0% {
           background-position: 200% 0;
@@ -235,7 +235,7 @@
         animation: skel 1.5s infinite linear;
       }
 
-      /* ─── Pulse animation ──────────────────────── */
+      /* в”Ђв”Ђв”Ђ Pulse animation в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       @keyframes pulse {
         0% {
           transform: scale(0.85);
@@ -247,7 +247,7 @@
         }
       }
 
-      /* ─── Spinner ──────────────────────────────── */
+      /* в”Ђв”Ђв”Ђ Spinner в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       .spinner {
         width: 44px;
         height: 44px;
@@ -262,7 +262,7 @@
         }
       }
 
-      /* ─── Inputs ───────────────────────────────── */
+      /* в”Ђв”Ђв”Ђ Inputs в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       textarea,
       input {
         font-family: inherit;
@@ -273,12 +273,12 @@
         color: var(--text-muted);
       }
 
-      /* ─── Selection ────────────────────────────── */
+      /* в”Ђв”Ђв”Ђ Selection в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       ::selection {
         background: var(--accent-glow);
       }
 
-      /* ─── Toast ────────────────────────────────── */
+      /* в”Ђв”Ђв”Ђ Toast в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       .toast-enter {
         opacity: 0;
         transform: translateY(-16px) scale(0.95);
@@ -294,7 +294,7 @@
         transition: all 0.2s ease;
       }
 
-      /* ─── Sheet drag handle ────────────────────── */
+      /* в”Ђв”Ђв”Ђ Sheet drag handle в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       .sheet-handle {
         width: 36px;
         height: 4px;
@@ -304,14 +304,14 @@
         flex-shrink: 0;
       }
 
-      /* ─── Category pill active glow ────────────── */
+      /* в”Ђв”Ђв”Ђ Category pill active glow в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ */
       .cat-pill-active {
         box-shadow: 0 4px 14px var(--accent-glow);
       }
     </style>
   </head>
   <body>
-    <!-- ✅ NEW: Accessible skip link -->
+    <!-- вњ… NEW: Accessible skip link -->
     <a href="#root" class="sr-only" style="position: absolute; left: -9999px"
       >Asosiy contenta o'tish</a
     >
@@ -337,14 +337,14 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
-    <script src="dist/data/data.js?v=4"></script>
-    <script src="dist/utils/ios-frame.js?v=4"></script>
-    <script src="dist/components/icons.js?v=4"></script>
-    <script src="dist/components/components.js?v=4"></script>
-    <script src="dist/services/handlers.js?v=4"></script>
-    <script src="dist/features/service-sheet.js?v=4"></script>
-    <script src="dist/pages/pages-1.js?v=4"></script>
-    <script src="dist/pages/pages-2.js?v=4"></script>
-    <script src="dist/app.js?v=4"></script>
+    <script src="dist/data/data.js?v=5"></script>
+    <script src="dist/utils/ios-frame.js?v=5"></script>
+    <script src="dist/components/icons.js?v=5"></script>
+    <script src="dist/components/components.js?v=5"></script>
+    <script src="dist/services/handlers.js?v=5"></script>
+    <script src="dist/features/service-sheet.js?v=5"></script>
+    <script src="dist/pages/pages-1.js?v=5"></script>
+    <script src="dist/pages/pages-2.js?v=5"></script>
+    <script src="dist/app.js?v=5"></script>
   </body>
 </html>

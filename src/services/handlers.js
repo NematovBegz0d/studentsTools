@@ -520,6 +520,28 @@ async function imgcompress({ file }) {
 
 // ─── AI (with mobile fallback) ────────────────────────────────────
 
+async function photo3x4({ file, opts = {} }) {
+  validateFile(file, ".jpg,.jpeg,.png");
+  const form = new FormData();
+  form.append("file", file);
+  form.append("bg", ["white", "blue", "gray"].includes(opts.bg) ? opts.bg : "white");
+  form.append("sheet", opts.sheet !== false ? "true" : "false");
+  const response = await fetchWithTimeout(
+    `${BACKEND_URL}/api/photo3x4`,
+    { method: "POST", headers: getAuthHeaders(), body: form },
+    30000,
+  );
+  await handleResponseError(response);
+  const blob = await response.blob();
+  const info = response.headers.get("X-Info");
+  return {
+    type: "file",
+    blob,
+    filename: opts.sheet !== false ? "photo3x4_sheet.jpg" : "photo3x4.jpg",
+    ...(info ? { info } : {}),
+  };
+}
+
 async function bgremove({ file }) {
   if (!file) throw new Error("Rasm faylini yuklang.");
   validateFile(file, ".jpg,.png");
@@ -703,6 +725,7 @@ const SERVICE_HANDLERS = {
   // Image
   imgcompress,
   bgremove,
+  photo3x4,
   // Text
   translit,
   readtime,

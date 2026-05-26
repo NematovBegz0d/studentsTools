@@ -50,7 +50,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/ {
 const initialState = {
   tweaks: TWEAK_DEFAULTS,
   tab: "home",
-  sheetService: null, // { service, isPremium }
+  servicePage: null, // { service, isPremium }
   paymentPlan: null, // planId string
   toastQueue: [], // { id, msg }[]
   currentPlan: "free",
@@ -69,16 +69,16 @@ function appReducer(state, action) {
       return {
         ...state,
         tab: action.tab,
-        sheetService: null,
+        servicePage: null,
         paymentPlan: null,
       };
-    case "OPEN_SHEET":
+    case "OPEN_SERVICE_PAGE":
       return {
         ...state,
-        sheetService: { service: action.service, isPremium: action.isPremium },
+        servicePage: { service: action.service, isPremium: action.isPremium },
       };
-    case "CLOSE_SHEET":
-      return { ...state, sheetService: null };
+    case "CLOSE_SERVICE_PAGE":
+      return { ...state, servicePage: null };
     case "OPEN_PAYMENT":
       return { ...state, paymentPlan: action.planId };
     case "CLOSE_PAYMENT":
@@ -219,7 +219,7 @@ function useThemeSync(accent, manualTheme) {
 // ─── Main App ─────────────────────────────────────────────────────
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialState);
-  const { tweaks, tab, sheetService, paymentPlan, toastQueue, currentPlan } =
+  const { tweaks, tab, servicePage, paymentPlan, toastQueue, currentPlan } =
     state;
 
   const lang = tweaks.lang;
@@ -242,7 +242,7 @@ function App() {
   // ─── BackButton ──────────────────────────────────────────────
   useEffect(() => {
     if (!TG) return;
-    const anyOpen = !!(sheetService || paymentPlan);
+    const anyOpen = !!(servicePage || paymentPlan);
 
     if (!anyOpen) {
       TG.BackButton.hide();
@@ -250,15 +250,15 @@ function App() {
     }
 
     const handler = () => {
-      Haptic.light(); // ✅ NEW: haptic on back
-      dispatch({ type: "CLOSE_SHEET" });
-      dispatch({ type: "CLOSE_PAYMENT" });
+      Haptic.light();
+      if (servicePage) dispatch({ type: "CLOSE_SERVICE_PAGE" });
+      else dispatch({ type: "CLOSE_PAYMENT" });
     };
 
     TG.BackButton.show();
     TG.BackButton.onClick(handler);
     return () => TG.BackButton.offClick(handler);
-  }, [sheetService, paymentPlan]);
+  }, [servicePage, paymentPlan]);
 
   // ─── Handlers (all memoized) ──────────────────────────────────
   // ✅ FIX: All closures properly memoized with useCallback
@@ -275,8 +275,8 @@ function App() {
   }, []);
 
   const openService = useCallback((service, isPremium) => {
-    Haptic.medium(); // ✅ NEW: haptic on service open
-    dispatch({ type: "OPEN_SHEET", service, isPremium });
+    Haptic.medium();
+    dispatch({ type: "OPEN_SERVICE_PAGE", service, isPremium });
   }, []);
 
   const setTheme = useCallback((t) => {
@@ -284,8 +284,8 @@ function App() {
     dispatch({ type: "SET_TWEAK", key: "theme", val: t });
   }, []);
 
-  const closeSheet = useCallback(() => {
-    dispatch({ type: "CLOSE_SHEET" });
+  const closeServicePage = useCallback(() => {
+    dispatch({ type: "CLOSE_SERVICE_PAGE" });
   }, []);
 
   const closePayment = useCallback(() => {
@@ -404,20 +404,18 @@ function App() {
       {/* Bottom nav */}
       <BottomNav tab={tab} setTab={setTab} t={str} accent={accent} />
 
-      {/* Service sheet */}
-      <BottomSheet open={!!sheetService} onClose={closeSheet}>
-        {sheetService && (
-          <ServiceSheet
-            service={sheetService.service}
-            isPremium={sheetService.isPremium && currentPlan === "free"}
-            t={str}
-            accent={accent}
-            onClose={closeSheet}
-            onToast={showToast}
-            onGoToPlans={() => setTab("plans")}
-          />
-        )}
-      </BottomSheet>
+      {/* Service page (full-screen, slides in from right) */}
+      {servicePage && (
+        <ServicePage
+          service={servicePage.service}
+          isPremium={servicePage.isPremium && currentPlan === "free"}
+          t={str}
+          accent={accent}
+          onBack={closeServicePage}
+          onToast={showToast}
+          onGoToPlans={() => setTab("plans")}
+        />
+      )}
 
       {/* Payment sheet */}
       <BottomSheet open={!!paymentPlan} onClose={closePayment}>

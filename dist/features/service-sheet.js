@@ -644,6 +644,156 @@ function SuccessRing() {
   })));
 }
 
+// ─── Photo3x4Options ──────────────────────────────────────────────
+function Photo3x4Options({
+  opts,
+  onChange,
+  accent
+}) {
+  const BG = [{
+    value: "white",
+    label: "Oq",
+    color: "#ffffff",
+    border: "#bbb"
+  }, {
+    value: "blue",
+    label: "Ko'k",
+    color: "#6495ed",
+    border: "#6495ed"
+  }, {
+    value: "gray",
+    label: "Kulrang",
+    color: "#c8c8c8",
+    border: "#aaa"
+  }];
+  const OUT = [{
+    value: true,
+    label: "A4 da 6 ta",
+    sub: "Bosib chiqarish uchun"
+  }, {
+    value: false,
+    label: "Bitta foto",
+    sub: "3×4 sm rasm"
+  }];
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 14,
+      display: "flex",
+      flexDirection: "column",
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "var(--text-muted)",
+      fontSize: 11,
+      fontWeight: 600,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginBottom: 7
+    }
+  }, "Fon rangi"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8
+    }
+  }, BG.map(({
+    value,
+    label,
+    color,
+    border
+  }) => {
+    const active = opts.bg === value;
+    return /*#__PURE__*/React.createElement("button", {
+      key: value,
+      type: "button",
+      onClick: () => onChange({
+        ...opts,
+        bg: value
+      }),
+      style: {
+        flex: 1,
+        padding: "9px 0",
+        borderRadius: 12,
+        cursor: "pointer",
+        border: active ? `2px solid ${accent}` : `1.5px solid var(--border-medium)`,
+        background: active ? `${accent}12` : "var(--bg-surface-1)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 6,
+        font: "inherit",
+        transition: "all 0.15s"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 26,
+        height: 26,
+        borderRadius: 6,
+        background: color,
+        border: `1px solid ${border}90`,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.15)"
+      }
+    }), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        fontWeight: active ? 600 : 400,
+        color: active ? "var(--text-primary)" : "var(--text-muted)"
+      }
+    }, label));
+  }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "var(--text-muted)",
+      fontSize: 11,
+      fontWeight: 600,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginBottom: 7
+    }
+  }, "Chiqish"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8
+    }
+  }, OUT.map(({
+    value,
+    label,
+    sub
+  }) => {
+    const active = opts.sheet === value;
+    return /*#__PURE__*/React.createElement("button", {
+      key: String(value),
+      type: "button",
+      onClick: () => onChange({
+        ...opts,
+        sheet: value
+      }),
+      style: {
+        flex: 1,
+        padding: "9px 12px",
+        borderRadius: 12,
+        cursor: "pointer",
+        border: active ? `2px solid ${accent}` : `1.5px solid var(--border-medium)`,
+        background: active ? `${accent}12` : "var(--bg-surface-1)",
+        textAlign: "left",
+        font: "inherit",
+        transition: "all 0.15s"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        fontWeight: 600,
+        color: "var(--text-primary)"
+      }
+    }, label), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10.5,
+        color: "var(--text-muted)",
+        marginTop: 2
+      }
+    }, sub));
+  }))));
+}
+
 // ─── LockedState ──────────────────────────────────────────────────
 function LockedState({
   t,
@@ -726,6 +876,195 @@ function LockedState({
   }, t.subscribe)));
 }
 
+// ─── Per-service "How it works" steps ────────────────────────────
+const SERVICE_HOW_TO = {
+  pdf2docx: ["PDF faylni yuklang", "Boshlash ni bosing — konvertatsiya 10-30 soniya oladi", "Tayyor DOCX faylni yuklab oling"],
+  docx2pdf: ["Word (.doc/.docx) faylni yuklang", "Boshlash ni bosing", "PDF faylni yuklab oling"],
+  docxedit: ["DOCX faylni yuklang", "1-qator: qidiriladigan so'z  |  2-qator: yangi so'z", "Yangilangan DOCX faylni yuklab oling"],
+  img2pdf: ["Rasm (JPG/PNG/WebP) yuklang", "Sahifa o'lchami va margin tanlang, Boshlash ni bosing", "PDF faylni yuklab oling"],
+  imgs2pdf: ["Bir nechta rasm tanlang (tartib muhim)", "Boshlash ni bosing", "Ko'p sahifali PDF faylni yuklab oling"],
+  xlsx2pdf: ["Excel (.xlsx/.xls) faylni yuklang", "Boshlash ni bosing", "PDF jadvalni yuklab oling"],
+  pdf2img: ["PDF faylni yuklang", "Boshlash ni bosing", "1 sahifa → rasm, ko'p sahifa → ZIP arxivi"],
+  mergepdf: ["Birlashtiriladigan PDF fayllarni tanlang (tartib muhim)", "Boshlash ni bosing", "Birlashtirilgan PDF yuklab oling"],
+  splitpdf: ["PDF faylni yuklang", "Boshlash ni bosing — har sahifa alohida fayl bo'ladi", "ZIP arxivini yuklab oling"],
+  pdfpages: ["PDF faylni yuklang", "Sahifalar oralig'ini kiriting, masalan: 1-3,5,7", "Tanlangan sahifalar bilan yangi PDF yuklab oling"],
+  pdftext: ["PDF faylni yuklang", "Boshlash ni bosing", "Matn ekranda ko'rsatiladi — nusxalab oling"],
+  ocr: ["Rasm yoki skanerlangan PDF yuklang (o'zbek, rus, ingliz matni)", "Boshlash ni bosing — Tesseract OCR aniqlaydi", "Aniqlangan matnni nusxalab oling"],
+  compresspdf: ["Siqiladigan PDF faylni yuklang", "Boshlash ni bosing", "Hajmi 30-70% kamaygan PDF yuklab oling"],
+  compresspptx: ["PPTX faylni yuklang", "Boshlash ni bosing", "Siqilgan PPTX faylni yuklab oling"],
+  pdflock: ["PDF faylni yuklang", "Parol kiriting (bo'sh qolsa avtomatik yaratiladi)", "Himoyalangan PDF va parolni yuklab oling"],
+  watermark: ["PDF faylni yuklang", "Watermark matni kiriting (bo'sh qolsa 'EduBot' yoziladi)", "Watermarkli PDF yuklab oling"],
+  imgcompress: ["JPG yoki PNG rasmni yuklang", "Boshlash ni bosing", "Siqilgan rasmni yuklab oling"],
+  translit: ["O'zbek matni kiriting (lotin yoki kirill)", "Boshlash ni bosing", "Boshqa yozuvdagi matnni nusxalab oling"],
+  stats: ["Raqamlarni bo'sh joy bilan ajratib kiriting: 4 7 2 9 1 5", "Boshlash ni bosing", "O'rtacha, mediana, dispersiya va boshqa ko'rsatkichlar chiqadi"],
+  translate: ["Matnni kiriting", "Oxirgi qatorda til kodini yozing: en  ru  tr  de  ja  ko", "Tarjima natijasini nusxalab oling"],
+  wiki: ["Maqola nomini kiriting (masalan: Amir Temur)", "Boshlash ni bosing", "Wikipedia dan qisqacha ma'lumot oling"],
+  readtime: ["Matnni kiriting yoki joylashtiring", "Boshlash ni bosing", "O'qish uchun taxminiy vaqt ko'rsatiladi"],
+  books: ["Kitob nomi yoki muallif ismini kiriting", "Boshlash ni bosing", "Open Library dan kitob ma'lumotlari ko'rsatiladi"],
+  qr: ["Matn, URL yoki telefon raqam kiriting", "Boshlash ni bosing", "QR kodini yuklab oling"],
+  cert: ["1-qator: Ism Familiya\n2-qator: Kurs yoki yutuq nomi", "Boshlash ni bosing", "Sertifikat rasmini yuklab oling"],
+  bgremove: ["Rasm (JPG/PNG) yuklang", "Boshlash ni bosing — AI fon olib tashlaydi", "Fonsiz rasmni (PNG) yuklab oling"],
+  photo3x4: ["Yuz ko'rinadigan rasm (JPG/PNG) yuklang", "Fon rangi va chiqish turini tanlang", "A4 da 6 ta 3×4 sm foto yoki bitta foto yuklab oling"],
+  schedule: ["Dars jadvalini kiriting:\nDushanba: Matematika 8:00, Fizika 10:00", "Boshlash ni bosing", "Haftalik jadval rasmini yuklab oling"],
+  deadline: ["Sana kiriting: 31.12.2025 yoki 2025-12-31", "Boshlash ni bosing", "Qolgan vaqt va eslatma ko'rsatiladi"],
+  zip: ["Arxivlanadigan fayllarni tanlang", "Parol kiriting (ixtiyoriy)", "ZIP arxivini yuklab oling"],
+  unzip: ["ZIP faylni yuklang", "Boshlash ni bosing", "Fayl nomlari ro'yxati va yuklab olish imkoniyati"]
+};
+
+// ─── ServicePage (full-screen page with slide-in animation) ───────
+function ServicePage({
+  service,
+  isPremium,
+  t,
+  accent,
+  onBack,
+  onToast,
+  onGoToPlans
+}) {
+  const [mounted, setMounted] = useS(false);
+  useE(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  const meta = isPremium ? t.p?.[service.id] : t.s?.[service.id];
+  const howTo = SERVICE_HOW_TO[service.id] || [];
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      inset: 0,
+      zIndex: 50,
+      background: "var(--bg-page)",
+      display: "flex",
+      flexDirection: "column",
+      paddingTop: "var(--safe-top)",
+      transform: mounted ? "translateX(0)" : "translateX(100%)",
+      transition: "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      padding: "10px 16px",
+      borderBottom: "0.5px solid var(--border-subtle)",
+      background: "var(--bg-page)",
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: onBack,
+    "aria-label": "Orqaga",
+    style: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      border: "none",
+      background: "var(--bg-surface-1)",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      flexShrink: 0,
+      color: "var(--text-primary)"
+    }
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "18",
+    height: "18",
+    viewBox: "0 0 24 24",
+    fill: "none"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M15 18l-6-6 6-6",
+    stroke: "currentColor",
+    strokeWidth: "2.5",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }))), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 14,
+      lineHeight: 1
+    },
+    "aria-hidden": "true"
+  }, service.icon), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 16,
+      fontWeight: 700,
+      color: "var(--text-primary)",
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis"
+    }
+  }, meta?.name)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      overflowY: "auto",
+      WebkitOverflowScrolling: "touch"
+    }
+  }, howTo.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      margin: "16px 16px 0",
+      padding: "14px 16px",
+      background: "var(--bg-surface-1)",
+      borderRadius: 16,
+      border: "0.5px solid var(--border-subtle)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      fontWeight: 700,
+      letterSpacing: 0.7,
+      textTransform: "uppercase",
+      color: "var(--text-muted)",
+      marginBottom: 12
+    }
+  }, "Qanday ishlaydi"), howTo.map((step, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      display: "flex",
+      gap: 10,
+      marginBottom: i < howTo.length - 1 ? 10 : 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 20,
+      height: 20,
+      borderRadius: "50%",
+      flexShrink: 0,
+      background: `${accent}1a`,
+      border: `1.5px solid ${accent}55`,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: 10,
+      fontWeight: 700,
+      color: accent,
+      marginTop: 2
+    }
+  }, i + 1), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13.5,
+      color: "var(--text-secondary)",
+      lineHeight: 1.5,
+      whiteSpace: "pre-line"
+    }
+  }, step)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: "0.5px",
+      background: "var(--border-subtle)",
+      margin: "16px 0 0"
+    }
+  }), /*#__PURE__*/React.createElement(ServiceSheet, {
+    service: service,
+    isPremium: isPremium,
+    t: t,
+    accent: accent,
+    embedded: true,
+    onClose: onBack,
+    onToast: onToast,
+    onGoToPlans: onGoToPlans
+  })));
+}
+
 // ─── Text placeholder hints per service ──────────────────────────
 const TEXT_HINTS = {
   translit: "Matn kiriting (lotin yoki kirill)",
@@ -756,13 +1095,18 @@ function ServiceSheet({
   accent,
   onClose,
   onToast,
-  onGoToPlans
+  onGoToPlans,
+  embedded = false
 }) {
   const [step, setStep] = useS(isPremium ? "locked" : "input");
   const [inputData, setInputData] = useS(null);
   const [hasInput, setHasInput] = useS(false);
   const [result, setResult] = useS(null);
   const [extraText, setExtraText] = useS("");
+  const [serviceOpts, setServiceOpts] = useS({
+    bg: "white",
+    sheet: true
+  });
   const meta = isPremium ? t.p?.[service.id] : t.s?.[service.id];
   if (!meta) return null;
   const acceptText = !service.accept;
@@ -816,7 +1160,8 @@ function ServiceSheet({
       } else {
         arg = {
           file: inputData,
-          text: needsExtraText ? extraText.trim() : ""
+          text: needsExtraText ? extraText.trim() : "",
+          opts: serviceOpts
         };
       }
       const res = await handler(arg);
@@ -835,20 +1180,24 @@ function ServiceSheet({
       setStep("done");
       window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("error");
     }
-  }, [service, inputData, acceptText]);
+  }, [service, inputData, acceptText, serviceOpts]);
   const reset = useC(() => {
     setStep("input");
     setInputData(null);
     setHasInput(false);
     setResult(null);
+    setServiceOpts({
+      bg: "white",
+      sheet: true
+    });
   }, []);
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      padding: "6px 20px 20px"
+      padding: embedded ? "4px 20px 20px" : "6px 20px 20px"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      display: "flex",
+      display: embedded ? "none" : "flex",
       alignItems: "center",
       gap: 12,
       marginBottom: 18
@@ -912,6 +1261,10 @@ function ServiceSheet({
       setInputData(data);
       setHasInput(true);
     }
+  }), service.id === "photo3x4" && /*#__PURE__*/React.createElement(Photo3x4Options, {
+    opts: serviceOpts,
+    onChange: setServiceOpts,
+    accent: accent
   }), needsExtraText && /*#__PURE__*/React.createElement("input", {
     type: service.id === "pdflock" ? "password" : "text",
     placeholder: TEXT_HINTS[service.id] || "",
@@ -981,6 +1334,7 @@ function ServiceSheet({
 }
 Object.assign(window, {
   ServiceSheet,
+  ServicePage,
   Dropzone,
   TextInputBox,
   Processing,
@@ -988,5 +1342,6 @@ Object.assign(window, {
   SuccessRing,
   ResultFile,
   ResultText,
-  ResultImage
+  ResultImage,
+  Photo3x4Options
 });
