@@ -622,7 +622,10 @@ def _parse_page_ranges(pages_str: str, total: int) -> list:
             continue
         if "-" in part:
             a, b = part.split("-", 1)
-            result.update(range(int(a) - 1, int(b)))
+            start, end = int(a), int(b)
+            if start > end:
+                raise ValueError(f"Noto'g'ri diapazon: {a}-{b} (bosh > oxir)")
+            result.update(range(start - 1, end))
         else:
             result.add(int(part) - 1)
     return sorted(x for x in result if 0 <= x < total)
@@ -959,7 +962,20 @@ def _make_wm_page(pw: float, ph: float, text: str,
     c.translate(pw / 2, ph / 2)
     c.rotate(angle)
     c.setFillColor(Color(0.5, 0.5, 0.5, alpha=max(0.05, min(0.9, opacity))))
-    c.setFont("Helvetica-Bold", font_size)
+    # Use DejaVu for Cyrillic support; fall back to Helvetica if not installed
+    import os as _os
+    _DEJAVU = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    if _os.path.exists(_DEJAVU):
+        try:
+            from reportlab.pdfbase import pdfmetrics as _pm
+            from reportlab.pdfbase.ttfonts import TTFont as _TTF
+            _pm.registerFont(_TTF("DejaVuSans-Bold", _DEJAVU))
+            _wm_font = "DejaVuSans-Bold"
+        except Exception:
+            _wm_font = "Helvetica-Bold"
+    else:
+        _wm_font = "Helvetica-Bold"
+    c.setFont(_wm_font, font_size)
     offsets = (-spacing, 0, spacing) if repeat else (0,)
     for offset in offsets:
         c.drawCentredString(0, offset, text)
@@ -1065,6 +1081,9 @@ def _do_pdf2img(data: bytes, dpi: int = 150, fmt: str = "png", quality: int = 85
     ext     = "jpg" if fmt == "jpeg" else fmt
 
     doc = fitz.open(stream=data, filetype="pdf")
+    if doc.is_encrypted:
+        doc.close()
+        raise ValueError("PDF parol bilan himoyalangan. Avval parolini oching.")
     total_pages = doc.page_count
     if total_pages == 0:
         doc.close()
@@ -1820,26 +1839,50 @@ def _do_docxedit(data: bytes, find: str, replace: str, case_sensitive: bool) -> 
 
     def _replace_in_para(para):
         nonlocal count
-        full = "".join(r.text for r in para.runs)
+        if not para.runs:
+            return
+        import re as _re
+
         if case_sensitive:
+            # Per-run first (preserves bold/italic/size of each run)
+            hit = 0
+            for r in para.runs:
+                if find in r.text:
+                    hit += r.text.count(find)
+                    r.text = r.text.replace(find, replace)
+            if hit:
+                count += hit
+                return
+            # Cross-run fallback
+            full = "".join(r.text for r in para.runs)
             if find not in full:
                 return
+            count += full.count(find)
             new_full = full.replace(find, replace)
-            hit = full.count(find)
         else:
-            import re as _re
             pattern = _re.compile(_re.escape(find), _re.IGNORECASE)
+            # Per-run first
+            hit = 0
+            for r in para.runs:
+                ms = pattern.findall(r.text)
+                if ms:
+                    hit += len(ms)
+                    r.text = pattern.sub(replace, r.text)
+            if hit:
+                count += hit
+                return
+            # Cross-run fallback
+            full = "".join(r.text for r in para.runs)
             if not pattern.search(full):
                 return
-            hit = len(pattern.findall(full))
+            count += len(pattern.findall(full))
             new_full = pattern.sub(replace, full)
 
-        count += hit
-        # Write replacement into first run, clear the rest
-        if para.runs:
-            para.runs[0].text = new_full
-            for r in para.runs[1:]:
-                r.text = ""
+        # Cross-run: put result in first run, clear the rest (first run's
+        # formatting is kept; formatting of other runs is unavoidably lost)
+        para.runs[0].text = new_full
+        for r in para.runs[1:]:
+            r.text = ""
 
     for para in doc.paragraphs:
         _replace_in_para(para)
@@ -1904,149 +1947,6 @@ async def docx_edit(
         logger.error(f"docxedit xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
             detail=f"docxedit: {type(e).__name__}: {str(e)[:160]}")
-
-
-# ─── Image → PDF helpers ──────────────────────────────────────────────────────
-
-def _open_and_fix_image(data: bytes):
-    """
-    Open image, apply EXIF rotation, convert transparency to white bg.
-    Returns PIL Image in RGB mode.
-    """
-    from PIL import Image, ImageOps
-    img = Image.open(io.BytesIO(data))
-    # Fix EXIF rotation (phone cameras store orientation in metadata)
-    img = ImageOps.exif_transpose(img)
-    # Transparency → white background
-    if img.mode in ('RGBA', 'LA', 'P'):
-        if img.mode == 'P':
-            img = img.convert('RGBA')
-        bg = Image.new('RGB', img.size, (255, 255, 255))
-        bg.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
-        img = bg
-    elif img.mode != 'RGB':
-        img = img.convert('RGB')
-    return img
-
-
-def _fit_image_on_page(img, page_w: float, page_h: float, margin: float):
-    """
-    Scale image to fit on page with given margin.
-    Returns (draw_w, draw_h, x, y) in points.
-    """
-    from PIL import Image
-    w, h = img.size
-    # Limit resolution to prevent OOM (very large camera photos)
-    MAX_PX = 4000
-    if max(w, h) > MAX_PX:
-        ratio = MAX_PX / max(w, h)
-        img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
-        w, h = img.size
-    avail_w = page_w - 2 * margin
-    avail_h = page_h - 2 * margin
-    scale = min(avail_w / w, avail_h / h)
-    draw_w = w * scale
-    draw_h = h * scale
-    x = (page_w - draw_w) / 2   # center horizontally
-    y = (page_h - draw_h) / 2   # center vertically
-    return img, draw_w, draw_h, x, y
-
-
-def _do_img2pdf(data: bytes) -> tuple:
-    """
-    Single image → A4 PDF.
-    Fixes: EXIF rotation, transparency, auto landscape/portrait,
-           centered with 1 cm margins, quality=92 JPEG encoding.
-    """
-    from reportlab.pdfgen import canvas as rl_canvas
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import cm
-    from reportlab.lib.utils import ImageReader
-
-    img = _open_and_fix_image(data)
-    orig_w, orig_h = img.size
-
-    # Auto landscape/portrait based on image aspect ratio
-    if orig_w > orig_h:
-        page_w, page_h = A4[1], A4[0]   # A4 landscape
-        orientation = "Landscape"
-    else:
-        page_w, page_h = A4              # A4 portrait
-        orientation = "Portrait"
-
-    img, draw_w, draw_h, x, y = _fit_image_on_page(img, page_w, page_h, 1 * cm)
-
-    # Encode to high-quality JPEG for ReportLab
-    img_buf = io.BytesIO()
-    img.save(img_buf, format='JPEG', quality=92, optimize=True)
-    img_buf.seek(0)
-
-    # Draw on PDF canvas (centered)
-    out_buf = io.BytesIO()
-    c = rl_canvas.Canvas(out_buf, pagesize=(page_w, page_h))
-    c.setTitle("EduBot — Image to PDF")
-    c.drawImage(ImageReader(img_buf), x, y, width=draw_w, height=draw_h,
-                preserveAspectRatio=True)
-    c.save()
-
-    info = f"✅ {orig_w}×{orig_h} px · {orientation} · A4"
-    return out_buf.getvalue(), info
-
-
-def _do_imgs2pdf(all_data: list) -> tuple:
-    """
-    Multiple images → multi-page A4 PDF.
-    Each image gets its own page with auto orientation + centering.
-    """
-    from reportlab.pdfgen import canvas as rl_canvas
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import cm
-    from reportlab.lib.utils import ImageReader
-
-    out_buf = io.BytesIO()
-    c = None
-    count = 0
-    first_err = None  # keep the first per-image error so we don't silently lose it
-
-    for idx, data in enumerate(all_data):
-        try:
-            img = _open_and_fix_image(data)
-            w, h = img.size
-
-            if w > h:
-                page_w, page_h = A4[1], A4[0]
-            else:
-                page_w, page_h = A4
-
-            img, draw_w, draw_h, x, y = _fit_image_on_page(img, page_w, page_h, 1 * cm)
-
-            img_buf = io.BytesIO()
-            img.save(img_buf, format='JPEG', quality=90, optimize=True)
-            img_buf.seek(0)
-
-            if c is None:
-                c = rl_canvas.Canvas(out_buf, pagesize=(page_w, page_h))
-                c.setTitle("EduBot — Images to PDF")
-            else:
-                c.showPage()
-                c.setPageSize((page_w, page_h))
-
-            c.drawImage(ImageReader(img_buf), x, y, width=draw_w, height=draw_h,
-                        preserveAspectRatio=True)
-            count += 1
-        except Exception as e:
-            if first_err is None:
-                first_err = f"#{idx + 1} ({len(data)} bayt): {type(e).__name__}: {str(e)[:80]}"
-
-    if c is None or count == 0:
-        msg = "Hech qanday rasm ochib bo'lmadi."
-        if first_err:
-            msg += f" 1-xato: {first_err}"
-        raise ValueError(msg)
-
-    c.save()
-    info = f"✅ {count} ta rasm · {count} sahifali PDF"
-    return out_buf.getvalue(), info
 
 
 # ─── Image → PDF ──────────────────────────────────────────────────────────────
@@ -2670,6 +2570,7 @@ def _do_imgcompress(data: bytes, output_format: str = "jpeg", user_quality: int 
 
     orig_size = len(data)
     img = Image.open(io.BytesIO(data))
+    _orig_fmt = (img.format or "jpeg").lower()
     img = ImageOps.exif_transpose(img)
 
     w, h = img.width, img.height
@@ -2711,6 +2612,10 @@ def _do_imgcompress(data: bytes, output_format: str = "jpeg", user_quality: int 
     if len(out_bytes) >= orig_size:
         out_bytes = data
         quality   = 0
+        # Revert media_type/ext to match the original file format
+        _fmt_map = {"jpeg": ("image/jpeg", "jpg"), "png": ("image/png", "png"),
+                    "webp": ("image/webp", "webp"), "gif": ("image/gif", "gif")}
+        media_type, ext = _fmt_map.get(_orig_fmt, ("image/jpeg", "jpg"))
 
     saved = max(0, round((1 - len(out_bytes) / orig_size) * 100))
     info  = f"{w}×{h} → {img.width}×{img.height}, {output_format}, saved {saved}%"
@@ -2805,12 +2710,15 @@ async def bgremove(request: Request):
                 detail="Fon olib tashlash 60 soniyadan oshdi. Kichikroq rasm yuklang.")
 
         # Optional: composite over a solid background color
-        if bg_color and len(bg_color) >= 6:
+        _bg = bg_color.lstrip("#") if bg_color else ""
+        if len(_bg) == 3:
+            _bg = "".join(c * 2 for c in _bg)  # expand "fff" → "ffffff"
+        if _bg and len(_bg) >= 6:
             from PIL import Image as _PILImg
             try:
-                r = int(bg_color[0:2], 16)
-                g = int(bg_color[2:4], 16)
-                b = int(bg_color[4:6], 16)
+                r = int(_bg[0:2], 16)
+                g = int(_bg[2:4], 16)
+                b = int(_bg[4:6], 16)
                 fg  = _PILImg.open(io.BytesIO(result_png)).convert("RGBA")
                 bg  = _PILImg.new("RGBA", fg.size, (r, g, b, 255))
                 bg.paste(fg, mask=fg.split()[3])
@@ -2918,6 +2826,9 @@ def _do_ocr(data: bytes, is_pdf: bool) -> str:
     if is_pdf:
         import fitz
         doc         = fitz.open(stream=data, filetype='pdf')
+        if doc.is_encrypted:
+            doc.close()
+            return 'PDF parol bilan himoyalangan. Avval parolini oching.'
         total_pages = doc.page_count
 
         if total_pages == 0:
@@ -3602,7 +3513,7 @@ async def make_schedule(request: Request):
         if len(text) > 3000:
             text = text[:3000]
         loop   = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, _do_schedule, text)
+        result = await loop.run_in_executor(_converter_pool, _do_schedule, text)
         return Response(content=result, media_type="image/png")
     except HTTPException:
         raise
@@ -3641,7 +3552,7 @@ def _do_translate(query: str, lang: str) -> str:
         chunk = query[:500]
         r = _httpx.get(
             "https://api.mymemory.translated.net/get",
-            params={"q": chunk, "langpair": f"auto|{lang}"},
+            params={"q": chunk, "langpair": f"uz|{lang}"},
             timeout=15,
         )
         d = r.json()
@@ -3762,9 +3673,13 @@ async def make_zip(
     files: List[UploadFile] = File(...),
     password: Optional[str] = Form(None),
 ):
+    _ZIP_MAX_FILES = 100
     try:
         if password is not None and len(password) > 128:
             raise HTTPException(status_code=400, detail="Parol 128 belgidan oshmasligi kerak")
+        if len(files) > _ZIP_MAX_FILES:
+            raise HTTPException(status_code=400,
+                detail=f"Maksimal {_ZIP_MAX_FILES} fayl ZIP ga qo'shilishi mumkin")
 
         buf = io.BytesIO()
         total = 0
