@@ -18,6 +18,7 @@ import secrets
 import zipfile
 import tempfile
 import functools
+import threading
 import httpx
 import sys
 from urllib.parse import quote as url_quote
@@ -102,15 +103,18 @@ def _do_pdf2docx(pdf_path: str, docx_path: str) -> None:
 # Can be disabled via env: MARKER_DISABLED=1
 
 _marker_converter = None  # Lazy init — only loaded when first used
+_marker_lock = threading.Lock()  # Prevents duplicate model load on concurrent first calls
 
 def _get_marker_converter():
-    """Singleton — initializes once, reuses ML models."""
+    """Singleton — initializes once, reuses ML models. Thread-safe."""
     global _marker_converter
     if _marker_converter is None:
-        from marker.converters.pdf import PdfConverter
-        from marker.models import create_model_dict
-        _marker_converter = PdfConverter(artifact_dict=create_model_dict())
-        logger.info("marker-pdf model loaded")
+        with _marker_lock:
+            if _marker_converter is None:  # double-check after acquiring lock
+                from marker.converters.pdf import PdfConverter
+                from marker.models import create_model_dict
+                _marker_converter = PdfConverter(artifact_dict=create_model_dict())
+                logger.info("marker-pdf model loaded")
     return _marker_converter
 
 
@@ -165,6 +169,15 @@ def _do_pdf2docx_pymupdf(pdf_path: str, docx_path: str) -> None:
     from docx.shared import Pt, RGBColor
 
     pdf = fitz.open(pdf_path)
+    try:
+        _pymupdf_extract(pdf, docx_path)
+    finally:
+        pdf.close()
+
+
+def _pymupdf_extract(pdf, docx_path: str) -> None:
+    from docx import Document
+    from docx.shared import Pt, RGBColor
     doc_out = Document()
 
     # Median font size — faqat birinchi 3 sahifadan namuna (OOM oldini olish)
@@ -233,7 +246,6 @@ def _do_pdf2docx_pymupdf(pdf_path: str, docx_path: str) -> None:
                             except Exception:
                                 pass
 
-    pdf.close()
     doc_out.save(docx_path)
 
 
@@ -245,29 +257,34 @@ def _do_pdf2docx_ocr(pdf_path: str, docx_path: str) -> None:
     from docx import Document
 
     pdf = fitz.open(pdf_path)
-    doc_out = Document()
-    doc_out.add_heading("OCR natijasi", level=1)
+    try:
+        doc_out = Document()
+        doc_out.add_heading("OCR natijasi", level=1)
 
-    for page_num, page in enumerate(pdf):
-        if page_num > 0:
-            doc_out.add_page_break()
+        for page_num, page in enumerate(pdf):
+            if page_num > 0:
+                doc_out.add_page_break()
 
-        mat = fitz.Matrix(2.0, 2.0)  # 2x zoom → OCR aniqligini oshiradi
-        pix = page.get_pixmap(matrix=mat)
-        img = PILImage.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            mat = fitz.Matrix(2.0, 2.0)  # 2x zoom → OCR aniqligini oshiradi
+            pix = page.get_pixmap(matrix=mat)
+            img = PILImage.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-        try:
-            text = pytesseract.image_to_string(img, lang="uzb+rus+eng", timeout=30)
-        except Exception:
-            text = pytesseract.image_to_string(img, lang="eng", timeout=30)
+            try:
+                try:
+                    text = pytesseract.image_to_string(img, lang="uzb+rus+eng", timeout=30)
+                except Exception:
+                    text = pytesseract.image_to_string(img, lang="eng", timeout=30)
+            finally:
+                img.close()
 
-        for line in (text or "").split("\n"):
-            line = line.strip()
-            if line:
-                doc_out.add_paragraph(line)
+            for line in (text or "").split("\n"):
+                line = line.strip()
+                if line:
+                    doc_out.add_paragraph(line)
 
-    pdf.close()
-    doc_out.save(docx_path)
+        doc_out.save(docx_path)
+    finally:
+        pdf.close()
 
 
 # ✅ YANGILANDI: docling (IBM) — AI bilan jadvallarni aniq taniydi, birlamchi usul
@@ -310,7 +327,10 @@ def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
     except Exception:
         page_count = 999  # noma'lum bo'lsa, ehtiyot uchun marker'ni ishlatmaymiz
 
-    MARKER_MAX_PAGES = int(os.environ.get("MARKER_MAX_PAGES", "10"))
+    try:
+        MARKER_MAX_PAGES = int(os.environ.get("MARKER_MAX_PAGES", "10"))
+    except ValueError:
+        MARKER_MAX_PAGES = 10
 
     if is_scanned:
         chain = [
@@ -1840,7 +1860,7 @@ def _do_docx2pdf_libreoffice(data: bytes) -> bytes:
         result = subprocess.run(
             ["libreoffice", "--headless", "--norestore",
              "--convert-to", "pdf", "--outdir", tmpdir, docx_path],
-            env=env, capture_output=True, timeout=50,
+            env=env, capture_output=True, timeout=60,
         )
         if result.returncode != 0:
             stderr = (result.stderr or b"").decode(errors="replace")[:300]
@@ -1945,7 +1965,7 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
         info_parts = [f"{para_count} paragraf"]
         if table_count:
             info_parts.append(f"{table_count} jadval")
-        info_parts.append(f"aylantiriLdi ({conv_method})")
+        info_parts.append(f"aylantirildi ({conv_method})")
         info = " - ".join(info_parts)
 
         logger.info(f"docx2pdf [{conv_method}]: {para_count}p+{table_count}t, "
