@@ -3,8 +3,11 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "build": "babel src --out-dir dist --extensions .jsx,.js --copy-files",
-    "watch": "babel src --out-dir dist --extensions .jsx,.js --copy-files --watch"
+    "build:src": "babel src --out-dir dist --extensions .jsx,.js --copy-files",
+    "minify":    "node scripts/minify.js",
+    "build":     "npm run build:src && npm run minify",
+    "build:dev": "babel src --out-dir dist --extensions .jsx,.js --copy-files",
+    "watch":     "babel src --out-dir dist --extensions .jsx,.js --copy-files --watch"
   },
   "keywords": [],
   "author": "",
@@ -14,6 +17,7 @@
     "@babel/cli": "^7.28.6",
     "@babel/core": "^7.29.0",
     "@babel/preset-env": "^7.29.0",
-    "@babel/preset-react": "^7.28.5"
+    "@babel/preset-react": "^7.28.5",
+    "terser": "^5.48.0"
   }
 }

@@ -1,0 +1,62 @@
+# EduBot — Docker build context exclusions
+# Only backend/ is COPYd in the Dockerfile, but pruning the context speeds up
+# build uploads on Railway. Keep this in sync with .gitignore.
+
+# Frontend (not used by backend container)
+node_modules/
+dist/
+src/
+EduBot.html
+package.json
+package-lock.json
+scripts/
+sw.js
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI / IDE
+.github/
+.vscode/
+.idea/
+*.iml
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local dev DB
+edubot.db
+edubot.db-journal
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment files (never bake secrets into image)
+.env
+.env.*
+!.env.example
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Docs / planning (not needed at runtime)
+*.md
+!backend/README.md
+plans/
+docs/
+
+# Logs
+*.log
+logs/

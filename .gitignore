@@ -1,9 +1,41 @@
+# Node / npm
 node_modules/
+npm-debug.log
+yarn-error.log
+
+# Env / secrets
 .env
+.env.*
+!.env.example
 *.log
 
-# Backend cache
+# Python bytecode + caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Backend runtime caches (downloaded model files)
 backend/__pycache__/
 backend/*.pyc
 backend/u2net.onnx
 backend/u2net_human_seg.onnx
+backend/.cache/
+
+# Local SQLite (dev only)
+*.db
+*.sqlite
+*.sqlite3
+*-journal
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/

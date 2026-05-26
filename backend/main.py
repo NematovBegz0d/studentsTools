@@ -83,8 +83,13 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 # ─── Thread pool for CPU-intensive conversions ────────────────────────────────
 # pdf2docx blocks the event loop — run it in a thread pool
-
-_converter_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pdf2docx")
+# ✅ YANGILANDI: max_workers=2 → min(cpu_count(), 4) — yuk paytida navbat yo'q
+# Sabab: PDF/OCR konversiyalar 30-90s, bir vaqtda 4 ta foydalanuvchini qo'llab-quvvatlash
+_CONVERTER_WORKERS = min((os.cpu_count() or 2), 4)
+_converter_pool = ThreadPoolExecutor(
+    max_workers=_CONVERTER_WORKERS,
+    thread_name_prefix="convert",
+)
 
 
 def _do_pdf2docx(pdf_path: str, docx_path: str) -> None:
@@ -1714,23 +1719,23 @@ def _do_docx2pdf(data: bytes, fn_regular: str, fn_bold: str) -> bytes:
                     style_name = ""
 
                 # Images inside this paragraph
+                # ✅ YANGILANDI: PIL Image context manager bilan — har rasm uchun memory bo'shatish
                 for blip in element.findall(".//" + qn("a:blip")):
                     rId = blip.get(qn("r:embed")) or blip.get(qn("r:link"))
                     if rId and rId in images:
                         try:
-                            buf = io.BytesIO(images[rId])
-                            pil = PILImage.open(buf)
-                            iw, ih = pil.size
-                            if iw > PAGE_W:
-                                ratio = PAGE_W / iw
-                                iw, ih = PAGE_W, ih * ratio
-                            out_buf = io.BytesIO()
-                            pil.convert("RGB").save(out_buf, format="PNG")
+                            with PILImage.open(io.BytesIO(images[rId])) as pil:
+                                iw, ih = pil.size
+                                if iw > PAGE_W:
+                                    ratio = PAGE_W / iw
+                                    iw, ih = PAGE_W, ih * ratio
+                                out_buf = io.BytesIO()
+                                pil.convert("RGB").save(out_buf, format="PNG")
                             out_buf.seek(0)
                             story.append(RLImage(out_buf, width=iw, height=ih))
                             story.append(Spacer(1, 6))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"docx image render skip: {e}")
 
                 markup = runs_to_markup(para)
                 if not markup.strip():
@@ -3145,33 +3150,39 @@ def _do_compresspptx(data: bytes) -> tuple:
                 continue
             try:
                 img_blob = shape.image.blob
-                img_ext = shape.image.ext.lower()
-                img = Image.open(io.BytesIO(img_blob))
-                if max(img.width, img.height) > _PPTX_MAX_DIM:
-                    ratio = _PPTX_MAX_DIM / max(img.width, img.height)
-                    img = img.resize(
-                        (int(img.width * ratio), int(img.height * ratio)),
-                        Image.LANCZOS,
-                    )
-                if len(img_blob) > 2 * 1024 * 1024:
-                    quality = 65
-                elif len(img_blob) > 512 * 1024:
-                    quality = 72
-                else:
-                    quality = 82
-                buf = io.BytesIO()
-                if img.mode == "RGBA" or img_ext in ("png", "gif"):
-                    img.save(buf, format="PNG", optimize=True)
-                else:
-                    img.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True)
-                candidate = buf.getvalue()
+                img_ext  = shape.image.ext.lower()
+                # ✅ YANGILANDI: PIL Image context manager — slayd har rasmi uchun memory bo'shatish
+                with Image.open(io.BytesIO(img_blob)) as img:
+                    if max(img.width, img.height) > _PPTX_MAX_DIM:
+                        ratio = _PPTX_MAX_DIM / max(img.width, img.height)
+                        resized = img.resize(
+                            (int(img.width * ratio), int(img.height * ratio)),
+                            Image.LANCZOS,
+                        )
+                    else:
+                        resized = img
+                    if len(img_blob) > 2 * 1024 * 1024:
+                        quality = 65
+                    elif len(img_blob) > 512 * 1024:
+                        quality = 72
+                    else:
+                        quality = 82
+                    buf = io.BytesIO()
+                    if resized.mode == "RGBA" or img_ext in ("png", "gif"):
+                        resized.save(buf, format="PNG", optimize=True)
+                    else:
+                        resized.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True)
+                    candidate = buf.getvalue()
+                    if resized is not img:
+                        resized.close()
                 if len(candidate) < len(img_blob):
                     blip = shape.element.blipFill.blip
-                    rId = blip.get(qn("r:embed"))
+                    rId  = blip.get(qn("r:embed"))
                     image_part = shape.part.related_parts[rId]
                     image_part._blob = candidate
                     compressed += 1
-            except Exception:
+            except Exception as e:
+                logger.debug(f"pptx image compress skip: {e}")
                 continue
 
     out_buf = io.BytesIO()

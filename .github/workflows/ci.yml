@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs when a new commit is pushed to the same PR/branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Backend: pure-function unit tests (no heavy ML imports) ────────────────
+  backend-tests:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install minimal test deps
+        # We install only what the pure-function tests need to import main.
+        # Heavy deps (paddleocr, mediapipe, marker-pdf) are skipped — they
+        # would 10x the CI runtime and the tests don't exercise them.
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install \
+            "fastapi==0.115.6" \
+            "uvicorn[standard]==0.32.1" \
+            "python-multipart==0.0.12" \
+            "httpx==0.28.1" \
+            "slowapi==0.1.9" \
+            "loguru==0.7.3" \
+            "asyncpg==0.30.0" \
+            "aiosqlite==0.20.0" \
+            "Pillow==10.4.0" \
+            "python-dateutil==2.9.0.post0" \
+            "dateparser>=1.2.0" \
+            "pillow-heif>=0.18.0"
+
+      - name: Run pytest
+        # Selectively run only the pure-helper + DB tests. Tests that need
+        # heavy deps should be marked @pytest.mark.slow and excluded here.
+        run: |
+          pytest tests/test_pure_helpers.py tests/test_database.py \
+                 -v --tb=short -m "not slow"
+
+  # ─── Frontend: build + minify must succeed ─────────────────────────────────
+  frontend-build:
+    name: Frontend build + minify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Report bundle size
+        run: |
+          echo "## Bundle size" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          find dist -name '*.js' -exec du -h {} + | sort -h >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # ─── Docker: backend image must build cleanly ──────────────────────────────
+  docker-build:
+    name: Docker build (backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          tags: edubot-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
