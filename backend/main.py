@@ -33,8 +33,16 @@ from img2pdf_improved import (
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
-BOT_TOKEN   = os.environ.get("BOT_TOKEN", "")
-APP_URL     = os.environ.get("APP_URL", "https://nematovbegz0d.github.io/studentsTools/EduBot.html")
+BOT_TOKEN     = os.environ.get("BOT_TOKEN", "")
+APP_URL       = os.environ.get("APP_URL", "https://nematovbegz0d.github.io/studentsTools/EduBot.html")
+# Telegram webhook secret token — Telegram'ga setWebhook qilganda biz uzatamiz, har
+# kelgan so'rovda X-Telegram-Bot-Api-Secret-Token header bilan tasdiqlanadi.
+# Agar bo'sh bo'lsa, BOT_TOKEN dan hash hosil qilamiz (deterministik, hech kim taxmin qilolmaydi).
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+if not WEBHOOK_SECRET and BOT_TOKEN:
+    import hashlib as _hl
+    WEBHOOK_SECRET = _hl.sha256(f"webhook:{BOT_TOKEN}".encode()).hexdigest()[:48]
+
 MAX_FILE_MB = 20
 MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
 _start_time = time.time()
@@ -328,12 +336,17 @@ async def lifespan(app: FastAPI):
         webhook_url = f"https://{domain}/webhook"
         try:
             async with httpx.AsyncClient(timeout=10) as client:
+                # ✅ secret_token Telegram'dan har webhook so'rov bilan X-Telegram-Bot-Api-Secret-Token
+                # header sifatida qaytadi — boshqa hech kim webhook'ni soxtalashtirolmaydi
+                payload = {"url": webhook_url, "drop_pending_updates": True}
+                if WEBHOOK_SECRET:
+                    payload["secret_token"] = WEBHOOK_SECRET
                 r = await client.post(
                     f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-                    json={"url": webhook_url, "drop_pending_updates": True},
+                    json=payload,
                 )
                 if r.json().get("ok"):
-                    logger.info(f"Webhook: {webhook_url}")
+                    logger.info(f"Webhook: {webhook_url} (secret_token: {'✓' if WEBHOOK_SECRET else 'NO'})")
                 else:
                     logger.error(f"Webhook xatosi: {r.json()}")
         except Exception as e:
@@ -369,13 +382,31 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="EduBot Backend", version="2.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+
+# ✅ CORS — aniq originlar (CORS_ORIGINS env: vergul bilan ajratilgan ro'yxat)
+# Default: GitHub Pages + Telegram Web (telegram.org va t.me)
+_default_origins = (
+    "https://nematovbegz0d.github.io,"
+    "https://web.telegram.org,"
+    "https://telegram.org,"
+    "https://t.me"
+)
+_cors_raw = os.environ.get("CORS_ORIGINS", _default_origins)
+_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-User-Id"],
     expose_headers=[
-        "X-Info", "X-Page-Count", "X-Password", "X-Saved-Percent", "X-Warning",
-        "Content-Disposition",  # so frontend can read attachment filenames
+        "X-Info", "X-Page-Count", "X-Saved-Percent", "X-Warning",
+        "X-Password",  # pdflock yaratgan parol — HTTPS orqali xavfsiz, faqat user ko'radi
+        "Content-Disposition",
     ],
 )
+logger.info(f"CORS allowed origins: {_cors_origins}")
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -438,6 +469,12 @@ def health():
 async def webhook(request: Request):
     if not BOT_TOKEN:
         return {"ok": False}
+    # ✅ Telegram secret_token tekshiruv — spoofed webhook so'rovlarni rad etadi
+    if WEBHOOK_SECRET:
+        got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not secrets.compare_digest(got, WEBHOOK_SECRET):
+            logger.warning(f"Webhook secret mismatch from {get_remote_address(request)}")
+            raise HTTPException(status_code=403, detail="Forbidden")
     try:
         update = await request.json()
     except Exception:
@@ -1181,6 +1218,10 @@ def _do_compresspdf(data: bytes, level: str = "ebook") -> tuple:
         "prepress": "/prepress",  # 300 DPI, colour managed
     }
     gs_level = _GS_SETTINGS.get(level, "/ebook")
+    # ✅ Tuzatildi: try/finally bilan vaqtinchalik fayllar har doim tozalanadi,
+    #    fayl handle context manager bilan yopiladi, fitz.open() ham close qilinadi
+    import os as _os
+    fin_path = fout_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as fin:
             fin.write(data)
@@ -1192,22 +1233,27 @@ def _do_compresspdf(data: bytes, level: str = "ebook") -> tuple:
              f"-sOutputFile={fout_path}", fin_path],
             timeout=60, capture_output=True,
         )
-        import os as _os
-        _os.unlink(fin_path)
         if proc.returncode == 0 and _os.path.exists(fout_path):
-            gs_bytes = open(fout_path, "rb").read()
-            _os.unlink(fout_path)
+            with open(fout_path, "rb") as _gs_f:
+                gs_bytes = _gs_f.read()
             if len(gs_bytes) < orig_size:
                 saved = max(0, round((1 - len(gs_bytes) / orig_size) * 100))
-                n_gs = fitz.open(stream=gs_bytes, filetype="pdf").page_count
+                _gs_doc = fitz.open(stream=gs_bytes, filetype="pdf")
+                try:
+                    n_gs = _gs_doc.page_count
+                finally:
+                    _gs_doc.close()
                 return (gs_bytes,
                         f"{n_gs} sahifa • {orig_size // 1024} KB → {len(gs_bytes) // 1024} KB"
                         f" • {saved}% tejaldi (Ghostscript {level})",
                         saved)
-        if _os.path.exists(fout_path):
-            _os.unlink(fout_path)
     except (FileNotFoundError, Exception):
         pass  # Ghostscript not installed — fall back to PyMuPDF
+    finally:
+        for _p in (fin_path, fout_path):
+            if _p and _os.path.exists(_p):
+                try: _os.unlink(_p)
+                except Exception: pass
 
     doc = fitz.open(stream=data, filetype="pdf")
     n = doc.page_count
@@ -4584,7 +4630,8 @@ ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 def _check_admin(request: Request):
     if ADMIN_TOKEN:
         auth = request.headers.get("Authorization", "")
-        if not auth.startswith("Bearer ") or auth[7:] != ADMIN_TOKEN:
+        # ✅ Timing-safe comparison — secrets.compare_digest oldini oladi byte-by-byte attack
+        if not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], ADMIN_TOKEN):
             raise HTTPException(status_code=403, detail="Ruxsat yo'q")
 
 # ─── Admin: Panel HTML ─────────────────────────────────────────────────────────

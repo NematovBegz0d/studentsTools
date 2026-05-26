@@ -14,6 +14,7 @@ Flow:
 import base64
 import hashlib
 import os
+import secrets
 import time
 import uuid
 from loguru import logger
@@ -72,7 +73,8 @@ def verify_payme_auth(authorization: str) -> bool:
         expected = PAYME_TEST_KEY if PAYME_TEST else PAYME_KEY
         if not expected:
             return False
-        return key == expected
+        # ✅ Timing-safe comparison — Payme secret key attack oldini oladi
+        return secrets.compare_digest(key, expected)
     except Exception:
         return False
 

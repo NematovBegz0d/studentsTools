@@ -378,17 +378,25 @@ function renderUsers(users) {
     document.getElementById('users-tbody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted)">Topilmadi</td></tr>';
     return;
   }
-  document.getElementById('users-tbody').innerHTML = users.map(u => `
+  // ✅ XSS-safe — har bir foydalanuvchi qiymati esc() bilan o'tkaziladi
+  document.getElementById('users-tbody').innerHTML = users.map(u => {
+    const plan = ['free','monthly','yearly'].includes(u.plan) ? u.plan : 'free';
+    return `
     <tr>
-      <td style="font-family:monospace;color:var(--faint)">${u.id}</td>
-      <td>${u.first_name || '—'}</td>
-      <td style="color:var(--accent2)">${u.username ? '@'+u.username : '—'}</td>
-      <td><span class="badge badge-${u.plan}">${u.plan}</span></td>
+      <td style="font-family:monospace;color:var(--faint)">${esc(u.id)}</td>
+      <td>${esc(u.first_name) || '—'}</td>
+      <td style="color:var(--accent2)">${u.username ? '@' + esc(u.username) : '—'}</td>
+      <td><span class="badge badge-${plan}">${esc(plan)}</span></td>
       <td style="color:var(--muted);font-size:12px">${u.plan_until ? fmtDate(u.plan_until) : '—'}</td>
-      <td style="color:var(--muted)">${u.usage_count ?? 0}</td>
+      <td style="color:var(--muted)">${esc(u.usage_count ?? 0)}</td>
       <td style="color:var(--faint);font-size:12px">${fmtDate(u.created_at)}</td>
-      <td><button class="btn btn-sm btn-yellow" onclick="openModal(${u.id},'${u.first_name||''}','${u.plan}')">Reja</button></td>
-    </tr>`).join('');
+      <td><button class="btn btn-sm btn-yellow"
+            data-uid="${esc(u.id)}"
+            data-name="${esc(u.first_name || '')}"
+            data-plan="${esc(plan)}"
+            onclick="openModal(this.dataset.uid, this.dataset.name, this.dataset.plan)">Reja</button></td>
+    </tr>`;
+  }).join('');
 }
 
 function usersPage(dir) {
@@ -413,15 +421,20 @@ function renderPayments(payments) {
     document.getElementById('payments-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">To\'lovlar yo\'q</td></tr>';
     return;
   }
-  document.getElementById('payments-tbody').innerHTML = payments.map(p => `
+  // ✅ XSS-safe
+  document.getElementById('payments-tbody').innerHTML = payments.map(p => {
+    const plan = ['free','monthly','yearly'].includes(p.plan) ? p.plan : 'free';
+    const status = ['paid','pending','cancelled'].includes(p.status) ? p.status : 'pending';
+    return `
     <tr>
-      <td style="font-family:monospace;font-size:11px;color:var(--faint)">${p.id.slice(0,8)}...</td>
-      <td>${p.first_name||'—'} ${p.username?'<span style="color:var(--accent2);font-size:12px">@'+p.username+'</span>':''}</td>
-      <td><span class="badge badge-${p.plan}">${p.plan}</span></td>
+      <td style="font-family:monospace;font-size:11px;color:var(--faint)">${esc(String(p.id).slice(0,8))}...</td>
+      <td>${esc(p.first_name) || '—'} ${p.username ? '<span style="color:var(--accent2);font-size:12px">@' + esc(p.username) + '</span>' : ''}</td>
+      <td><span class="badge badge-${plan}">${esc(plan)}</span></td>
       <td style="color:var(--green);font-weight:600">${fmt(p.amount)} so'm</td>
-      <td><span class="badge badge-${p.status}">${p.status}</span></td>
+      <td><span class="badge badge-${status}">${esc(status)}</span></td>
       <td style="color:var(--faint);font-size:12px">${fmtDate(p.created_at)}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 function paymentsPage(dir) {
@@ -441,8 +454,10 @@ function updatePagination(key, offset, total) {
 // ── Plan modal ────────────────────────────────────────────────────────
 function openModal(userId, name, currentPlan) {
   _modalUserId = userId;
+  // textContent — xavfsiz (HTML parse qilmaydi)
   document.getElementById('modal-user-info').textContent = `ID: ${userId}  ${name}  (hozir: ${currentPlan})`;
-  document.getElementById('modal-plan').value = currentPlan;
+  const planSel = document.getElementById('modal-plan');
+  planSel.value = ['free','monthly','yearly'].includes(currentPlan) ? currentPlan : 'free';
   document.getElementById('modal-days').value = currentPlan === 'yearly' ? 365 : 30;
   document.getElementById('modal-error').textContent = '';
   document.getElementById('plan-modal').classList.add('open');
@@ -472,6 +487,17 @@ async function savePlan() {
     document.getElementById('modal-error').textContent = e.message || 'Xato';
   }
   btn.disabled = false; btn.textContent = 'Saqlash';
+}
+
+// ── XSS-safe escape ───────────────────────────────────────────────────
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ── Formatters ────────────────────────────────────────────────────────
