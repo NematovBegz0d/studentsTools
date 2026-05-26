@@ -29,7 +29,11 @@ if _USE_PG:
             # Railway injects ssl=require; asyncpg needs ssl param
             dsn = DATABASE_URL
             if "sslmode=require" in dsn:
-                dsn = dsn.replace("sslmode=require", "")
+                dsn = (dsn
+                       .replace("?sslmode=require", "")
+                       .replace("&sslmode=require", "")
+                       .replace("sslmode=require", "")
+                       .rstrip("?&"))
             _pool = await asyncpg.create_pool(
                 dsn, ssl="require" if "railway" in dsn.lower() else None,
                 min_size=2, max_size=10, command_timeout=30,

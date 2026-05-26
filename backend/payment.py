@@ -77,14 +77,14 @@ def verify_payme_auth(authorization: str) -> bool:
         return False
 
 
-def _parse_dt_ms(dt_str: str) -> int:
-    """Safely parse SQLite datetime string to milliseconds timestamp.
-    Handles both 'YYYY-MM-DD HH:MM:SS' (SQLite default) and 'YYYY-MM-DDTHH:MM:SS' (ISO 8601)."""
-    if not dt_str:
+def _parse_dt_ms(dt_val) -> int:
+    """Convert SQLite string or PostgreSQL datetime object to milliseconds timestamp."""
+    if not dt_val:
         return int(time.time() * 1000)
     try:
-        # Normalize: replace T separator with space for uniform parsing
-        normalized = dt_str[:19].replace("T", " ")
+        if hasattr(dt_val, "timestamp"):  # datetime object from asyncpg
+            return int(dt_val.timestamp() * 1000)
+        normalized = str(dt_val)[:19].replace("T", " ")
         parsed = time.strptime(normalized, "%Y-%m-%d %H:%M:%S")
         return int(time.mktime(parsed) * 1000)
     except Exception:
