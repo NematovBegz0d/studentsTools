@@ -24,11 +24,12 @@ const FREE_SERVICES = [
   { id: 'translit', cat: 'text',   icon: '🔤', new: false, ai: false, input: 'text' },
   // Matematika (1)
   { id: 'stats',    cat: 'math',   icon: '📐', new: true,  ai: false, input: 'text' },
-  // Matn va Ma'lumot (4)
+  // Matn va Ma'lumot (5)
   { id: 'translate', cat: 'text',  icon: '🌐', new: false, ai: false, input: 'text' },
   { id: 'wiki',      cat: 'text',  icon: '📖', new: false, ai: false, input: 'text' },
   { id: 'readtime',  cat: 'text',  icon: '⏱️', new: false, ai: false, input: 'text' },
   { id: 'books',     cat: 'text',  icon: '📚', new: true,  ai: false, input: 'text' },
+  { id: 'summarize', cat: 'text',  icon: '🤖', new: true,  ai: true,  input: 'text' },
   // Generator (4)
   { id: 'qr',        cat: 'gen',   icon: '🔲', new: false, ai: false, input: 'text' },
   { id: 'cert',      cat: 'gen',   icon: '🏆', new: false, ai: false, input: 'text' },
@@ -177,6 +178,7 @@ const I18N = {
       wiki:        { name: 'Wikipedia',           desc: 'Maqola izlash va o\'qish' },
       readtime:    { name: 'O\'qish vaqti',       desc: 'Matnni o\'qish uchun vaqt' },
       books:       { name: 'Kitob izlash',        desc: 'Open Library bazasidan' },
+      summarize:   { name: 'AI Xulosalash',       desc: 'Uzun matnni 3-5 jumlada xulosalash' },
       qr:          { name: 'QR kod',              desc: 'Matn yoki link uchun QR' },
       cert:        { name: 'Sertifikat',          desc: 'Diplom va sertifikat yaratish' },
       cv:          { name: 'CV / Rezyume',        desc: 'Professional PDF rezyume yaratish' },
@@ -298,6 +300,7 @@ const I18N = {
       wiki: { name: 'Wikipedia', desc: 'Поиск и чтение статей' },
       readtime: { name: 'Время чтения', desc: 'Расчёт времени на чтение' },
       books: { name: 'Поиск книг', desc: 'База Open Library' },
+      summarize: { name: 'AI Резюме', desc: 'Краткий пересказ длинного текста' },
       qr: { name: 'QR код', desc: 'Генератор QR для текста' },
       cert: { name: 'Сертификат', desc: 'Создать диплом или сертификат' },
       cv: { name: 'CV / Резюме', desc: 'Создать профессиональное PDF резюме' },
@@ -415,6 +418,7 @@ const I18N = {
       wiki: { name: 'Wikipedia', desc: 'Search and read articles' },
       readtime: { name: 'Reading time', desc: 'Calculate reading time' },
       books: { name: 'Book search', desc: 'From Open Library' },
+      summarize: { name: 'AI Summary', desc: 'Summarize long text in 3-5 sentences' },
       qr: { name: 'QR code', desc: 'QR generator for text/link' },
       cert: { name: 'Certificate', desc: 'Create certificate or diploma' },
       cv: { name: 'CV / Resume', desc: 'Create professional PDF resume' },

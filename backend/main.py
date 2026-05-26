@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import database as db
 import payment as pay
+import cache as _cache
 from img2pdf_improved import (
     do_img2pdf_single, do_imgs2pdf_multi, validate_params as img2pdf_validate, is_image_bytes,
 )
@@ -40,6 +41,27 @@ _start_time = time.time()
 
 FONT_REGULAR = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 FONT_BOLD    = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+
+# ─── Sentry (optional) ───────────────────────────────────────────────────────
+# Set SENTRY_DSN env var to enable error monitoring. Without it, code is a no-op.
+_SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACE_RATE", "0.1")),
+            profiles_sample_rate=0.0,
+            environment=os.environ.get("RAILWAY_ENVIRONMENT", "production"),
+            release=os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:7] or "dev",
+            integrations=[StarletteIntegration(), FastApiIntegration()],
+            send_default_pii=False,
+        )
+    except Exception as _sentry_err:
+        # Don't fail boot if sentry is misconfigured
+        pass
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -3411,6 +3433,99 @@ async def readtime(request: Request):
         f"({wpm} so'z/daqiqa hisobida)"
     )})
 
+# ─── AI Summarize ─────────────────────────────────────────────────────────────
+# Anthropic API bilan AI xulosalash. ANTHROPIC_API_KEY shart.
+# Fallback: extractive (eng muhim jumlalarni tanlash).
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+
+def _extractive_summarize(text: str, max_sentences: int = 4) -> str:
+    """Extractive xulosalash — eng tez-tez uchragan so'zlarga ega jumlalar."""
+    from collections import Counter
+    sents = re.split(r'(?<=[.!?])\s+', text.strip())
+    if len(sents) <= max_sentences:
+        return text.strip()
+    # Stop-words minimal — barcha tillarda
+    stop = {"va","bilan","uchun","uchun","ham","bu","shu","u","men","sen","biz","siz","ular",
+            "in","of","the","a","an","to","is","and","or","for","on","at","by","with","as","it",
+            "и","в","на","с","по","к","из","о","за","но","что","это","он","она","они","мы"}
+    words = re.findall(r"\w+", text.lower())
+    freq = Counter(w for w in words if w not in stop and len(w) > 2)
+    if not freq:
+        return ".".join(sents[:max_sentences])
+    scored = []
+    for i, s in enumerate(sents):
+        sw = re.findall(r"\w+", s.lower())
+        score = sum(freq.get(w, 0) for w in sw) / max(1, len(sw))
+        scored.append((score, i, s))
+    top = sorted(scored, reverse=True)[:max_sentences]
+    return " ".join(s for _, _, s in sorted(top, key=lambda x: x[1]))
+
+
+async def _claude_summarize(text: str, lang: str = "uz") -> str:
+    """Claude API bilan AI xulosalash."""
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY o'rnatilmagan")
+    lang_label = {"uz": "o'zbek tilida", "ru": "по-русски", "en": "in English"}.get(lang, "o'zbek tilida")
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 600,
+                "messages": [{
+                    "role": "user",
+                    "content": (
+                        f"Quyidagi matnni {lang_label} 3-5 jumlada qisqacha xulosalab ber. "
+                        f"Asosiy fikrlarni saqla, lekin keraksiz tafsilotlardan voz kech. "
+                        f"Faqat xulosani qaytar, izoh berma.\n\n{text[:8000]}"
+                    ),
+                }],
+            },
+        )
+    if r.status_code != 200:
+        raise RuntimeError(f"Claude API xato: {r.status_code}")
+    data = r.json()
+    return (data.get("content") or [{}])[0].get("text", "").strip()
+
+
+@app.post("/api/summarize")
+@limiter.limit("10/minute")
+async def summarize(request: Request):
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    lang = (body.get("lang") or "uz").lower()[:2]
+    if not text:
+        return JSONResponse({"result": "❌ Matn kiriting"})
+    if len(text) < 200:
+        return JSONResponse({"result": "❌ Matn juda qisqa (kamida 200 belgi)"})
+    text = text[:10000]
+
+    # Try Claude first if API key set, otherwise extractive
+    if ANTHROPIC_API_KEY:
+        try:
+            ai_result = await asyncio.wait_for(_claude_summarize(text, lang), timeout=25.0)
+            if ai_result:
+                return JSONResponse({"result": f"🤖 AI xulosa:\n\n{ai_result}"})
+        except Exception as e:
+            logger.warning(f"summarize claude xato: {e}")
+
+    # Fallback: extractive
+    try:
+        loop = asyncio.get_event_loop()
+        ext = await loop.run_in_executor(None, _extractive_summarize, text)
+        return JSONResponse({"result": f"📝 Qisqacha:\n\n{ext}"})
+    except Exception as e:
+        logger.error(f"summarize xato: {e}")
+        return JSONResponse({"result": f"❌ Xulosalash amalga oshmadi"})
+
+
 # ─── Deadline ─────────────────────────────────────────────────────────────────
 
 @app.post("/api/deadline")
@@ -4015,20 +4130,13 @@ async def translate(request: Request):
 
 # ─── Wikipedia (proxy) ────────────────────────────────────────────────────────
 
-@app.post("/api/wiki")
-@limiter.limit("20/minute")
-async def wiki(request: Request):
-    body      = await request.json()
-    q         = (body.get("text") or "").strip()
-    pref_lang = (body.get("lang") or "").strip().lower()[:5]
-    if not q:
-        return JSONResponse({"result": "❌ Qidiruv so'zini kiriting"})
-
+# ✅ YANGILANDI: Wiki natijalari 1 soat cache (Redis/in-memory)
+@_cache.cached(ttl=3600, key_prefix="wiki")
+async def _wiki_lookup(q: str, pref_lang: str) -> str:
     langs = ([pref_lang] + [l for l in ["uz", "ru", "en"] if l != pref_lang]) if pref_lang else ["uz", "ru", "en"]
     async with httpx.AsyncClient(timeout=15) as client:
         for lang in langs:
             try:
-                # 1. Fuzzy search: opensearch finds the best-matching article title
                 sr = await client.get(
                     f"https://{lang}.wikipedia.org/w/api.php",
                     params={"action": "opensearch", "search": q, "limit": 3,
@@ -4036,8 +4144,6 @@ async def wiki(request: Request):
                 )
                 titles = sr.json()[1] if sr.status_code == 200 else []
                 search_title = titles[0] if titles else q
-
-                # 2. Get summary for the matched title
                 encoded = url_quote(search_title, safe="")
                 r = await client.get(
                     f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}"
@@ -4049,23 +4155,32 @@ async def wiki(request: Request):
                         result = f"📖 {d['title']} [{lang.upper()}]\n\n{d['extract']}"
                         if url:
                             result += f"\n\n🔗 {url}"
-                        return JSONResponse({"result": result})
+                        return result
             except Exception:
                 continue
-    return JSONResponse({"result": "❌ Wikipedia'da topilmadi. Boshqa so'z bilan qidiring."})
+    return ""
+
+
+@app.post("/api/wiki")
+@limiter.limit("20/minute")
+async def wiki(request: Request):
+    body      = await request.json()
+    q         = (body.get("text") or "").strip()[:200]
+    pref_lang = (body.get("lang") or "").strip().lower()[:5]
+    if not q:
+        return JSONResponse({"result": "❌ Qidiruv so'zini kiriting"})
+    result = await _wiki_lookup(q, pref_lang)
+    if not result:
+        return JSONResponse({"result": "❌ Wikipedia'da topilmadi. Boshqa so'z bilan qidiring."})
+    return JSONResponse({"result": result})
 
 # ─── Books (proxy) ────────────────────────────────────────────────────────────
 
-@app.post("/api/books")
-@limiter.limit("20/minute")
-async def books(request: Request):
-    body = await request.json()
-    q = (body.get("text") or "").strip()
-    if not q:
-        return JSONResponse({"result": "❌ Kitob nomi yoki muallifni kiriting"})
+# ✅ YANGILANDI: Books natijalari 6 soat cache
+@_cache.cached(ttl=21600, key_prefix="books")
+async def _books_lookup(q: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            # Query Google Books and OpenLibrary in parallel
             gb_task = client.get(
                 "https://www.googleapis.com/books/v1/volumes",
                 params={"q": q, "maxResults": 6, "printType": "books"},
@@ -4079,8 +4194,6 @@ async def books(request: Request):
 
         lines = []
         seen = set()
-
-        # Google Books — richer metadata + preview links
         if not isinstance(gb_r, Exception) and gb_r.status_code == 200:
             for item in (gb_r.json().get("items") or [])[:6]:
                 info = item.get("volumeInfo", {})
@@ -4099,8 +4212,6 @@ async def books(request: Request):
                 if preview:
                     line += f"\n   🔗 {preview}"
                 lines.append(line)
-
-        # OpenLibrary — wider catalogue, especially older books
         if not isinstance(ol_r, Exception) and ol_r.status_code == 200:
             for b in (ol_r.json().get("docs") or [])[:6]:
                 title = b.get("title", "")
@@ -4113,12 +4224,25 @@ async def books(request: Request):
                 if b.get("first_publish_year"):
                     line += f"  📅 {b['first_publish_year']}"
                 lines.append(line)
-
         if not lines:
-            return JSONResponse({"result": "📚 Kitob topilmadi"})
-        return JSONResponse({"result": f"📚 Natijalar:\n\n" + "\n\n".join(lines[:8])})
+            return ""
+        return f"📚 Natijalar:\n\n" + "\n\n".join(lines[:8])
     except Exception:
-        return JSONResponse({"result": "❌ Kitob qidirishda xato. Keyinroq urinib ko'ring."})
+        return ""
+
+
+@app.post("/api/books")
+@limiter.limit("20/minute")
+async def books(request: Request):
+    body = await request.json()
+    q = (body.get("text") or "").strip()[:200]
+    if not q:
+        return JSONResponse({"result": "❌ Kitob nomi yoki muallifni kiriting"})
+    result = await _books_lookup(q)
+    if not result:
+        return JSONResponse({"result": "📚 Kitob topilmadi"})
+    return JSONResponse({"result": result})
+
 
 # ─── ZIP ──────────────────────────────────────────────────────────────────────
 
@@ -4414,6 +4538,43 @@ async def user_plan(request: Request, user_id: int):
         "is_premium":  premium,
         "usage_count": user["usage_count"],
     }
+
+
+# ─── History endpoints ─────────────────────────────────────────────────────────
+
+def _get_user_id(request: Request) -> int:
+    """Extract user_id from Telegram WebApp init data via X-User-Id header."""
+    uid = request.headers.get("X-User-Id") or request.headers.get("x-user-id")
+    if not uid:
+        raise HTTPException(status_code=401, detail="X-User-Id header kerak")
+    try:
+        return int(uid)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="X-User-Id noto'g'ri")
+
+
+@app.get("/api/history")
+@limiter.limit("30/minute")
+async def history_list(request: Request, limit: int = 20):
+    user_id = _get_user_id(request)
+    items = await db.get_history(user_id, limit=min(limit, 50))
+    return {"items": items}
+
+
+@app.delete("/api/history")
+@limiter.limit("20/minute")
+async def history_clear(request: Request):
+    user_id = _get_user_id(request)
+    await db.delete_history(user_id)
+    return {"ok": True}
+
+
+@app.delete("/api/history/{history_id}")
+@limiter.limit("60/minute")
+async def history_delete(request: Request, history_id: int):
+    user_id = _get_user_id(request)
+    await db.delete_history(user_id, history_id)
+    return {"ok": True}
 
 
 # ─── Admin helpers ─────────────────────────────────────────────────────────────

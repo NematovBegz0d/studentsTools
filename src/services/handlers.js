@@ -610,6 +610,12 @@ async function books({ text }) {
   return apiText("/api/books", { text: sanitizeText(text, 200) });
 }
 
+async function summarize({ text }) {
+  if (!text?.trim()) throw new Error("Xulosalash uchun matn kiriting.");
+  if (text.length < 200) throw new Error("Matn juda qisqa (kamida 200 belgi).");
+  return apiText("/api/summarize", { text: sanitizeText(text, 10000) });
+}
+
 // ─── Visual generators ────────────────────────────────────────────
 
 async function qr({ text }) {
@@ -773,6 +779,7 @@ const SERVICE_HANDLERS = {
   translate,
   wiki,
   books,
+  summarize,
   // Generate
   qr,
   cert,

@@ -145,7 +145,7 @@ const FREE_SERVICES = [
   ai: false,
   input: 'text'
 },
-// Matn va Ma'lumot (4)
+// Matn va Ma'lumot (5)
 {
   id: 'translate',
   cat: 'text',
@@ -173,6 +173,13 @@ const FREE_SERVICES = [
   icon: '📚',
   new: true,
   ai: false,
+  input: 'text'
+}, {
+  id: 'summarize',
+  cat: 'text',
+  icon: '🤖',
+  new: true,
+  ai: true,
   input: 'text'
 },
 // Generator (4)
@@ -509,6 +516,10 @@ const I18N = {
         name: 'Kitob izlash',
         desc: 'Open Library bazasidan'
       },
+      summarize: {
+        name: 'AI Xulosalash',
+        desc: 'Uzun matnni 3-5 jumlada xulosalash'
+      },
       qr: {
         name: 'QR kod',
         desc: 'Matn yoki link uchun QR'
@@ -784,6 +795,10 @@ const I18N = {
         name: 'Поиск книг',
         desc: 'База Open Library'
       },
+      summarize: {
+        name: 'AI Резюме',
+        desc: 'Краткий пересказ длинного текста'
+      },
       qr: {
         name: 'QR код',
         desc: 'Генератор QR для текста'
@@ -1056,6 +1071,10 @@ const I18N = {
       books: {
         name: 'Book search',
         desc: 'From Open Library'
+      },
+      summarize: {
+        name: 'AI Summary',
+        desc: 'Summarize long text in 3-5 sentences'
       },
       qr: {
         name: 'QR code',

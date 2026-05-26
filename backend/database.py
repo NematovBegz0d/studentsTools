@@ -78,6 +78,16 @@ if _USE_PG:
                 CREATE INDEX IF NOT EXISTS idx_usage_date    ON usage_log(created_at);
                 CREATE INDEX IF NOT EXISTS idx_pay_user      ON payments(user_id);
                 CREATE INDEX IF NOT EXISTS idx_pay_payme     ON payments(payme_id);
+
+                CREATE TABLE IF NOT EXISTS history (
+                    id         BIGSERIAL PRIMARY KEY,
+                    user_id    BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    service_id TEXT        NOT NULL,
+                    title      TEXT        NOT NULL,
+                    preview    TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_hist_user ON history(user_id, created_at DESC);
             """)
 
     async def upsert_user(user_id: int, username: Optional[str], first_name: Optional[str]):
@@ -253,6 +263,44 @@ if _USE_PG:
                 plan, plan_until, user_id,
             )
 
+    async def add_history(user_id: int, service_id: str, title: str, preview: Optional[str] = None):
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "INSERT INTO history (user_id, service_id, title, preview) VALUES ($1, $2, $3, $4)",
+                    user_id, service_id, title[:200], (preview or "")[:500],
+                )
+                # Keep only last 50 entries per user
+                await conn.execute("""
+                    DELETE FROM history
+                    WHERE id IN (
+                        SELECT id FROM history WHERE user_id=$1
+                        ORDER BY created_at DESC OFFSET 50
+                    )
+                """, user_id)
+
+    async def get_history(user_id: int, limit: int = 20) -> list:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, service_id, title, preview, created_at FROM history "
+                "WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2",
+                user_id, limit,
+            )
+            return [dict(r) for r in rows]
+
+    async def delete_history(user_id: int, history_id: Optional[int] = None):
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            if history_id is None:
+                await conn.execute("DELETE FROM history WHERE user_id=$1", user_id)
+            else:
+                await conn.execute(
+                    "DELETE FROM history WHERE user_id=$1 AND id=$2",
+                    user_id, history_id,
+                )
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SQLite fallback (local development — DATABASE_URL yo'q bo'lganda)
@@ -296,6 +344,16 @@ else:
                 CREATE INDEX IF NOT EXISTS idx_usage_date    ON usage_log(created_at);
                 CREATE INDEX IF NOT EXISTS idx_pay_user      ON payments(user_id);
                 CREATE INDEX IF NOT EXISTS idx_pay_payme     ON payments(payme_id);
+
+                CREATE TABLE IF NOT EXISTS history (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id    INTEGER NOT NULL REFERENCES users(id),
+                    service_id TEXT    NOT NULL,
+                    title      TEXT    NOT NULL,
+                    preview    TEXT,
+                    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_hist_user ON history(user_id, created_at DESC);
             """)
             await db.commit()
 
@@ -478,4 +536,39 @@ else:
                 "UPDATE users SET plan=?, plan_until=? WHERE id=?",
                 (plan, plan_until, user_id),
             )
+            await db.commit()
+
+    async def add_history(user_id: int, service_id: str, title: str, preview: Optional[str] = None):
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT INTO history (user_id, service_id, title, preview) VALUES (?, ?, ?, ?)",
+                (user_id, service_id, title[:200], (preview or "")[:500]),
+            )
+            await db.execute("""
+                DELETE FROM history WHERE id IN (
+                    SELECT id FROM history WHERE user_id=?
+                    ORDER BY created_at DESC LIMIT -1 OFFSET 50
+                )
+            """, (user_id,))
+            await db.commit()
+
+    async def get_history(user_id: int, limit: int = 20) -> list:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT id, service_id, title, preview, created_at FROM history "
+                "WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit),
+            ) as cur:
+                return [dict(r) for r in await cur.fetchall()]
+
+    async def delete_history(user_id: int, history_id: Optional[int] = None):
+        async with aiosqlite.connect(DB_PATH) as db:
+            if history_id is None:
+                await db.execute("DELETE FROM history WHERE user_id=?", (user_id,))
+            else:
+                await db.execute(
+                    "DELETE FROM history WHERE user_id=? AND id=?",
+                    (user_id, history_id),
+                )
             await db.commit()
