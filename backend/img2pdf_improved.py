@@ -82,9 +82,13 @@ def _prepare_single(data: bytes, max_px: int = 6000) -> bytes:
     # JPEG lossless: EXIF rotatsiyani Pillow bilan to'g'irlaymiz va raw JPEG qaytaramiz
     if fmt == "JPEG":
         img = Image.open(io.BytesIO(data))
+        original_size = img.size
+        # ✅ Pillow 10+: _getexif() o'rniga getexif() (public API)
+        # Bo'sh EXIF = falsy → rotatsiya yo'q
+        has_exif = bool(img.getexif())
         img = ImageOps.exif_transpose(img)
-        # Agar rotatsiya bo'lgan bo'lsa img.tobytes() != data, qayta encode kerak
-        if img._getexif() is None and img.size == Image.open(io.BytesIO(data)).size:
+        # Agar rotatsiya bo'lgan bo'lsa size o'zgaradi (vertical ↔ horizontal)
+        if not has_exif and img.size == original_size:
             return data  # hech narsa o'zgarmadi — lossless
         buf = io.BytesIO()
         img.convert("RGB").save(buf, format="JPEG", quality=95, optimize=True, subsampling=0)

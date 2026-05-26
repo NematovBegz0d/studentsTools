@@ -4261,33 +4261,69 @@ async def translate(request: Request):
 
 # ─── Wikipedia (proxy) ────────────────────────────────────────────────────────
 
+# ✅ Wikipedia 2024'dan beri User-Agent header'ini majburiy qildi
+# Yo'q bo'lsa: rate-limit, bo'sh natija yoki 403
+_WIKI_HEADERS = {
+    "User-Agent": "EduBot/1.0 (https://t.me/edubot; contact@edubot.uz) httpx/0.27",
+    "Accept": "application/json",
+}
+
+
 # ✅ YANGILANDI: Wiki natijalari 1 soat cache (Redis/in-memory)
 @_cache.cached(ttl=3600, key_prefix="wiki")
 async def _wiki_lookup(q: str, pref_lang: str) -> str:
     langs = ([pref_lang] + [l for l in ["uz", "ru", "en"] if l != pref_lang]) if pref_lang else ["uz", "ru", "en"]
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=15, headers=_WIKI_HEADERS, follow_redirects=True) as client:
         for lang in langs:
             try:
-                sr = await client.get(
-                    f"https://{lang}.wikipedia.org/w/api.php",
-                    params={"action": "opensearch", "search": q, "limit": 3,
-                            "namespace": 0, "format": "json"},
-                )
-                titles = sr.json()[1] if sr.status_code == 200 else []
-                search_title = titles[0] if titles else q
-                encoded = url_quote(search_title, safe="")
-                r = await client.get(
-                    f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}"
-                )
-                if r.status_code == 200:
-                    d = r.json()
-                    if d.get("extract"):
-                        url = d.get("content_urls", {}).get("desktop", {}).get("page", "")
-                        result = f"📖 {d['title']} [{lang.upper()}]\n\n{d['extract']}"
-                        if url:
-                            result += f"\n\n🔗 {url}"
-                        return result
-            except Exception:
+                # 1. Qidiruv — opensearch + search action fallback
+                titles = []
+                try:
+                    sr = await client.get(
+                        f"https://{lang}.wikipedia.org/w/api.php",
+                        params={"action": "opensearch", "search": q, "limit": 3,
+                                "namespace": 0, "format": "json"},
+                    )
+                    if sr.status_code == 200:
+                        titles = sr.json()[1] if isinstance(sr.json(), list) and len(sr.json()) > 1 else []
+                except Exception:
+                    pass
+
+                # opensearch bo'sh bo'lsa, klassik search'ga o'tamiz
+                if not titles:
+                    try:
+                        sr2 = await client.get(
+                            f"https://{lang}.wikipedia.org/w/api.php",
+                            params={"action": "query", "list": "search", "srsearch": q,
+                                    "srlimit": 3, "format": "json"},
+                        )
+                        if sr2.status_code == 200:
+                            data = sr2.json().get("query", {}).get("search", [])
+                            titles = [s["title"] for s in data if s.get("title")]
+                    except Exception:
+                        pass
+
+                # 2. Har bir nomzodni summary endpoint'dan tekshirish
+                # (birinchi muvaffaqiyatli — qaytaramiz)
+                candidates = titles[:3] if titles else [q]
+                for title in candidates:
+                    encoded = url_quote(title, safe="")
+                    try:
+                        r = await client.get(
+                            f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}"
+                        )
+                        if r.status_code == 200:
+                            d = r.json()
+                            if d.get("extract") and d.get("type") != "disambiguation":
+                                url = d.get("content_urls", {}).get("desktop", {}).get("page", "")
+                                result = f"📖 {d['title']} [{lang.upper()}]\n\n{d['extract']}"
+                                if url:
+                                    result += f"\n\n🔗 {url}"
+                                return result
+                    except Exception:
+                        continue
+            except Exception as e:
+                logger.warning(f"wiki [{lang}] xato: {type(e).__name__}: {str(e)[:80]}")
                 continue
     return ""
 

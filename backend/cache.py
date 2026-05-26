@@ -140,7 +140,9 @@ def cached(ttl: int = 300, key_prefix: str = "fn"):
             if hit is not None:
                 return hit
             result = await fn(*args, **kwargs)
-            if result is not None:
+            # Faqat truthy natijalarni cache'laymiz: "" yoki [] yoki {} cache'lanmaydi
+            # → muvaffaqiyatsiz API javoblari keyingi urinishni bloklamaydi
+            if result:
                 await set_async(key, result, ttl)
             return result
         return inner
