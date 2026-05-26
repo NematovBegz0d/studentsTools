@@ -322,6 +322,7 @@ def get_rembg_session():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("EduBot Backend ishga tushmoqda...")
+    logger.info(f"ADMIN_TOKEN: {'✓ o\'rnatilgan' if ADMIN_TOKEN else '✗ O\'RNATILMAGAN'}")
 
     # ── Ma'lumotlar bazasini ishga tushirish ──
     try:
