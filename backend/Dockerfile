@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     fonts-dejavu \
     ghostscript \
-    # libreoffice-writer \
+    libreoffice-writer \
     libpango-1.0-0 \
     libpangoft2-1.0-0 \
     libcairo2 \
