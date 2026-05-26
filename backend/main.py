@@ -4628,11 +4628,11 @@ async def history_delete(request: Request, history_id: int):
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
 def _check_admin(request: Request):
-    if ADMIN_TOKEN:
-        auth = request.headers.get("Authorization", "")
-        # ✅ Timing-safe comparison — secrets.compare_digest oldini oladi byte-by-byte attack
-        if not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], ADMIN_TOKEN):
-            raise HTTPException(status_code=403, detail="Ruxsat yo'q")
+    if not ADMIN_TOKEN:
+        raise HTTPException(status_code=503, detail="ADMIN_TOKEN sozlanmagan — Railway Variables ga qo'shing")
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], ADMIN_TOKEN):
+        raise HTTPException(status_code=403, detail="Ruxsat yo'q")
 
 # ─── Admin: Panel HTML ─────────────────────────────────────────────────────────
 

@@ -239,6 +239,7 @@ function headers() {
 
 async function apiFetch(path, opts = {}) {
   const r = await fetch(BASE + path, { headers: headers(), ...opts });
+  if (r.status === 503) { const d = await r.json().catch(() => ({})); throw new Error('503:' + (d.detail || 'ADMIN_TOKEN sozlanmagan')); }
   if (r.status === 403) { logout(); throw new Error('403'); }
   if (!r.ok) throw new Error(await r.text());
   return r.json();
@@ -262,8 +263,13 @@ async function login() {
     document.getElementById('app').style.display = 'block';
     showPage('dashboard');
     loadDashboard();
-  } catch {
-    document.getElementById('login-error').textContent = 'Token noto\'g\'ri';
+  } catch(e) {
+    const msg = e.message || '';
+    if (msg.startsWith('503:')) {
+      document.getElementById('login-error').textContent = '⚠️ ' + msg.slice(4);
+    } else {
+      document.getElementById('login-error').textContent = 'Token noto\'g\'ri';
+    }
     TOKEN = '';
   }
   btn.disabled = false; btn.textContent = 'Kirish';
