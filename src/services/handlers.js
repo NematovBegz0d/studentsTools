@@ -176,7 +176,7 @@ async function handleResponseError(response) {
 // ─── Base API helpers ─────────────────────────────────────────────
 
 // File upload → blob result
-async function apiFile(path, form, filename, infoHeader = null) {
+async function apiFile(path, form, filename, infoHeader = null, timeoutMs = 30000) {
   if (!BACKEND_URL) {
     return {
       type: "text",
@@ -188,7 +188,7 @@ async function apiFile(path, form, filename, infoHeader = null) {
     method: "POST",
     headers: getAuthHeaders(),
     body: form,
-  });
+  }, timeoutMs);
 
   await handleResponseError(response);
 
@@ -478,6 +478,14 @@ async function docx2pdf({ file }) {
 // Barcha rasm formatlari (HEIC=iPhone, AVIF=zamonaviy kamera, TIFF=skan)
 const IMG_FORMATS = ".jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif,.heic,.heif,.avif";
 
+function _img2pdfTimeout(mode, fileCount = 1) {
+  // Server timeoutiga mos: searchable 90s, document 45s, normal 30s (single)
+  // Multi: har rasmga 10s (searchable) yoki 3s (boshqa)
+  if (mode === "searchable") return Math.min(30000 + fileCount * 10000, 300000);
+  if (mode === "document")   return Math.min(30000 + fileCount * 5000, 180000);
+  return Math.min(30000 + fileCount * 3000, 120000);
+}
+
 async function img2pdf({ file, opts = {} }) {
   validateFile(file, IMG_FORMATS);
   const form = buildFormData("file", file);
@@ -485,7 +493,8 @@ async function img2pdf({ file, opts = {} }) {
   if (opts.page_size) form.append("page_size", opts.page_size);
   if (opts.margin_mm != null) form.append("margin_mm", String(opts.margin_mm));
   if (opts.fit_mode) form.append("fit_mode", opts.fit_mode);
-  return apiFile("/api/img2pdf", form, "image.pdf", "X-Info");
+  const timeoutMs = _img2pdfTimeout(opts.mode || "normal", 1);
+  return apiFile("/api/img2pdf", form, "image.pdf", "X-Info", timeoutMs);
 }
 
 async function imgs2pdf({ files, opts = {} }) {
@@ -495,7 +504,8 @@ async function imgs2pdf({ files, opts = {} }) {
   if (opts.page_size) form.append("page_size", opts.page_size);
   if (opts.margin_mm != null) form.append("margin_mm", String(opts.margin_mm));
   if (opts.fit_mode) form.append("fit_mode", opts.fit_mode);
-  return apiFile("/api/imgs2pdf", form, "images.pdf", "X-Info");
+  const timeoutMs = _img2pdfTimeout(opts.mode || "normal", files?.length || 1);
+  return apiFile("/api/imgs2pdf", form, "images.pdf", "X-Info", timeoutMs);
 }
 
 async function xlsx2pdf({ file }) {

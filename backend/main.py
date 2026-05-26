@@ -4321,12 +4321,16 @@ async def _wiki_fetch_full(client, lang: str, title: str) -> dict | None:
         d = r.json()
         if not d.get("extract"):
             return None
+        # Wikipedia ba'zan thumbnail/content_urls da None qaytaradi — None.get() crash bo'ladi
+        thumb = d.get("thumbnail") or {}
+        urls  = d.get("content_urls") or {}
+        desktop = urls.get("desktop") or {}
         return {
             "title":       d.get("title", title),
             "extract":     d.get("extract", ""),
-            "description": d.get("description", ""),
-            "thumbnail":   d.get("thumbnail", {}).get("source", ""),
-            "url":         d.get("content_urls", {}).get("desktop", {}).get("page", ""),
+            "description": d.get("description", "") or "",
+            "thumbnail":   thumb.get("source", "") or "",
+            "url":         desktop.get("page", "") or "",
             "type":        d.get("type", "standard"),
             "lang":        lang,
         }

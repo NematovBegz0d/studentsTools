@@ -87,10 +87,12 @@ def validate_params(
 def is_image_bytes(data: bytes) -> bool:
     if any(data[:len(s)] == s for s in MAGIC):
         return True
-    # HEIC/HEIF/AVIF (ISO base media file format)
+    # HEIC/HEIF/AVIF — faqat decoder o'rnatilgan bo'lsa qabul qilamiz
     if len(data) >= 12 and data[4:8] == b'ftyp':
         brand = data[8:12]
-        if brand in _HEIC_BRANDS or brand in _AVIF_BRANDS:
+        if brand in _HEIC_BRANDS and _HAS_HEIC:
+            return True
+        if brand in _AVIF_BRANDS and _HAS_AVIF:
             return True
     return False
 
@@ -115,7 +117,9 @@ def detect_format(data: bytes) -> str:
 def _document_enhance(img: Image.Image) -> Image.Image:
     """
     Skan hujjat uchun auto-enhance: deskew + auto-contrast + denoise.
-    OpenCV ishlatadi — image processing eng yaxshi.
+    Katta rasmlarda performans uchun:
+      - deskew: kichraytirilgan nusxada qiyalik topish, asl rasmga qo'llash
+      - denoise: faqat <2000px tomonli rasmlarda (aks holda juda sekin)
     """
     try:
         import cv2
@@ -124,37 +128,51 @@ def _document_enhance(img: Image.Image) -> Image.Image:
         return img  # OpenCV yo'q bo'lsa, originalni qaytaradi
 
     arr = np.array(img.convert("RGB"))
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    h, w = arr.shape[:2]
+    max_dim = max(h, w)
 
-    # 1. Deskew — qiyalik aniqlash va to'g'irlash
+    # 1. Deskew — kichraytirilgan rasmda topib, originalga qo'llaymiz
     try:
-        # Binary mask — matn pikselllarini topish
-        _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        coords = np.column_stack(np.where(bw > 0))
-        if len(coords) > 100:
+        # Deskew uchun maks 1500px gacha kichraytirish
+        if max_dim > 1500:
+            scale = 1500 / max_dim
+            small = cv2.resize(arr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        else:
+            small = arr
+
+        gray_s = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+        _, bw = cv2.threshold(gray_s, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+        # Coords yiqilishi xavfini oldini olish — random sample
+        ys, xs = np.where(bw > 0)
+        if len(ys) > 100:
+            # Maks 50K nuqta — minAreaRect uchun yetarli
+            if len(ys) > 50000:
+                idx = np.random.choice(len(ys), 50000, replace=False)
+                ys, xs = ys[idx], xs[idx]
+            coords = np.column_stack((xs, ys))  # (x, y) format
             angle = cv2.minAreaRect(coords)[-1]
             if angle < -45:
                 angle = 90 + angle
             else:
                 angle = -angle
-            # Faqat sezilarli qiyalik (>0.5°)
-            if abs(angle) > 0.5 and abs(angle) < 15:
-                h, w = arr.shape[:2]
+            # Faqat sezilarli qiyalik (>0.5°), lekin <15° (>15° — boshqa problem)
+            if 0.5 < abs(angle) < 15:
                 M = cv2.getRotationMatrix2D((w // 2, h // 2), angle, 1.0)
                 arr = cv2.warpAffine(arr, M, (w, h),
                                      flags=cv2.INTER_CUBIC,
                                      borderMode=cv2.BORDER_REPLICATE)
-                gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
     except Exception:
         pass
 
-    # 2. Denoise — kichik shovqinlarni olib tashlash
-    try:
-        arr = cv2.fastNlMeansDenoisingColored(arr, None, 7, 7, 7, 15)
-    except Exception:
-        pass
+    # 2. Denoise — faqat kichik rasmlarda (katta rasmlarda 60+ soniya oladi)
+    if max_dim < 2000:
+        try:
+            arr = cv2.fastNlMeansDenoisingColored(arr, None, 5, 5, 7, 15)
+        except Exception:
+            pass
 
-    # 3. Auto-contrast — PIL ImageOps.autocontrast tezroq va silliqroq
+    # 3. Auto-contrast — har holatda tezroq va silliqroq
     out = Image.fromarray(arr)
     out = ImageOps.autocontrast(out, cutoff=1)
     return out
@@ -176,7 +194,11 @@ def _prepare_single(data: bytes, max_px: int = 6000, mode: str = "normal") -> by
         original_size = img.size
         # ✅ Pillow 10+: _getexif() o'rniga getexif() (public API)
         has_exif = bool(img.getexif())
-        img = ImageOps.exif_transpose(img)
+        transposed = ImageOps.exif_transpose(img)
+        # exif_transpose yangi obyekt qaytarganda eski referensni yopish
+        if transposed is not img:
+            img.close()
+            img = transposed
         if not has_exif and img.size == original_size:
             img.close()
             return data  # hech narsa o'zgarmadi — lossless
@@ -253,24 +275,31 @@ def _gif_frames(data: bytes, max_frames: int = 30) -> list[bytes]:
 
 # ─── OCR text layer (searchable PDF) ─────────────────────────────────────────
 
+# Unicode font (Cyrillic, Uzbek lotin/kirill, Latin) uchun
+_OCR_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+_OCR_FONT_NAME = "dvocr"
+
+
 def _add_ocr_text_layer(pdf_bytes: bytes, prepared_images: list[bytes]) -> bytes:
     """
     PDF sahifalariga ko'rinmas OCR matn qatlamini qo'shadi.
     Natija: rasm aynan o'zicha qoladi, lekin matn qidirish/copy mumkin.
-
-    Tesseract ishlatiladi (Docker'da bor). Har bir rasm uchun OCR ishga tushadi.
+    Unicode (Kirill, O'zbek, Lotin) qo'llab-quvvatlanadi — DejaVu TTF.
     """
     try:
+        import os as _os
         import fitz
         import pytesseract
         from PIL import Image as PILImage
     except ImportError:
         return pdf_bytes  # fallback: oddiy PDF
 
+    has_unicode_font = _os.path.exists(_OCR_FONT_PATH)
+
     pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         if len(pdf) != len(prepared_images):
-            # Sahifa va rasm soni mos kelmasa (multi-frame), OCR'siz qaytar
+            # Sahifa va rasm soni mos kelmasa, OCR'siz qaytar
             return pdf_bytes
 
         for page_idx, img_bytes in enumerate(prepared_images):
@@ -280,6 +309,13 @@ def _add_ocr_text_layer(pdf_bytes: bytes, prepared_images: list[bytes]) -> bytes
                 page_w = page.rect.width
                 page_h = page.rect.height
                 img_w, img_h = img.size
+
+                # Har sahifaga Unicode font o'rnatish (DejaVu)
+                if has_unicode_font:
+                    try:
+                        page.insert_font(fontname=_OCR_FONT_NAME, fontfile=_OCR_FONT_PATH)
+                    except Exception:
+                        pass
 
                 # Tesseract — har so'z uchun bbox + matn
                 try:
@@ -295,39 +331,52 @@ def _add_ocr_text_layer(pdf_bytes: bytes, prepared_images: list[bytes]) -> bytes
                 img.close()
 
                 # Scale: rasm pikseldan PDF nuqtaga
-                sx = page_w / img_w
-                sy = page_h / img_h
+                sx = page_w / img_w if img_w > 0 else 1
+                sy = page_h / img_h if img_h > 0 else 1
 
-                for i, txt in enumerate(osd_data.get("text", [])):
+                texts = osd_data.get("text", [])
+                for i, txt in enumerate(texts):
+                    # Tesseract'dan whitespace/control chars tozalash
                     txt = (txt or "").strip()
-                    if not txt:
+                    if not txt or not any(c.isalnum() for c in txt):
                         continue
                     try:
                         conf = int(osd_data["conf"][i])
-                    except (ValueError, KeyError):
+                    except (ValueError, KeyError, IndexError):
                         conf = 0
                     if conf < 30:  # past ishonchli — o'tkazib yuborish
                         continue
-                    x = osd_data["left"][i] * sx
-                    y = osd_data["top"][i] * sy
-                    w = osd_data["width"][i] * sx
-                    h = osd_data["height"][i] * sy
-                    # Ko'rinmas matn — fill_opacity=0
                     try:
-                        page.insert_text(
-                            (x, y + h * 0.8),  # baseline approximation
-                            txt,
-                            fontsize=h * 0.9,
+                        x = osd_data["left"][i] * sx
+                        y = osd_data["top"][i] * sy
+                        h = osd_data["height"][i] * sy
+                    except (KeyError, IndexError):
+                        continue
+                    # Font o'lcham — minimal cheklov
+                    fs = max(4.0, min(h * 0.85, 72.0))
+                    # Ko'rinmas matn (render_mode=3 = invisible)
+                    try:
+                        kwargs = dict(
+                            point=(x, y + h * 0.85),  # baseline approximation
+                            text=txt,
+                            fontsize=fs,
                             color=(0, 0, 0),
-                            fill_opacity=0,  # invisible
-                            render_mode=3,  # invisible mode
+                            render_mode=3,
                         )
+                        if has_unicode_font:
+                            kwargs["fontname"] = _OCR_FONT_NAME
+                        page.insert_text(**kwargs)
                     except Exception:
-                        pass
+                        # Ba'zi mahsus belgilar yoki bo'sh font glyph yo'qligida
+                        # — sahifa ishlamasligi sababli butun PDF buzilmasin
+                        continue
             except Exception:
                 continue  # bitta sahifa OCR ishlamasligi boshqalarni buzmasin
 
-        out = pdf.write()
+        # PyMuPDF API uyg'unligi: save(BytesIO) ishonchli — har versiyada ishlaydi
+        out_buf = io.BytesIO()
+        pdf.save(out_buf)
+        out = out_buf.getvalue()
         return out if out else pdf_bytes
     finally:
         pdf.close()
