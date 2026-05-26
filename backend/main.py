@@ -407,9 +407,11 @@ _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    # ✅ Regex: github.io subdomains, Telegram domains, localhost, va null origin (sandboxed iframe)
+    allow_origin_regex=r"^(https://[\w-]+\.github\.io|https://(web\.)?telegram\.org|https://t\.me|http://(127\.0\.0\.1|localhost)(:\d+)?|null)$",
     allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-User-Id"],
+    allow_methods=["*"],
+    allow_headers=["*"],
     expose_headers=[
         "X-Info", "X-Page-Count", "X-Saved-Percent", "X-Warning",
         "X-Password",  # pdflock yaratgan parol — HTTPS orqali xavfsiz, faqat user ko'radi
