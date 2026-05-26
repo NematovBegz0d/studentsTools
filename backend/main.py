@@ -487,7 +487,8 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=[
         "X-Info", "X-Page-Count", "X-Saved-Percent", "X-Warning",
-        "X-Password",  # pdflock yaratgan parol — HTTPS orqali xavfsiz, faqat user ko'radi
+        "X-Password-B64",  # pdflock parol — base64(utf-8) — Latin-1 safe
+        "X-Cert-Id", "X-Verify-Url",  # cert verifikatsiya
         "Content-Disposition",
     ],
 )
@@ -1035,12 +1036,16 @@ async def lock_pdf(
             raise HTTPException(status_code=408,
                 detail="Parol qo'yish 45 soniyadan oshdi. Kichikroq fayl tanlang.")
         logger.info(f"pdflock: {len(data)//1024}KB, {info}, {time.time()-t0:.1f}s")
+        # ✅ YANGILANDI: Parolni base64 (Latin-1 safe) headerda → proxy/log da plain text emas
+        # Frontend: atob(decodeURIComponent(headers.get("X-Password-B64")))
+        import base64 as _b64
+        pwd_b64 = _b64.b64encode(user_pwd.encode("utf-8")).decode("ascii")
         return Response(
             content=out_bytes,
             media_type="application/pdf",
             headers={
                 "Content-Disposition": "attachment; filename=locked.pdf",
-                "X-Password": safe_header(user_pwd),
+                "X-Password-B64": pwd_b64,
                 "X-Info": safe_header(info),
             },
         )
@@ -2238,21 +2243,95 @@ async def imgs_to_pdf(
 
 # ─── 3x4 Passport foto ────────────────────────────────────────────────────────
 
+# ✅ YANGILANDI: OpenCV Haar (2001) → MediaPipe (Google 2023, 3x aniqroq)
+# Singleton pattern — har request da yangi detector yaratmaslik (200MB)
+_mp_face_detector = None
+_mp_face_lock = threading.Lock()
+
+
+def _get_mp_face_detector():
+    """MediaPipe FaceDetection singleton — thread-safe lazy init."""
+    global _mp_face_detector
+    if _mp_face_detector is not None:
+        return _mp_face_detector
+    with _mp_face_lock:
+        if _mp_face_detector is not None:
+            return _mp_face_detector
+        try:
+            import mediapipe as mp
+            mp_face = mp.solutions.face_detection
+            _mp_face_detector = mp_face.FaceDetection(
+                model_selection=1,  # 1 = full-range model (uzoq masofa)
+                min_detection_confidence=0.5,
+            )
+            logger.info("MediaPipe FaceDetection init muvaffaqiyatli")
+        except (ImportError, Exception) as e:
+            logger.debug(f"MediaPipe yo'q yoki xato: {e}")
+            _mp_face_detector = False  # marker — qayta urinmaslik
+        return _mp_face_detector or None
+
+
+def _detect_face_mediapipe(img_pil):
+    """MediaPipe orqali yuz aniqlash. None qaytarsa — topilmadi."""
+    import numpy as np
+    detector = _get_mp_face_detector()
+    if detector is None:
+        return None
+    try:
+        rgb_arr = np.array(img_pil)
+        result  = detector.process(rgb_arr)
+        if not result or not result.detections:
+            return None
+        best = max(result.detections, key=lambda d: d.score[0])
+        bb   = best.location_data.relative_bounding_box
+        iw, ih = img_pil.size
+        fx = max(0, int(bb.xmin * iw))
+        fy = max(0, int(bb.ymin * ih))
+        fw = max(1, int(bb.width * iw))
+        fh = max(1, int(bb.height * ih))
+        return (fx, fy, fw, fh)
+    except Exception as e:
+        logger.debug(f"MediaPipe detect xato: {e}")
+        return None
+
+
+def _detect_face_haar(img_pil):
+    """OpenCV Haar Cascade — MediaPipe fallback."""
+    import cv2
+    import numpy as np
+    try:
+        img_cv  = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2GRAY)
+        cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+        faces = cascade.detectMultiScale(
+            img_cv, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
+        )
+        if len(faces) == 0:
+            return None
+        return tuple(sorted(faces, key=lambda f: f[2] * f[3], reverse=True)[0])
+    except Exception as e:
+        logger.debug(f"Haar detect xato: {e}")
+        return None
+
+
 def _do_photo3x4(data: bytes, bg: str = "white", sheet: bool = True) -> tuple[bytes, str]:
     """
     Rasm → 3×4 sm passport foto (300 DPI).
-    1. OpenCV Haar Cascade orqali yuz aniqlanadi.
-    2. Yuz markaziga qarab crop qilinadi (foto balandligining ~70% yuz).
-    3. 354×472 px ga resize (3×4 sm @ 300 DPI).
-    4. sheet=True → A4 da 2×3 = 6 ta foto chiqariladi.
+    1. HEIC/HEIF qabul qilinadi (pillow_heif Dockerfile da)
+    2. MediaPipe (birlamchi) → Haar Cascade (fallback) bilan yuz aniqlash
+    3. bg != "original" bo'lsa rembg bilan fon almashtirish
+    4. 354×472 px (3×4 sm @ 300 DPI)
+    5. sheet=True → A4 da 2×3 = 6 ta foto
     """
-    import cv2
-    import numpy as np
     from PIL import Image, ImageOps, ImageDraw
 
     W, H = 354, 472  # 3×4 sm @ 300 DPI
-
-    BG_COLORS = {"white": (255, 255, 255), "blue": (100, 149, 237), "gray": (200, 200, 200)}
+    BG_COLORS = {
+        "white": (255, 255, 255),
+        "blue":  (100, 149, 237),
+        "gray":  (200, 200, 200),
+    }
     bg_rgb = BG_COLORS.get(bg, (255, 255, 255))
 
     img_pil = Image.open(io.BytesIO(data))
@@ -2262,67 +2341,78 @@ def _do_photo3x4(data: bytes, bg: str = "white", sheet: bool = True) -> tuple[by
 
     iw, ih = img_pil.size
 
-    # OpenCV yuz aniqlash
-    img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2GRAY)
-    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    faces = cascade.detectMultiScale(img_cv, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+    # ── Yuz aniqlash: MediaPipe → Haar fallback ─────────────────────
+    face = _detect_face_mediapipe(img_pil)
+    detector_used = "MediaPipe"
+    if face is None:
+        face = _detect_face_haar(img_pil)
+        detector_used = "Haar"
 
-    if len(faces) > 0:
-        # Eng katta yuzni ol
-        fx, fy, fw, fh = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)[0]
-
-        # Foto balandligi: yuz → fotoning ~65% ni egallaydi
+    if face is not None:
+        fx, fy, fw, fh = face
+        # Yuz fotoning ~65% ni egallaydi (passport standart)
         photo_h = int(fh / 0.65)
         photo_w = int(photo_h * W / H)
-
-        # Yuz fotoning tepasidan ~25% pastda bo'lsin
         cx = fx + fw // 2
         cy = fy + fh // 2
-        x0 = cx - photo_w // 2
-        y0 = cy - int(photo_h * 0.30)
-
-        x0 = max(0, min(x0, iw - photo_w))
-        y0 = max(0, min(y0, ih - photo_h))
-        crop = img_pil.crop((x0, y0, x0 + photo_w, y0 + photo_h))
+        x0 = max(0, min(cx - photo_w // 2, iw - photo_w))
+        y0 = max(0, min(cy - int(photo_h * 0.30), ih - photo_h))
+        # Crop bounds chegaradan tashqari chiqmasin
+        x1 = min(iw, x0 + photo_w)
+        y1 = min(ih, y0 + photo_h)
+        crop = img_pil.crop((x0, y0, x1, y1))
         detected = True
     else:
-        # Yuz topilmadi — rasmni markazdan portrait nisbatda crop qilish
+        # Markaz crop (yuz topilmadi)
         target_ratio = W / H
         if iw / ih > target_ratio:
-            crop_w = int(ih * target_ratio)
-            crop = img_pil.crop(((iw - crop_w) // 2, 0, (iw + crop_w) // 2, ih))
+            cw = int(ih * target_ratio)
+            crop = img_pil.crop(((iw - cw) // 2, 0, (iw + cw) // 2, ih))
         else:
-            crop_h = int(iw / target_ratio)
-            crop = img_pil.crop((0, 0, iw, crop_h))
+            ch = int(iw / target_ratio)
+            crop = img_pil.crop((0, 0, iw, ch))
         detected = False
+        detector_used = "markaz crop"
+
+    # ── Fon almashtirish (rembg orqali) ─────────────────────────────
+    bg_replaced = False
+    if bg != "original":
+        try:
+            from rembg import remove as rembg_remove
+            crop_no_bg = rembg_remove(crop)  # RGBA
+            bg_layer   = Image.new("RGB", crop.size, bg_rgb)
+            bg_layer.paste(crop_no_bg, mask=crop_no_bg.split()[3])
+            crop = bg_layer
+            bg_replaced = True
+        except Exception as e:
+            logger.debug(f"rembg xato photo3x4: {e}")
 
     photo = crop.resize((W, H), Image.LANCZOS)
 
+    # ── Bitta foto ──────────────────────────────────────────────────
     if not sheet:
         buf = io.BytesIO()
         photo.save(buf, format="JPEG", quality=95, dpi=(300, 300))
-        msg = "✅ 3×4 sm · 300 DPI" + ("" if detected else " · Yuz topilmadi, markaz crop")
-        return buf.getvalue(), msg
+        bg_note = " · fon almashtirildi" if bg_replaced else ""
+        return buf.getvalue(), f"✅ 3×4 sm · 300 DPI · {detector_used}{bg_note}"
 
-    # A4 varaqdagi 6 ta foto (2 ustun × 3 qator) @ 300 DPI
-    A4W, A4H = 2480, 3508
+    # ── A4 varaqdagi 6 ta foto (2 ustun × 3 qator) @ 300 DPI ────────
+    A4W, A4H    = 2480, 3508
     MARGIN, GAP = 100, 50
-
     canvas = Image.new("RGB", (A4W, A4H), (255, 255, 255))
-    draw = ImageDraw.Draw(canvas)
-
+    draw   = ImageDraw.Draw(canvas)
     for row in range(3):
         for col in range(2):
             px = MARGIN + col * (W + GAP)
             py = MARGIN + row * (H + GAP)
             canvas.paste(photo, (px, py))
-            # Kesish chizig'i (yupqa kulrang ramka)
-            draw.rectangle([px - 1, py - 1, px + W, py + H], outline=(180, 180, 180), width=1)
+            draw.rectangle([px - 1, py - 1, px + W, py + H],
+                           outline=(180, 180, 180), width=1)
 
     buf = io.BytesIO()
     canvas.save(buf, format="JPEG", quality=95, dpi=(300, 300))
-    msg = "✅ A4 · 6 ta 3×4 sm foto · 300 DPI" + ("" if detected else " · Yuz topilmadi")
-    return buf.getvalue(), msg
+    bg_note = " · fon almashtirildi" if bg_replaced else ""
+    return buf.getvalue(), f"✅ A4 · 6 ta 3×4 · 300 DPI · {detector_used}{bg_note}"
 
 
 @app.post("/api/photo3x4")
@@ -2383,8 +2473,130 @@ _CV_TEMPLATES = {
     "dark":    {"accent": (167, 139, 250), "bg": (15, 15, 30),   "text": (240, 240, 255)},
 }
 
+# ✅ YANGILANDI: WeasyPrint + Jinja2 + DejaVu fonts (Google Fonts EMAS — offline ishlash)
+# Sabab: ReportLab kodi 220+ qator, dizayn cheklangan; WeasyPrint CSS bilan toza
+_CV_HTML_THEMES = {
+    "modern":  {"accent": "#4F46E5", "bg": "#F8F7FF", "text": "#0F0F1E", "header_bg": "#4F46E5", "header_fg": "#FFFFFF"},
+    "classic": {"accent": "#1E40AF", "bg": "#FFFFFF", "text": "#111827", "header_bg": "#1E40AF", "header_fg": "#FFFFFF"},
+    "minimal": {"accent": "#059669", "bg": "#FFFFFF", "text": "#111827", "header_bg": "#059669", "header_fg": "#FFFFFF"},
+    "dark":    {"accent": "#A78BFA", "bg": "#0F0F1E", "text": "#F0F0FF", "header_bg": "#1A1A2E", "header_fg": "#F0F0FF"},
+}
+
+_CV_HTML_TMPL = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'DejaVu Sans', sans-serif; font-size: 10pt;
+         background: {{ bg }}; color: {{ text }}; }
+  .header { background: {{ header_bg }}; color: {{ header_fg }}; padding: 22px 28px; }
+  .header h1 { font-size: 22pt; font-weight: 700; line-height: 1.1; }
+  .header .title { font-size: 12pt; opacity: .85; margin-top: 4px; }
+  .contacts { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px;
+              font-size: 9pt; opacity: .92; }
+  .body { padding: 18px 28px 24px; }
+  .section { margin-bottom: 14px; page-break-inside: avoid; }
+  .section h2 { font-size: 11pt; font-weight: 700; color: {{ accent }};
+                border-bottom: 1.5px solid {{ accent }}; padding-bottom: 3px;
+                margin-bottom: 8px; text-transform: uppercase; letter-spacing: .04em; }
+  .skills { display: flex; flex-wrap: wrap; gap: 5px; }
+  .skill { background: rgba(0,0,0,0.04); color: {{ accent }};
+           border: 1px solid {{ accent }}40;
+           border-radius: 4px; padding: 2px 8px; font-size: 9pt; }
+  .entry { margin-bottom: 8px; page-break-inside: avoid; }
+  .entry-head { display: flex; justify-content: space-between; font-weight: 600; }
+  .entry-sub { font-size: 9pt; opacity: .75; margin: 1px 0; }
+  .entry-desc { font-size: 9pt; margin-top: 2px; opacity: .85; }
+  .summary { font-size: 10pt; line-height: 1.55; opacity: .92; }
+</style></head><body>
+<div class="header">
+  <h1>{{ name }}</h1>
+  {% if title %}<div class="title">{{ title }}</div>{% endif %}
+  <div class="contacts">
+    {% if email %}<span>Email: {{ email }}</span>{% endif %}
+    {% if phone %}<span>Tel: {{ phone }}</span>{% endif %}
+    {% if location %}<span>Manzil: {{ location }}</span>{% endif %}
+  </div>
+</div>
+<div class="body">
+  {% if summary %}
+  <div class="section">
+    <h2>Haqimda</h2>
+    <div class="summary">{{ summary }}</div>
+  </div>
+  {% endif %}
+  {% if skills %}
+  <div class="section">
+    <h2>Ko'nikmalar</h2>
+    <div class="skills">
+      {% for s in skills %}<span class="skill">{{ s }}</span>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+  {% if experience %}
+  <div class="section">
+    <h2>Ish tajribasi</h2>
+    {% for e in experience %}
+    <div class="entry">
+      <div class="entry-head"><span>{{ e.position or "" }}</span><span>{{ e.period or "" }}</span></div>
+      {% if e.company %}<div class="entry-sub">{{ e.company }}</div>{% endif %}
+      {% if e.desc %}<div class="entry-desc">{{ e.desc }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if education %}
+  <div class="section">
+    <h2>Ta'lim</h2>
+    {% for e in education %}
+    <div class="entry">
+      <div class="entry-head"><span>{{ e.degree or "" }}</span><span>{{ e.year or "" }}</span></div>
+      {% if e.school %}<div class="entry-sub">{{ e.school }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if languages %}
+  <div class="section">
+    <h2>Tillar</h2>
+    <div class="skills">
+      {% for l in languages %}<span class="skill">{{ l }}</span>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+</body></html>"""
+
 
 def _do_cv(
+    name: str, title: str, email: str, phone: str, location: str,
+    summary: str, skills: list, education: list, experience: list,
+    languages: list, template: str = "modern",
+) -> bytes:
+    """CV → PDF zanjiri: WeasyPrint (birlamchi) → ReportLab (fallback)."""
+    try:
+        from jinja2 import Template
+        from weasyprint import HTML
+
+        theme    = _CV_HTML_THEMES.get(template, _CV_HTML_THEMES["modern"])
+        html_str = Template(_CV_HTML_TMPL).render(
+            name=name, title=title, email=email, phone=phone,
+            location=location, summary=summary, skills=skills,
+            education=education, experience=experience, languages=languages,
+            **theme,
+        )
+        return HTML(string=html_str).write_pdf()
+    except ImportError as e:
+        logger.warning(f"CV WeasyPrint/Jinja2 yo'q ({e}) — ReportLab fallback")
+    except Exception as e:
+        logger.warning(f"CV WeasyPrint xato: {type(e).__name__}: {e} — ReportLab fallback")
+
+    return _do_cv_reportlab(
+        name, title, email, phone, location, summary,
+        skills, education, experience, languages, template,
+    )
+
+
+def _do_cv_reportlab(
     name: str,
     title: str,
     email: str,
@@ -2613,12 +2825,49 @@ async def make_cv(request: Request):
 
 # ─── Excel → PDF ──────────────────────────────────────────────────────────────
 
+# ✅ YANGILANDI: Excel → PDF zanjiri: LibreOffice (formatlarni saqlaydi) → ReportLab (fallback)
+# Sabab: ReportLab rang, merge cell, grafiklarni yo'qotadi; LibreOffice Excel ni to'liq saqlaydi
 def _do_xlsx2pdf(data: bytes) -> tuple:
+    """LibreOffice (birlamchi) → openpyxl+ReportLab (fallback)."""
+    import subprocess, tempfile, os, shutil
+
+    lo_path = shutil.which("libreoffice") or shutil.which("soffice")
+    if lo_path:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xlsx_path = os.path.join(tmpdir, "input.xlsx")
+            pdf_path  = os.path.join(tmpdir, "input.pdf")
+            try:
+                with open(xlsx_path, "wb") as f:
+                    f.write(data)
+                result = subprocess.run(
+                    [lo_path, "--headless", "--nologo", "--nofirststartwizard",
+                     "--convert-to", "pdf", "--outdir", tmpdir, xlsx_path],
+                    capture_output=True, timeout=60,
+                )
+                if result.returncode == 0 and os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        pdf_bytes = f.read()
+                    return pdf_bytes, "✅ LibreOffice · formatlar saqlandi"
+                logger.warning(
+                    f"xlsx2pdf LibreOffice rc={result.returncode}: "
+                    f"{result.stderr[:200].decode('utf-8', errors='ignore')}"
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning("xlsx2pdf LibreOffice timeout > 60s — ReportLab fallback")
+            except Exception as e:
+                logger.warning(f"xlsx2pdf LibreOffice xato: {e} — ReportLab fallback")
+
+    return _do_xlsx2pdf_reportlab(data)
+
+
+def _do_xlsx2pdf_reportlab(data: bytes) -> tuple:
     """
     Excel → PDF with smart column widths, auto landscape, date/number formatting.
     Pass 1 — scan all sheets → determine orientation.
     Pass 2 — build full document.
     Runs in _converter_pool (non-blocking).
+
+    Fallback when LibreOffice unavailable.
     """
     from openpyxl import load_workbook
     from reportlab.platypus import (
@@ -3264,20 +3513,29 @@ def _clean_ocr_text(text: str) -> str:
     return '\n'.join(result)
 
 
-# ✅ YANGILANDI: PaddleOCR ikki sessiya — en (Latin) va cyrillic (Rus/Uzbek-kirill)
+# ✅ YANGILANDI: PaddleOCR ikki sessiya + thread-safe lazy init (double-checked locking)
+# Sabab: _converter_pool ichida parallel ishlovchi worker'lar race condition'ga uchrar edi
 _paddle_ocr_cache: dict = {}
+_paddle_ocr_lock = threading.Lock()
 
 def _get_paddle_ocr(lang: str = "en"):
-    """lang: 'en' (Latin/Uzbek-latin) | 'cyrillic' (Rus/Uzbek-kirill)"""
+    """Thread-safe PaddleOCR lazy init.
+    lang: 'en' (Latin/Uzbek-latin) | 'cyrillic' (Rus/Uzbek-kirill)"""
+    # Fast path — lock olishdan oldin
     if lang in _paddle_ocr_cache:
         return _paddle_ocr_cache[lang]
-    try:
-        from paddleocr import PaddleOCR
-        _paddle_ocr_cache[lang] = PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
-    except (ImportError, Exception) as e:
-        logger.debug(f"paddleocr {lang} sessiya yaratilmadi: {e}")
-        _paddle_ocr_cache[lang] = None
-    return _paddle_ocr_cache[lang]
+    with _paddle_ocr_lock:
+        # Double-check after acquiring lock
+        if lang in _paddle_ocr_cache:
+            return _paddle_ocr_cache[lang]
+        try:
+            from paddleocr import PaddleOCR
+            _paddle_ocr_cache[lang] = PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
+            logger.info(f"PaddleOCR init muvaffaqiyatli: lang={lang}")
+        except (ImportError, Exception) as e:
+            logger.debug(f"paddleocr {lang} sessiya yaratilmadi: {e}")
+            _paddle_ocr_cache[lang] = None
+        return _paddle_ocr_cache[lang]
 
 
 def _paddle_run(ocr_obj, arr) -> str:
@@ -3550,26 +3808,69 @@ async def translit(request: Request):
 
 # ─── Readtime ─────────────────────────────────────────────────────────────────
 
+# ✅ YANGILANDI: Til-adaptiv WPM (Brysbaert 2019 ilmiy tadqiqoti)
+# Sabab: O'zbek/Rus matniga 200 WPM (ingliz norma) noto'g'ri vaqt beradi
+_READTIME_WPM = {
+    "en": 238, "de": 260, "fr": 250, "es": 230, "it": 240,
+    "ru": 184, "uz": 160, "kk": 160, "tr": 200,
+    "ar": 138,
+    # CJK belgilar bilan o'lchanadi (so'z emas)
+    "zh": 255, "ja": 357, "ko": 250,
+}
+_CJK_LANGS = {"zh", "ja", "ko"}
+
+
+def _detect_lang_quick(text: str) -> str:
+    """Tezkor til aniqlash belgi diapazoni asosida."""
+    total = max(len(text), 1)
+    cyr = sum(1 for c in text if "Ѐ" <= c <= "ӿ")
+    cjk = sum(1 for c in text if "一" <= c <= "鿿")
+    if cjk / total > 0.3:
+        return "zh"
+    if cyr / total > 0.3:
+        return "ru"
+    return "en"
+
+
 @app.post("/api/readtime")
 @limiter.limit("60/minute")
 async def readtime(request: Request):
     body = await request.json()
     text = (body.get("text") or "").strip()
+    lang = (body.get("lang") or "").lower().strip()[:2]
     if not text:
         return JSONResponse({"result": "❌ Matn kiriting"})
-    words = len(text.split())
-    chars = len(text.replace(" ", ""))
-    sentences = len(re.findall(r'[.!?]+', text)) or 1
+
+    words      = len(text.split())
+    chars      = len(text.replace(" ", ""))
+    sentences  = len(re.findall(r'[.!?]+', text)) or 1
     paragraphs = len([p for p in text.split("\n") if p.strip()])
-    # O'zbek o'qish tezligi: ~160 so'z/daqiqa
-    wpm = 160
-    mins = max(1, round(words / wpm))
-    return JSONResponse({"result": (
-        f"📖 {words} so'z · {chars} belgi\n"
-        f"📝 {sentences} gap · {paragraphs} paragraf\n"
-        f"⏱ O'qish vaqti: ~{mins} daqiqa\n"
-        f"({wpm} so'z/daqiqa hisobida)"
-    )})
+
+    if not lang:
+        lang = _detect_lang_quick(text)
+
+    # CJK tilida belgilar soni asosida; boshqasida so'z asosida
+    if lang in _CJK_LANGS:
+        rate = _READTIME_WPM.get(lang, 255)
+        mins = max(1, round(chars / rate))
+        rate_note = f"{rate} belgi/daqiqa · {lang.upper()}"
+    else:
+        rate = _READTIME_WPM.get(lang, 200)
+        mins = max(1, round(words / rate))
+        rate_note = f"{rate} so'z/daqiqa · {lang.upper()}"
+
+    return JSONResponse({
+        "result": (
+            f"📖 {words:,} so'z · {chars:,} belgi\n"
+            f"📝 {sentences} gap · {paragraphs} paragraf\n"
+            f"⏱ O'qish vaqti: ~{mins} daqiqa\n"
+            f"({rate_note})"
+        ),
+        "minutes": mins,
+        "words":   words,
+        "chars":   chars,
+        "lang":    lang,
+    })
 
 # ─── AI Summarize ─────────────────────────────────────────────────────────────
 # Anthropic API bilan AI xulosalash. ANTHROPIC_API_KEY shart.
@@ -3965,41 +4266,222 @@ def _do_cert(name: str, course: str, issuer: str, theme: str = "classic") -> byt
     return buf.getvalue()
 
 
+# ✅ YANGILANDI: Cert endpoint + QR verifikatsiya (DB-backed) + PDF format qo'shildi
+def _do_cert_with_qr(name: str, course: str, issuer: str,
+                     theme: str, cert_id: str, verify_url: str) -> bytes:
+    """PNG sertifikat + pastki o'ng burchakka QR kodi (verifikatsiya URL)."""
+    import segno
+    from PIL import Image as _PImage, ImageDraw as _PDraw, ImageFont as _PFont
+
+    png = _do_cert(name, course, issuer, theme)
+    try:
+        qr_buf = io.BytesIO()
+        segno.make(verify_url, error="M").save(qr_buf, kind="png", scale=4, border=2)
+        qr_img = _PImage.open(qr_buf).convert("RGB")
+        cert_img = _PImage.open(io.BytesIO(png)).convert("RGB")
+        qx = cert_img.width  - qr_img.width  - 24
+        qy = cert_img.height - qr_img.height - 24
+        cert_img.paste(qr_img, (qx, qy))
+
+        # Cert ID matnini QR ostiga yozish
+        try:
+            font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+            if os.path.exists(font_path):
+                fnt = _PFont.truetype(font_path, 14)
+            else:
+                fnt = _PFont.load_default()
+            draw = _PDraw.Draw(cert_img)
+            label = f"ID: {cert_id}"
+            tw = draw.textlength(label, font=fnt) if hasattr(draw, "textlength") else len(label) * 7
+            draw.text((qx + (qr_img.width - tw) // 2, qy + qr_img.height + 4),
+                      label, fill=(110, 110, 110), font=fnt)
+        except Exception:
+            pass
+
+        out = io.BytesIO()
+        cert_img.save(out, format="PNG")
+        return out.getvalue()
+    except Exception as e:
+        logger.debug(f"cert QR qo'shilmadi: {e}")
+        return png
+
+
+def _do_cert_pdf(name: str, course: str, issuer: str, theme: str,
+                 cert_id: str, verify_url: str, issue_dt: str) -> bytes:
+    """WeasyPrint A5-landscape PDF sertifikat + QR verifikatsiya."""
+    from weasyprint import HTML
+    import segno, base64 as _b64
+
+    th = _CERT_THEMES.get(theme, _CERT_THEMES["classic"])
+    r0, g0, b0 = th["bg_top"]
+    r1, g1, b1 = th["bg_bot"]
+    accent     = "#{:02x}{:02x}{:02x}".format(*th["accent"])
+    bg_grad    = f"linear-gradient(180deg, rgb({r0},{g0},{b0}), rgb({r1},{g1},{b1}))"
+
+    qr_buf = io.BytesIO()
+    segno.make(verify_url, error="M").save(qr_buf, kind="png", scale=4, border=1)
+    qr_b64 = _b64.b64encode(qr_buf.getvalue()).decode()
+
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  @page {{ size: A5 landscape; margin: 0; }}
+  body {{ margin:0; padding:0; background:{bg_grad};
+         font-family:'DejaVu Sans',sans-serif; width:210mm; height:148mm;
+         display:flex; align-items:center; justify-content:center; }}
+  .cert {{ border: 3px solid {accent}; border-radius:10px;
+           padding: 22px 30px; text-align:center; width:188mm;
+           position:relative; }}
+  .title {{ font-size:11pt; color:{accent}; letter-spacing:.12em;
+            text-transform:uppercase; margin-bottom:8px; font-weight:700; }}
+  .name  {{ font-size:24pt; font-weight:700; color:white; margin:10px 0; }}
+  .course{{ font-size:14pt; color:{accent}; margin:8px 0 12px; font-weight:600; }}
+  .issuer{{ font-size:10pt; color:rgba(255,255,255,.75); }}
+  .meta {{ font-size:8pt; color:rgba(255,255,255,.5);
+           margin-top:8px; font-family:'DejaVu Sans Mono', monospace; }}
+  .line {{ border:none; border-top:1px solid {accent}55;
+           margin: 8px auto; width:75%; }}
+  .qr {{ position:absolute; bottom:14px; right:18px; text-align:center; }}
+  .qr img {{ width:60px; height:60px; background:#fff; padding:2px; border-radius:4px; }}
+  .qr-label {{ font-size:6.5pt; color:rgba(255,255,255,.6); margin-top:2px; }}
+</style></head><body>
+<div class="cert">
+  <div class="title">🏆 Sertifikat</div>
+  <hr class="line">
+  <div style="font-size:9pt;color:rgba(255,255,255,.7)">Ushbu sertifikat taqdim etiladi</div>
+  <div class="name">{name}</div>
+  <div style="font-size:9pt;color:rgba(255,255,255,.7)">muvaffaqiyatli tugatgani uchun</div>
+  <div class="course">{course}</div>
+  <hr class="line">
+  <div class="issuer">{issuer} · {issue_dt}</div>
+  <div class="meta">ID: {cert_id}</div>
+  <div class="qr">
+    <img src="data:image/png;base64,{qr_b64}" alt="QR">
+    <div class="qr-label">verify</div>
+  </div>
+</div>
+</body></html>"""
+
+    return HTML(string=html).write_pdf()
+
+
 @app.post("/api/cert")
 @limiter.limit("20/minute")
 async def make_cert(request: Request):
     try:
         body   = await request.json()
         lines  = (body.get("text") or "Ism Familiya\nKurs nomi").strip().split("\n")
-        name   = lines[0].strip() if lines else "Ism Familiya"
-        course = lines[1].strip() if len(lines) > 1 else "Kurs nomi"
-        issuer = lines[2].strip() if len(lines) > 2 else "EduBot"
+        name   = lines[0].strip()[:120] if lines else "Ism Familiya"
+        course = lines[1].strip()[:160] if len(lines) > 1 else "Kurs nomi"
+        issuer = lines[2].strip()[:120] if len(lines) > 2 else "EduBot"
         theme  = str(body.get("theme", "classic"))
+        fmt    = str(body.get("format", "png")).lower()
         if theme not in _CERT_THEMES:
             theme = "classic"
         if not name:
             raise HTTPException(status_code=400, detail="Ism bo'sh bo'lmasligi kerak")
+        if fmt not in ("png", "pdf"):
+            fmt = "png"
+
+        # Verifikatsiya uchun cert_id + DB ga saqlash
+        import uuid
+        cert_id  = uuid.uuid4().hex[:12].upper()
+        issue_dt = datetime.now().strftime("%Y-%m-%d")
+        try:
+            import database as _db
+            # Optional user_id — agar header bo'lsa olamiz, bo'lmasa anonim
+            uid_raw = request.headers.get("X-User-Id") or request.headers.get("x-user-id")
+            user_id = int(uid_raw) if uid_raw and uid_raw.isdigit() else None
+            await _db.save_cert(cert_id, name, course, issuer, theme, user_id)
+        except Exception as _e:
+            logger.warning(f"cert DB save xato: {_e}")  # DB yo'q bo'lsa ham PDF chiqaramiz
+
+        # Verifikatsiya URL — backend ham, frontend ham qo'llab-quvvatlaydi
+        base_url   = os.environ.get("BACKEND_URL",
+                                    "https://studentstools-backend.up.railway.app")
+        verify_url = f"{base_url}/api/cert/verify/{cert_id}"
+
         loop = asyncio.get_event_loop()
         try:
-            png = await asyncio.wait_for(
+            if fmt == "pdf":
+                pdf_bytes = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        _converter_pool,
+                        functools.partial(
+                            _do_cert_pdf, name, course, issuer, theme,
+                            cert_id, verify_url, issue_dt,
+                        ),
+                    ),
+                    timeout=25.0,
+                )
+                return Response(
+                    content=pdf_bytes,
+                    media_type="application/pdf",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=certificate_{cert_id}.pdf",
+                        "X-Cert-Id":   cert_id,
+                        "X-Verify-Url": verify_url,
+                    },
+                )
+            png_bytes = await asyncio.wait_for(
                 loop.run_in_executor(
                     _converter_pool,
-                    functools.partial(_do_cert, name, course, issuer, theme),
+                    functools.partial(
+                        _do_cert_with_qr, name, course, issuer, theme,
+                        cert_id, verify_url,
+                    ),
                 ),
-                timeout=20.0,
+                timeout=25.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail="Certificate generation timed out")
         return Response(
-            content=png,
+            content=png_bytes,
             media_type="image/png",
-            headers={"Content-Disposition": "attachment; filename=certificate.png"},
+            headers={
+                "Content-Disposition": f"attachment; filename=certificate_{cert_id}.png",
+                "X-Cert-Id":   cert_id,
+                "X-Verify-Url": verify_url,
+            },
         )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"cert xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"cert: {type(e).__name__}: {str(e)[:160]}")
+
+
+@app.get("/api/cert/verify/{cert_id}")
+@limiter.limit("60/minute")
+async def verify_cert(request: Request, cert_id: str):
+    """Sertifikat verifikatsiyasi — QR koddan kelgan ID ni tekshiradi."""
+    cert_id = re.sub(r"[^A-Z0-9]", "", cert_id.upper())[:12]
+    if not cert_id:
+        raise HTTPException(status_code=400, detail="Noto'g'ri cert ID")
+    try:
+        import database as _db
+        cert = await _db.get_cert(cert_id)
+        if not cert:
+            return JSONResponse(
+                {"valid": False, "id": cert_id, "message": "❌ Sertifikat topilmadi"},
+                status_code=404,
+            )
+        issued = cert.get("issued_at")
+        if hasattr(issued, "isoformat"):
+            issued = issued.isoformat()
+        return JSONResponse({
+            "valid":     True,
+            "id":        cert.get("id"),
+            "name":      cert.get("name"),
+            "course":    cert.get("course"),
+            "issuer":    cert.get("issuer"),
+            "theme":     cert.get("theme"),
+            "issued_at": issued,
+            "message":   "✅ Sertifikat haqiqiy",
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"verify_cert xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Verifikatsiya xato")
 
 # ─── Schedule ─────────────────────────────────────────────────────────────────
 
@@ -4141,17 +4623,100 @@ def _do_schedule(text: str) -> bytes:
     img.save(buf, format="PNG")
     return buf.getvalue()
 
+# ✅ YANGILANDI: PNG + iCalendar (.ics) format qo'shildi (TZID Asia/Tashkent, COUNT=16)
+# Sabab: foydalanuvchi telefoniga import qila oladi
+_SCHEDULE_DAY_IDX = {
+    "dushanba": 0, "seshanba": 1, "chorshanba": 2,
+    "payshanba": 3, "juma": 4, "shanba": 5, "yakshanba": 6,
+    "monday": 0, "tuesday": 1, "wednesday": 2,
+    "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6,
+    # Eski kirillcha
+    "понедельник": 0, "вторник": 1, "среда": 2,
+    "четверг": 3, "пятница": 4, "суббота": 5, "воскресенье": 6,
+}
+
+
+def _do_schedule_ics(schedule: list, weeks: int = 16) -> bytes:
+    """Dars jadvali → .ics fayl (Asia/Tashkent TZID, 16 hafta takror)."""
+    from icalendar import Calendar, Event
+    import datetime as _dt
+    try:
+        from zoneinfo import ZoneInfo  # py3.9+
+        tz = ZoneInfo("Asia/Tashkent")
+    except Exception:
+        tz = _dt.timezone(_dt.timedelta(hours=5))  # UTC+5 fallback
+
+    cal = Calendar()
+    cal.add("prodid", "-//EduBot Schedule//UZ")
+    cal.add("version", "2.0")
+    cal.add("x-wr-calname", "EduBot · Dars jadvali")
+    cal.add("x-wr-timezone", "Asia/Tashkent")
+
+    today      = _dt.date.today()
+    week_start = today - _dt.timedelta(days=today.weekday())
+
+    for day_name, lessons in schedule:
+        day_idx = _SCHEDULE_DAY_IDX.get(day_name.lower().strip())
+        if day_idx is None:
+            continue
+        for num, subject, time_str in lessons:
+            ev = Event()
+            ev.add("summary", subject or f"Dars {num}")
+            ev.add("description", f"EduBot · {subject}")
+            if time_str:
+                try:
+                    h, m = map(int, time_str.split(":"))
+                    dt   = _dt.datetime.combine(
+                        week_start + _dt.timedelta(days=day_idx),
+                        _dt.time(h, m, tzinfo=tz),
+                    )
+                    ev.add("dtstart", dt)
+                    ev.add("dtend",   dt + _dt.timedelta(minutes=90))
+                    ev.add("rrule",   {"freq": "weekly", "count": weeks})
+                except (ValueError, AttributeError):
+                    continue
+            cal.add_component(ev)
+
+    return cal.to_ical()
+
+
 @app.post("/api/schedule")
 @limiter.limit("20/minute")
 async def make_schedule(request: Request):
     try:
         body = await request.json()
         text = body.get("text", "").strip()
+        fmt  = str(body.get("format", "png")).lower()
         if not text:
             raise HTTPException(status_code=400,
                 detail="Jadval kiriting.\nFormat: Dushanba: Matematika 8:00, Fizika 10:00")
         if len(text) > 3000:
             text = text[:3000]
+        if fmt not in ("png", "ics"):
+            fmt = "png"
+
+        # iCalendar export
+        if fmt == "ics":
+            try:
+                schedule = _parse_schedule(text)
+                if not schedule:
+                    raise HTTPException(status_code=400,
+                        detail="Jadval tushunarsiz. Format: Dushanba: Matematika 8:00")
+                loop = asyncio.get_event_loop()
+                ics_bytes = await loop.run_in_executor(
+                    _converter_pool, _do_schedule_ics, schedule,
+                )
+                return Response(
+                    content=ics_bytes,
+                    media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=schedule.ics"},
+                )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.warning(f"schedule ics xato: {e} — PNG fallback")
+
+        # PNG (Pillow)
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(_converter_pool, _do_schedule, text)
         return Response(

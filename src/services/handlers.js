@@ -385,7 +385,17 @@ async function pdflock({ file, text }) {
   );
   await handleResponseError(response);
   const blob = await response.blob();
-  const password = response.headers.get("X-Password") || "???";
+  // ✅ YANGILANDI: parol base64(utf-8) bilan keladi — Latin-1 only header chegarasini
+  // chetlab o'tib, special belgi/Unicode bo'lsa ham xavfsiz uzatish uchun
+  const pwdB64 = response.headers.get("X-Password-B64");
+  let password = "???";
+  if (pwdB64) {
+    try {
+      password = decodeURIComponent(escape(atob(pwdB64)));
+    } catch {
+      password = atob(pwdB64);
+    }
+  }
   const info = response.headers.get("X-Info");
   return {
     type: "file",

@@ -1,44 +1,65 @@
-fastapi==0.111.0
-uvicorn[standard]==0.30.1
-python-multipart==0.0.9
-httpx==0.27.0
-rembg==2.0.57
-pytesseract==0.3.10
-Pillow==10.3.0
-pdf2docx==0.5.8
-python-docx
+# ─── Core framework ─────────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.12
+httpx==0.28.1
 slowapi==0.1.9
-loguru==0.7.2
-mammoth
-weasyprint
-pypdf
-PyMuPDF
-pdfplumber
-reportlab
-openpyxl
-qrcode[pil]
-segno>=1.5.0
-python-dateutil
-dateparser>=1.2.0
-deep-translator
-pyzipper
-numpy
-scipy>=1.11.0
-py7zr>=0.20.0
-asyncpg>=0.29.0
-aiosqlite
-img2pdf>=0.6.0
-opencv-python-headless>=4.8.0
-pikepdf>=8.0.0
-docling>=2.0.0
-pyvips>=2.2.0
-python-pptx>=0.6.23
-paddleocr>=2.7.0
-paddlepaddle>=2.5.0
-argostranslate>=1.9.0
-redis>=5.0.0
-sentry-sdk[fastapi]>=2.0.0
+loguru==0.7.3
+
+# ─── DB / cache ─────────────────────────────────────────────────────
+asyncpg==0.30.0
+aiosqlite==0.20.0
+redis==5.2.1
+
+# ─── Numeric (NUMPY <2.0 — paddleocr/opencv compatibility) ─────────
+numpy>=1.26,<2.0
+scipy>=1.11,<2.0
+
+# ─── PDF tools ──────────────────────────────────────────────────────
+PyMuPDF==1.25.1
+pdfplumber==0.11.4
+pypdf==5.1.0
+pikepdf==9.4.0
+reportlab==4.2.5
+img2pdf==0.6.0
+pdf2docx==0.5.8
 marker-pdf>=0.3.0
+weasyprint==62.3
 pypandoc_binary>=1.13
+
+# ─── Office formats ─────────────────────────────────────────────────
+python-docx==1.1.2
+mammoth==1.8.0
+openpyxl==3.1.5
+python-pptx==1.0.2
+docling>=2.0.0,<3.0.0
+
+# ─── Imaging ────────────────────────────────────────────────────────
+Pillow==10.4.0
 pillow-heif>=0.18.0
 pillow-avif-plugin>=1.4.0
+opencv-python-headless>=4.8.0,<4.11.0
+pyvips>=2.2.0
+rembg==2.0.65
+
+# ─── OCR ────────────────────────────────────────────────────────────
+pytesseract==0.3.13
+paddleocr>=2.7.0,<3.0.0
+paddlepaddle>=2.5.0,<3.0.0
+
+# ─── Face detection (photo3x4) ──────────────────────────────────────
+mediapipe>=0.10.0,<0.11.0
+
+# ─── Templating / calendar / utils ──────────────────────────────────
+jinja2>=3.1.4
+icalendar>=5.0.0
+segno>=1.5.0
+python-dateutil==2.9.0.post0
+dateparser>=1.2.0
+deep-translator==1.11.4
+argostranslate>=1.9.0
+pyzipper==0.3.6
+py7zr>=0.20.0
+
+# ─── Observability ──────────────────────────────────────────────────
+sentry-sdk[fastapi]>=2.0.0

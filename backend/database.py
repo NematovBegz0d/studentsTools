@@ -88,6 +88,17 @@ if _USE_PG:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 CREATE INDEX IF NOT EXISTS idx_hist_user ON history(user_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS certs (
+                    id         TEXT        PRIMARY KEY,
+                    name       TEXT        NOT NULL,
+                    course     TEXT        NOT NULL,
+                    issuer     TEXT        NOT NULL,
+                    theme      TEXT        NOT NULL DEFAULT 'classic',
+                    issued_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    user_id    BIGINT
+                );
+                CREATE INDEX IF NOT EXISTS idx_cert_user ON certs(user_id);
             """)
 
     async def upsert_user(user_id: int, username: Optional[str], first_name: Optional[str]):
@@ -301,6 +312,22 @@ if _USE_PG:
                     user_id, history_id,
                 )
 
+    async def save_cert(cert_id: str, name: str, course: str, issuer: str,
+                        theme: str = "classic", user_id: Optional[int] = None):
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO certs (id, name, course, issuer, theme, user_id) "
+                "VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+                cert_id, name[:120], course[:160], issuer[:120], theme[:24], user_id,
+            )
+
+    async def get_cert(cert_id: str) -> Optional[dict]:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM certs WHERE id = $1", cert_id)
+            return dict(row) if row else None
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SQLite fallback (local development — DATABASE_URL yo'q bo'lganda)
@@ -354,6 +381,17 @@ else:
                     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
                 );
                 CREATE INDEX IF NOT EXISTS idx_hist_user ON history(user_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS certs (
+                    id        TEXT PRIMARY KEY,
+                    name      TEXT NOT NULL,
+                    course    TEXT NOT NULL,
+                    issuer    TEXT NOT NULL,
+                    theme     TEXT NOT NULL DEFAULT 'classic',
+                    issued_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    user_id   INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS idx_cert_user ON certs(user_id);
             """)
             await db.commit()
 
@@ -572,3 +610,20 @@ else:
                     (user_id, history_id),
                 )
             await db.commit()
+
+    async def save_cert(cert_id: str, name: str, course: str, issuer: str,
+                        theme: str = "classic", user_id: Optional[int] = None):
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO certs (id, name, course, issuer, theme, user_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (cert_id, name[:120], course[:160], issuer[:120], theme[:24], user_id),
+            )
+            await db.commit()
+
+    async def get_cert(cert_id: str) -> Optional[dict]:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM certs WHERE id = ?", (cert_id,)) as cur:
+                row = await cur.fetchone()
+            return dict(row) if row else None

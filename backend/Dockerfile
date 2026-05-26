@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Tesseract + til paketlari + OpenCV dependencies
+# Tesseract + til paketlari + OpenCV + LibreOffice (Writer+Calc) dependencies
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-rus \
@@ -9,8 +9,12 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     libgomp1 \
     fonts-dejavu \
+    fonts-dejavu-core \
     ghostscript \
+    libreoffice-core \
     libreoffice-writer \
+    libreoffice-calc \
+    libreoffice-impress \
     libpango-1.0-0 \
     libpangoft2-1.0-0 \
     libcairo2 \
