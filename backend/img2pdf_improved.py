@@ -13,17 +13,30 @@ from __future__ import annotations
 import io
 from PIL import Image, ImageOps
 
-import img2pdf
+try:
+    import img2pdf as _img2pdf_lib
+    _MM = _img2pdf_lib.mm_to_pt
+    _HAS_IMG2PDF = True
+except ImportError:
+    _img2pdf_lib = None  # type: ignore
+    _MM = lambda mm: mm * 2.8346  # fallback: mm → pt
+    _HAS_IMG2PDF = False
 
 # ─── Sahifa o'lchamlari (pt) ──────────────────────────────────────────────────
 
 PAGE_SIZES: dict[str, tuple[float, float]] = {
-    "a4":     (img2pdf.mm_to_pt(210),   img2pdf.mm_to_pt(297)),
-    "a3":     (img2pdf.mm_to_pt(297),   img2pdf.mm_to_pt(420)),
-    "a5":     (img2pdf.mm_to_pt(148),   img2pdf.mm_to_pt(210)),
-    "letter": (img2pdf.mm_to_pt(215.9), img2pdf.mm_to_pt(279.4)),
-    "legal":  (img2pdf.mm_to_pt(215.9), img2pdf.mm_to_pt(355.6)),
+    "a4":     (_MM(210),   _MM(297)),
+    "a3":     (_MM(297),   _MM(420)),
+    "a5":     (_MM(148),   _MM(210)),
+    "letter": (_MM(215.9), _MM(279.4)),
+    "legal":  (_MM(215.9), _MM(355.6)),
 }
+
+# img2pdf shorthand for use inside functions
+def _get_img2pdf():
+    if not _HAS_IMG2PDF:
+        raise ImportError("img2pdf o'rnatilmagan. requirements.txt ga qo'shing.")
+    return _img2pdf_lib
 
 VALID_PAGES = set(PAGE_SIZES) | {"original"}
 VALID_FITS  = {"fit", "fill", "center"}
@@ -141,22 +154,23 @@ def _gif_frames(data: bytes, max_frames: int = 30) -> list[bytes]:
 # ─── img2pdf layout ───────────────────────────────────────────────────────────
 
 def _build_layout(page_size: str, margin_mm: float, fit_mode: str, dpi: int):
-    margin_pt = img2pdf.mm_to_pt(margin_mm)
+    lib = _get_img2pdf()
+    margin_pt = lib.mm_to_pt(margin_mm)
     fit_map = {
-        "fit":    img2pdf.FitMode.into,
-        "fill":   img2pdf.FitMode.fill,
-        "center": img2pdf.FitMode.into,
+        "fit":    lib.FitMode.into,
+        "fill":   lib.FitMode.fill,
+        "center": lib.FitMode.into,
     }
-    fit = fit_map.get(fit_mode, img2pdf.FitMode.into)
+    fit = fit_map.get(fit_mode, lib.FitMode.into)
 
     if page_size == "original":
-        return img2pdf.get_layout_fun(
+        return lib.get_layout_fun(
             pagesize=None, border=margin_pt if margin_mm > 0 else None,
             fit=fit, auto_orient=True,
         )
 
     pw, ph = PAGE_SIZES[page_size]
-    return img2pdf.get_layout_fun(
+    return lib.get_layout_fun(
         pagesize=(pw, ph), border=margin_pt if margin_mm > 0 else None,
         fit=fit, auto_orient=True,
     )
@@ -183,16 +197,16 @@ def do_img2pdf_single(
 
     if fmt == "TIFF" and n_frames > 1:
         frames = _tiff_frames(data)
-        pdf = img2pdf.convert(frames, layout_fun=layout)
+        pdf = _get_img2pdf().convert(frames, layout_fun=layout)
         return pdf, f"✅ TIFF · {n_frames} kadr · {page_size.upper()} · {margin_mm:.0f}mm margin"
 
     if fmt == "GIF" and n_frames > 1:
         frames = _gif_frames(data)
-        pdf = img2pdf.convert(frames, layout_fun=layout)
+        pdf = _get_img2pdf().convert(frames, layout_fun=layout)
         return pdf, f"✅ GIF · {min(n_frames, 30)} kadr · {page_size.upper()}"
 
     img_bytes = _prepare_single(data)
-    pdf = img2pdf.convert(img_bytes, layout_fun=layout)
+    pdf = _get_img2pdf().convert(img_bytes, layout_fun=layout)
     orient = "Landscape" if w > h else "Portrait"
     ps = page_size.upper() if page_size != "original" else "Original"
     return pdf, f"✅ {w}×{h}px · {ps} · {orient} · {margin_mm:.0f}mm margin"
@@ -238,6 +252,6 @@ def do_imgs2pdf_multi(
     if not prepared:
         raise ValueError("Yuklangan fayllar ichida rasm topilmadi.")
 
-    pdf = img2pdf.convert(prepared, layout_fun=layout)
+    pdf = _get_img2pdf().convert(prepared, layout_fun=layout)
     ps  = page_size.upper() if page_size != "original" else "Original"
     return pdf, f"✅ {len(all_data)} rasm · {total_pages} sahifa · {ps} · {margin_mm:.0f}mm margin"
