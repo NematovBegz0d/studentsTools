@@ -239,7 +239,7 @@ def get_rembg_session():
     global _rembg_session
     if _rembg_session is None:
         from rembg import new_session
-        model = os.environ.get("REMBG_MODEL", "isnet-general-use")
+        model = os.environ.get("REMBG_MODEL", "birefnet-general")
         try:
             _rembg_session = new_session(model)
             logger.info(f"rembg session yaratildi ({model})")
@@ -1175,9 +1175,46 @@ _COMPRESSPDF_LEVELS = {
 
 
 def _do_compresspdf(data: bytes, level: str = "ebook") -> tuple:
-    import fitz
+    import fitz, subprocess, tempfile
 
     orig_size = len(data)
+
+    # ── Try Ghostscript first (best for image-heavy PDFs) ────────────
+    _GS_SETTINGS = {
+        "screen":   "/screen",    # 72 DPI, smallest
+        "ebook":    "/ebook",     # 150 DPI, good for screens
+        "printer":  "/printer",   # 300 DPI, print quality
+        "prepress": "/prepress",  # 300 DPI, colour managed
+    }
+    gs_level = _GS_SETTINGS.get(level, "/ebook")
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as fin:
+            fin.write(data)
+            fin_path = fin.name
+        fout_path = fin_path.replace(".pdf", "_gs_out.pdf")
+        proc = subprocess.run(
+            ["gs", "-dBATCH", "-dNOPAUSE", "-dQUIET", "-sDEVICE=pdfwrite",
+             f"-dPDFSETTINGS={gs_level}", "-dCompatibilityLevel=1.6",
+             f"-sOutputFile={fout_path}", fin_path],
+            timeout=60, capture_output=True,
+        )
+        import os as _os
+        _os.unlink(fin_path)
+        if proc.returncode == 0 and _os.path.exists(fout_path):
+            gs_bytes = open(fout_path, "rb").read()
+            _os.unlink(fout_path)
+            if len(gs_bytes) < orig_size:
+                saved = max(0, round((1 - len(gs_bytes) / orig_size) * 100))
+                n_gs = fitz.open(stream=gs_bytes, filetype="pdf").page_count
+                return (gs_bytes,
+                        f"{n_gs} sahifa • {orig_size // 1024} KB → {len(gs_bytes) // 1024} KB"
+                        f" • {saved}% tejaldi (Ghostscript {level})",
+                        saved)
+        if _os.path.exists(fout_path):
+            _os.unlink(fout_path)
+    except (FileNotFoundError, Exception):
+        pass  # Ghostscript not installed — fall back to PyMuPDF
+
     doc = fitz.open(stream=data, filetype="pdf")
     n = doc.page_count
 
@@ -1193,9 +1230,8 @@ def _do_compresspdf(data: bytes, level: str = "ebook") -> tuple:
     is_text_pdf = sample_chars > 150
 
     # ── Path A: text PDF — structure-level compression ───────────────
-    # Preserves searchable text, vectors, fonts. Never rasterizes.
     try:
-        doc.scrub()  # strip unused metadata, embedded thumbnails
+        doc.scrub()
     except Exception:
         pass
     buf_a = io.BytesIO()
@@ -3065,26 +3101,50 @@ async def readtime(request: Request):
 @limiter.limit("60/minute")
 async def deadline(request: Request):
     body = await request.json()
-    text = body.get("text", "")
-    m = re.search(r'(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})', text) or \
-        re.search(r'(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})', text)
-    if not m:
-        return JSONResponse({"result": "❌ Sanani kiriting: 31.12.2025 yoki 2025-12-31"})
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"result": "❌ Sana kiriting: 31.12.2025, kelasi juma, 3 kun keyin"})
+
+    d = None
+    # Try dateparser first — understands "kelasi juma", "next Monday", "3 days later"
     try:
-        g = m.groups()
-        if len(g[0]) == 4:
-            d = datetime(int(g[0]), int(g[1]), int(g[2]))
-        else:
-            yr = int(g[2])
-            if yr < 100: yr += 2000
-            d = datetime(yr, int(g[1]), int(g[0]))
-        now = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        days = (d - now).days
-        emoji = "🔴" if days < 0 else ("🚨" if days <= 3 else ("🟡" if days <= 7 else "🟢"))
-        msg = f"{abs(days)} kun oldin o'tdi!" if days < 0 else ("BUGUN!" if days == 0 else f"{days} kun qoldi")
-        return JSONResponse({"result": f"📅 {d.strftime('%d.%m.%Y')}\n{emoji} {msg}"})
-    except ValueError:
-        return JSONResponse({"result": "❌ Noto'g'ri sana formati"})
+        import dateparser
+        d = dateparser.parse(
+            text,
+            languages=["uz", "ru", "en"],
+            settings={"PREFER_DATES_FROM": "future", "RETURN_AS_TIMEZONE_AWARE": False},
+        )
+    except Exception:
+        pass
+
+    # Regex fallback for explicit numeric formats: 31.12.2025 / 2025-12-31
+    if d is None:
+        m = re.search(r'(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})', text) or \
+            re.search(r'(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})', text)
+        if m:
+            try:
+                g = m.groups()
+                if len(g[0]) == 4:
+                    d = datetime(int(g[0]), int(g[1]), int(g[2]))
+                else:
+                    yr = int(g[2])
+                    if yr < 100: yr += 2000
+                    d = datetime(yr, int(g[1]), int(g[0]))
+            except ValueError:
+                pass
+
+    if d is None:
+        return JSONResponse({"result": (
+            "❌ Sana formatini aniqlab bo'lmadi.\n"
+            "Misollar: 31.12.2025 · 2025-12-31 · kelasi juma · 3 kun keyin · next Monday"
+        )})
+
+    now = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    d0  = d.replace(hour=0, minute=0, second=0, microsecond=0)
+    days = (d0 - now).days
+    emoji = "🔴" if days < 0 else ("🚨" if days <= 3 else ("🟡" if days <= 7 else "🟢"))
+    msg = f"{abs(days)} kun oldin o'tdi!" if days < 0 else ("BUGUN!" if days == 0 else f"{days} kun qoldi")
+    return JSONResponse({"result": f"📅 {d.strftime('%d.%m.%Y')}\n{emoji} {msg}"})
 
 # ─── Stats ────────────────────────────────────────────────────────────────────
 
@@ -3119,6 +3179,21 @@ async def stats(request: Request):
     top_val, top_cnt = freq.most_common(1)[0]
     mode_str = f"{top_val:g} ({top_cnt} marta)" if top_cnt > 1 else "—"
 
+    # scipy: skewness, kurtosis, normality test
+    extra = ""
+    try:
+        from scipy import stats as _sp
+        skew = _sp.skew(nums)
+        kurt = _sp.kurtosis(nums)
+        extra += f"\n📐 Asimmetriya: {skew:.4f}"
+        extra += f"\n⛰️  Kurtosis: {kurt:.4f}"
+        if n >= 8:
+            _, norm_p = _sp.normaltest(nums)
+            norm_label = "Ha ✓" if norm_p > 0.05 else f"Yo'q (p={norm_p:.3f})"
+            extra += f"\n🔔 Normal taqsimot: {norm_label}"
+    except Exception:
+        pass
+
     return JSONResponse({"result": (
         f"📊 n = {n}\n"
         f"∑  Yig'indi: {total:g}\n"
@@ -3130,6 +3205,7 @@ async def stats(request: Request):
         f"Q1 / Q3: {q1:g} / {q3:g}\n"
         f"IQR: {iqr:g}\n"
         f"Min: {s[0]:g}  Max: {s[-1]:g}"
+        + extra
     )})
 
 # ─── QR Code ──────────────────────────────────────────────────────────────────
@@ -3140,36 +3216,31 @@ _QR_BACK  = (238, 242, 255) # indigo-50
 
 
 def _do_qr(text: str, size: int = 400, ec_level: str = "M", fmt: str = "png") -> tuple:
-    import qrcode
+    import segno
     from PIL import Image
 
-    _EC = {
-        "L": qrcode.constants.ERROR_CORRECT_L,
-        "M": qrcode.constants.ERROR_CORRECT_M,
-        "Q": qrcode.constants.ERROR_CORRECT_Q,
-        "H": qrcode.constants.ERROR_CORRECT_H,
-    }
-    ec       = _EC.get(ec_level.upper(), qrcode.constants.ERROR_CORRECT_M)
-    box_size = max(5, size // 50)
+    ec_map = {"L": "l", "M": "m", "Q": "q", "H": "h"}
+    ec = ec_map.get(ec_level.upper(), "m")
 
-    qr = qrcode.QRCode(version=None, error_correction=ec, box_size=box_size, border=4)
-    qr.add_data(text)
-    qr.make(fit=True)
+    qr = segno.make(text, error=ec, micro=False)
 
     if fmt == "svg":
-        import qrcode.image.svg as qrsvg
-        factory = qrsvg.SvgPathImage
-        img_svg = qr.make_image(image_factory=factory)
         buf = io.BytesIO()
-        img_svg.save(buf)
+        qr.save(buf, kind="svg", scale=4, dark="#0f172a", light="#f8f7ff", border=4)
         return buf.getvalue(), "image/svg+xml", "qrcode.svg"
 
-    img = qr.make_image(fill_color=_QR_FILL, back_color=_QR_BACK).convert("RGB")
+    # Compute scale so output is close to requested size
+    modules = qr.symbol_size()[0]
+    scale = max(1, size // modules)
+    buf = io.BytesIO()
+    qr.save(buf, kind="png", scale=scale,
+            dark="#4f46e5", light="#eef2ff", border=4)
+    img = Image.open(buf)
     if img.width != size:
         img = img.resize((size, size), Image.NEAREST)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
-    return buf.getvalue(), "image/png", "qrcode.png"
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    return out.getvalue(), "image/png", "qrcode.png"
 
 
 @app.post("/api/qr")
@@ -3547,23 +3618,25 @@ def _do_translate(query: str, lang: str) -> str:
     except Exception as google_err:
         logger.warning(f"translate google xato: {google_err}")
 
-    # ── Fallback: MyMemory (500-char limit per request) ─────────────
-    try:
-        chunk = query[:500]
-        r = _httpx.get(
-            "https://api.mymemory.translated.net/get",
-            params={"q": chunk, "langpair": f"uz|{lang}"},
-            timeout=15,
-        )
-        d = r.json()
-        if d.get("responseStatus") == 200:
-            txt = d["responseData"]["translatedText"]
-            suffix = "\n⚠️ Faqat 500 belgi tarjima qilindi (MyMemory chegarasi)" if len(query) > 500 else ""
-            return txt + suffix
-        raise ValueError(d.get("responseMessage", "MyMemory xatosi"))
-    except Exception as mm_err:
-        logger.error(f"translate mymemory xato: {mm_err}")
-        raise RuntimeError("Tarjima amalga oshmadi. Keyinroq urinib ko'ring.")
+    # ── Fallback: MyMemory — try common source languages ────────────
+    chunk = query[:500]
+    suffix = "\n⚠️ Faqat 500 belgi tarjima qilindi (MyMemory chegarasi)" if len(query) > 500 else ""
+    for src in ("uz", "ru", "en"):
+        if src == lang:
+            continue
+        try:
+            r = _httpx.get(
+                "https://api.mymemory.translated.net/get",
+                params={"q": chunk, "langpair": f"{src}|{lang}"},
+                timeout=10,
+            )
+            d = r.json()
+            txt = (d.get("responseData") or {}).get("translatedText", "")
+            if d.get("responseStatus") == 200 and txt and txt.strip() != chunk.strip():
+                return txt + suffix
+        except Exception:
+            continue
+    raise RuntimeError("Tarjima amalga oshmadi. Keyinroq urinib ko'ring.")
 
 @app.post("/api/translate")
 @limiter.limit("20/minute")
@@ -3607,17 +3680,27 @@ async def translate(request: Request):
 @app.post("/api/wiki")
 @limiter.limit("20/minute")
 async def wiki(request: Request):
-    body     = await request.json()
-    q        = (body.get("text") or "").strip()
+    body      = await request.json()
+    q         = (body.get("text") or "").strip()
     pref_lang = (body.get("lang") or "").strip().lower()[:5]
     if not q:
         return JSONResponse({"result": "❌ Qidiruv so'zini kiriting"})
-    encoded  = url_quote(q, safe="")
-    # User-preferred language first, then fallbacks
+
     langs = ([pref_lang] + [l for l in ["uz", "ru", "en"] if l != pref_lang]) if pref_lang else ["uz", "ru", "en"]
     async with httpx.AsyncClient(timeout=15) as client:
         for lang in langs:
             try:
+                # 1. Fuzzy search: opensearch finds the best-matching article title
+                sr = await client.get(
+                    f"https://{lang}.wikipedia.org/w/api.php",
+                    params={"action": "opensearch", "search": q, "limit": 3,
+                            "namespace": 0, "format": "json"},
+                )
+                titles = sr.json()[1] if sr.status_code == 200 else []
+                search_title = titles[0] if titles else q
+
+                # 2. Get summary for the matched title
+                encoded = url_quote(search_title, safe="")
                 r = await client.get(
                     f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}"
                 )
@@ -3625,7 +3708,7 @@ async def wiki(request: Request):
                     d = r.json()
                     if d.get("extract"):
                         url = d.get("content_urls", {}).get("desktop", {}).get("page", "")
-                        result = f"📖 {d['title']}  [{lang.upper()}]\n\n{d['extract']}"
+                        result = f"📖 {d['title']} [{lang.upper()}]\n\n{d['extract']}"
                         if url:
                             result += f"\n\n🔗 {url}"
                         return JSONResponse({"result": result})
@@ -3644,23 +3727,58 @@ async def books(request: Request):
         return JSONResponse({"result": "❌ Kitob nomi yoki muallifni kiriting"})
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(
-                "https://openlibrary.org/search.json",
-                params={"q": q, "limit": 8, "fields": "title,author_name,first_publish_year"},
+            # Query Google Books and OpenLibrary in parallel
+            gb_task = client.get(
+                "https://www.googleapis.com/books/v1/volumes",
+                params={"q": q, "maxResults": 6, "printType": "books"},
             )
-            d = r.json()
-            if not d.get("docs"):
-                return JSONResponse({"result": "📚 Kitob topilmadi"})
-            lines = []
-            for i, b in enumerate(d["docs"], 1):
-                line = f"{i}. {b['title']}"
+            ol_task = client.get(
+                "https://openlibrary.org/search.json",
+                params={"q": q, "limit": 6,
+                        "fields": "title,author_name,first_publish_year"},
+            )
+            gb_r, ol_r = await asyncio.gather(gb_task, ol_task, return_exceptions=True)
+
+        lines = []
+        seen = set()
+
+        # Google Books — richer metadata + preview links
+        if not isinstance(gb_r, Exception) and gb_r.status_code == 200:
+            for item in (gb_r.json().get("items") or [])[:6]:
+                info = item.get("volumeInfo", {})
+                title = info.get("title", "")
+                if not title or title.lower() in seen:
+                    continue
+                seen.add(title.lower())
+                line = f"📗 {title}"
+                authors = info.get("authors", [])
+                if authors:
+                    line += f"\n   ✍️ {', '.join(authors[:2])}"
+                year = (info.get("publishedDate") or "")[:4]
+                if year:
+                    line += f"  📅 {year}"
+                preview = info.get("previewLink", "")
+                if preview:
+                    line += f"\n   🔗 {preview}"
+                lines.append(line)
+
+        # OpenLibrary — wider catalogue, especially older books
+        if not isinstance(ol_r, Exception) and ol_r.status_code == 200:
+            for b in (ol_r.json().get("docs") or [])[:6]:
+                title = b.get("title", "")
+                if not title or title.lower() in seen:
+                    continue
+                seen.add(title.lower())
+                line = f"📘 {title}"
                 if b.get("author_name"):
                     line += f"\n   ✍️ {b['author_name'][0]}"
                 if b.get("first_publish_year"):
                     line += f"  📅 {b['first_publish_year']}"
                 lines.append(line)
-            total = d.get("numFound", len(d["docs"]))
-            return JSONResponse({"result": f"📚 Natijalar ({total} ta):\n\n" + "\n\n".join(lines)})
+
+        if not lines:
+            return JSONResponse({"result": "📚 Kitob topilmadi"})
+        return JSONResponse({"result": f"📚 Natijalar:\n\n" + "\n\n".join(lines[:8])})
     except Exception:
         return JSONResponse({"result": "❌ Kitob qidirishda xato. Keyinroq urinib ko'ring."})
 
@@ -3761,6 +3879,30 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
         data = await file.read()
         check_size(data, "/api/unzip")
         fname = (file.filename or "").lower()
+
+        # ── 7z ───────────────────────────────────────────────────────────
+        is_7z = fname.endswith(".7z") or data[:6] == b"7z\xbc\xaf'\x1c"
+        if is_7z:
+            try:
+                import py7zr
+                with py7zr.SevenZipFile(io.BytesIO(data), mode="r") as sz:
+                    names = sz.getnames()
+                    if not names:
+                        raise HTTPException(status_code=400, detail="7z ichida fayl yo'q")
+                    if len(names) > _UNZIP_MAX_FILES:
+                        raise HTTPException(status_code=400,
+                            detail=f"7z ichida {len(names)} fayl — maksimal {_UNZIP_MAX_FILES}")
+                    all_data_dict = sz.readall() or {}
+                entries = [
+                    (os.path.basename(n) or "file", buf.read())
+                    for n, buf in all_data_dict.items()
+                    if buf is not None
+                ]
+                return _build_response_from_entries(entries)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(status_code=422, detail=f"7z ochib bo'lmadi: {e}")
 
         # ── TAR (tar, tar.gz, tgz, tar.bz2, tar.xz) ─────────────────────
         import tarfile as _tarfile
