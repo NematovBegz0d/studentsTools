@@ -1441,7 +1441,7 @@ async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
                 detail="Konversiya natijasi bo'sh. PDF tuzilishi qo'llab-quvvatlanmaydi.")
 
         # ── 6. Info xabar ─────────────────────────────────────────────
-        info_parts = [f"{page_count} sahifa aylantiriLdi ({conv_method})"]
+        info_parts = [f"{page_count} sahifa aylantirildi ({conv_method})"]
         if is_scanned:
             info_parts.append("OCR orqali")
         info = " - ".join(info_parts)
@@ -3956,7 +3956,11 @@ async def make_schedule(request: Request):
             text = text[:3000]
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(_converter_pool, _do_schedule, text)
-        return Response(content=result, media_type="image/png")
+        return Response(
+            content=result,
+            media_type="image/png",
+            headers={"Content-Disposition": "attachment; filename=schedule.png"},
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -4215,7 +4219,7 @@ async def make_zip(
                 for name, content in entries:
                     zf.writestr(name, content)
 
-        info = f"{count} fayl → archive.zip" + (" (parollanган)" if password else "")
+        info = f"{count} fayl → archive.zip" + (" (parollangan)" if password else "")
         return Response(
             content=buf.getvalue(),
             media_type="application/zip",
