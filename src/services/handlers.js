@@ -697,6 +697,44 @@ async function unzip({ file }) {
   return { type: "file", blob, filename };
 }
 
+// ─── CV Generator ─────────────────────────────────────────────────
+
+async function cv({ opts = {} }) {
+  const name = (opts.name || "").trim();
+  if (!name) throw new Error("Ism majburiy.");
+  const body = {
+    name,
+    title:      (opts.title    || "").trim(),
+    email:      (opts.email    || "").trim(),
+    phone:      (opts.phone    || "").trim(),
+    location:   (opts.location || "").trim(),
+    summary:    (opts.summary  || "").trim(),
+    template:   opts.template  || "modern",
+    skills:     Array.isArray(opts.skills)     ? opts.skills     : [],
+    languages:  Array.isArray(opts.languages)  ? opts.languages  : [],
+    education:  Array.isArray(opts.education)  ? opts.education  : [],
+    experience: Array.isArray(opts.experience) ? opts.experience : [],
+  };
+  const response = await fetchWithTimeout(
+    `${BACKEND_URL}/api/cv`,
+    {
+      method: "POST",
+      headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    30000,
+  );
+  await handleResponseError(response);
+  const blob = await response.blob();
+  const info = response.headers.get("X-Info") || "";
+  return {
+    type: "file",
+    blob,
+    filename: `cv_${name.replace(/\s+/g, "_").slice(0, 30)}.pdf`,
+    info: info || "CV PDF tayyor",
+  };
+}
+
 // ─── Premium stubs ────────────────────────────────────────────────
 
 function premiumStub() {
@@ -739,6 +777,7 @@ const SERVICE_HANDLERS = {
   qr,
   cert,
   schedule,
+  cv,
   // Archive
   zip,
   unzip,

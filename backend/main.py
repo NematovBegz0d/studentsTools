@@ -257,7 +257,8 @@ async def lifespan(app: FastAPI):
     # ── Ma'lumotlar bazasini ishga tushirish ──
     try:
         await db.init_db()
-        logger.info("SQLite DB ishga tushdi")
+        db_type = "PostgreSQL" if db._USE_PG else "SQLite"
+        logger.info(f"{db_type} DB ishga tushdi")
     except Exception as e:
         logger.error(f"DB init xatosi: {e}")
 
@@ -2240,6 +2241,244 @@ async def photo3x4(
     except Exception as e:
         logger.error(f"photo3x4 xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"photo3x4: {type(e).__name__}: {str(e)[:160]}")
+
+
+# ─── CV (Resume) Generator ────────────────────────────────────────────────────
+
+_CV_TEMPLATES = {
+    "modern":  {"accent": (79, 70, 229),  "bg": (248, 247, 255), "text": (15, 15, 30)},
+    "classic": {"accent": (30, 64, 175),  "bg": (255, 255, 255), "text": (17, 24, 39)},
+    "minimal": {"accent": (5, 150, 105),  "bg": (255, 255, 255), "text": (17, 24, 39)},
+    "dark":    {"accent": (167, 139, 250), "bg": (15, 15, 30),   "text": (240, 240, 255)},
+}
+
+
+def _do_cv(
+    name: str,
+    title: str,
+    email: str,
+    phone: str,
+    location: str,
+    summary: str,
+    skills: list[str],
+    education: list[dict],   # [{degree, school, year}]
+    experience: list[dict],  # [{position, company, period, desc}]
+    languages: list[str],
+    template: str = "modern",
+) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.colors import Color, HexColor, white, black
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle
+    )
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    import os as _os
+
+    tmpl = _CV_TEMPLATES.get(template, _CV_TEMPLATES["modern"])
+    accent  = Color(tmpl["accent"][0]/255, tmpl["accent"][1]/255, tmpl["accent"][2]/255)
+    bg_col  = Color(tmpl["bg"][0]/255,     tmpl["bg"][1]/255,     tmpl["bg"][2]/255)
+    txt_col = Color(tmpl["text"][0]/255,   tmpl["text"][1]/255,   tmpl["text"][2]/255)
+
+    # Register DejaVu for Unicode (Cyrillic + Latin)
+    _dv_dir = "/usr/share/fonts/truetype/dejavu"
+    _font_reg  = "DejaVuSans"
+    _font_bold = "DejaVuSans-Bold"
+    try:
+        if _os.path.exists(f"{_dv_dir}/DejaVuSans.ttf"):
+            pdfmetrics.registerFont(TTFont(_font_reg,  f"{_dv_dir}/DejaVuSans.ttf"))
+            pdfmetrics.registerFont(TTFont(_font_bold, f"{_dv_dir}/DejaVuSans-Bold.ttf"))
+    except Exception:
+        _font_reg = _font_bold = "Helvetica"
+
+    W, H = A4
+    ML, MR, MT, MB = 18*mm, 18*mm, 18*mm, 18*mm
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB,
+    )
+
+    def _style(name_s, **kw):
+        base = kw.pop("parent", None)
+        s = ParagraphStyle(name_s, fontName=_font_reg, textColor=txt_col, **kw)
+        return s
+
+    s_name    = _style("cvname",  fontName=_font_bold, fontSize=26, leading=30, textColor=accent)
+    s_title   = _style("cvtitle", fontName=_font_reg,  fontSize=13, leading=16, textColor=txt_col, spaceAfter=2)
+    s_contact = _style("cvcont",  fontName=_font_reg,  fontSize=9,  leading=13, textColor=txt_col)
+    s_section = _style("cvsec",   fontName=_font_bold, fontSize=11, leading=14, textColor=accent,
+                        spaceBefore=10, spaceAfter=3)
+    s_body    = _style("cvbody",  fontName=_font_reg,  fontSize=9.5, leading=14, textColor=txt_col)
+    s_bold    = _style("cvbold",  fontName=_font_bold, fontSize=9.5, leading=14, textColor=txt_col)
+    s_small   = _style("cvsmall", fontName=_font_reg,  fontSize=8.5, leading=12, textColor=txt_col)
+    s_skill   = _style("cvskill", fontName=_font_reg,  fontSize=9,   leading=13, textColor=txt_col)
+
+    def hr():
+        return HRFlowable(width="100%", thickness=0.8, color=accent, spaceAfter=4, spaceBefore=2)
+
+    story = []
+
+    # ── Header ────────────────────────────────────────────────────────
+    story.append(Paragraph(name or "Ism Familiya", s_name))
+    if title:
+        story.append(Paragraph(title, s_title))
+
+    contacts = [x for x in [email, phone, location] if x]
+    if contacts:
+        story.append(Paragraph("  •  ".join(contacts), s_contact))
+    story.append(Spacer(1, 4*mm))
+
+    # ── Summary ───────────────────────────────────────────────────────
+    if summary:
+        story.append(hr())
+        story.append(Paragraph("Haqida / О себе", s_section))
+        story.append(Paragraph(summary, s_body))
+        story.append(Spacer(1, 2*mm))
+
+    # ── Experience ────────────────────────────────────────────────────
+    if experience:
+        story.append(hr())
+        story.append(Paragraph("Ish tajribasi / Опыт работы", s_section))
+        for exp in experience:
+            pos     = exp.get("position", "")
+            company = exp.get("company", "")
+            period  = exp.get("period", "")
+            desc    = exp.get("desc", "")
+            header  = f"<b>{pos}</b>" + (f" — {company}" if company else "")
+            story.append(Paragraph(header, s_bold))
+            if period:
+                story.append(Paragraph(period, s_small))
+            if desc:
+                story.append(Paragraph(desc, s_body))
+            story.append(Spacer(1, 2*mm))
+
+    # ── Education ─────────────────────────────────────────────────────
+    if education:
+        story.append(hr())
+        story.append(Paragraph("Ta'lim / Образование", s_section))
+        for edu in education:
+            degree = edu.get("degree", "")
+            school = edu.get("school", "")
+            year   = edu.get("year", "")
+            header = f"<b>{degree}</b>" + (f" — {school}" if school else "")
+            story.append(Paragraph(header, s_bold))
+            if year:
+                story.append(Paragraph(year, s_small))
+            story.append(Spacer(1, 2*mm))
+
+    # ── Skills ────────────────────────────────────────────────────────
+    if skills:
+        story.append(hr())
+        story.append(Paragraph("Ko'nikmalar / Навыки", s_section))
+        # Chips in 3 columns
+        rows = [skills[i:i+3] for i in range(0, len(skills), 3)]
+        tdata = []
+        for row in rows:
+            while len(row) < 3:
+                row.append("")
+            tdata.append([Paragraph(f"• {s}", s_skill) for s in row])
+        if tdata:
+            col_w = (W - ML - MR) / 3
+            tbl = Table(tdata, colWidths=[col_w]*3)
+            tbl.setStyle(TableStyle([
+                ("VALIGN", (0,0), (-1,-1), "TOP"),
+                ("LEFTPADDING",  (0,0), (-1,-1), 0),
+                ("RIGHTPADDING", (0,0), (-1,-1), 4),
+                ("BOTTOMPADDING",(0,0), (-1,-1), 3),
+            ]))
+            story.append(tbl)
+        story.append(Spacer(1, 2*mm))
+
+    # ── Languages ─────────────────────────────────────────────────────
+    if languages:
+        story.append(hr())
+        story.append(Paragraph("Tillar / Языки", s_section))
+        story.append(Paragraph("  •  ".join(languages), s_body))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+@app.post("/api/cv")
+@limiter.limit("10/minute")
+async def make_cv(request: Request):
+    t0 = time.time()
+    try:
+        body = await request.json()
+
+        name     = (body.get("name") or "").strip()[:80]
+        title    = (body.get("title") or "").strip()[:100]
+        email    = (body.get("email") or "").strip()[:80]
+        phone    = (body.get("phone") or "").strip()[:30]
+        location = (body.get("location") or "").strip()[:80]
+        summary  = (body.get("summary") or "").strip()[:800]
+        template = (body.get("template") or "modern").strip().lower()
+        if template not in _CV_TEMPLATES:
+            template = "modern"
+
+        raw_skills = body.get("skills") or []
+        if isinstance(raw_skills, str):
+            raw_skills = [s.strip() for s in raw_skills.split(",") if s.strip()]
+        skills = [str(s).strip()[:40] for s in raw_skills[:20]]
+
+        raw_langs = body.get("languages") or []
+        if isinstance(raw_langs, str):
+            raw_langs = [s.strip() for s in raw_langs.split(",") if s.strip()]
+        languages = [str(s).strip()[:40] for s in raw_langs[:10]]
+
+        education = []
+        for edu in (body.get("education") or [])[:8]:
+            if isinstance(edu, dict):
+                education.append({
+                    "degree": str(edu.get("degree") or "")[:80],
+                    "school": str(edu.get("school") or "")[:80],
+                    "year":   str(edu.get("year")   or "")[:20],
+                })
+
+        experience = []
+        for exp in (body.get("experience") or [])[:8]:
+            if isinstance(exp, dict):
+                experience.append({
+                    "position": str(exp.get("position") or "")[:80],
+                    "company":  str(exp.get("company")  or "")[:80],
+                    "period":   str(exp.get("period")   or "")[:40],
+                    "desc":     str(exp.get("desc")     or "")[:400],
+                })
+
+        if not name:
+            raise HTTPException(status_code=400, detail="Ism (name) majburiy")
+
+        loop = asyncio.get_event_loop()
+        pdf_bytes = await asyncio.wait_for(
+            loop.run_in_executor(
+                _converter_pool,
+                functools.partial(
+                    _do_cv, name, title, email, phone, location,
+                    summary, skills, education, experience, languages, template,
+                ),
+            ),
+            timeout=30.0,
+        )
+        fname = f"cv_{name.replace(' ', '_')[:30]}.pdf"
+        logger.info(f"cv: {name!r} {template} {len(pdf_bytes)//1024}KB {time.time()-t0:.1f}s")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{fname}"',
+                "X-Info": safe_header(f"{template} · {len(experience)} tajriba · {len(education)} ta'lim"),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"cv xato: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"cv: {type(e).__name__}: {str(e)[:160]}")
+
 
 # ─── Excel → PDF ──────────────────────────────────────────────────────────────
 
