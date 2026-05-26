@@ -4317,20 +4317,72 @@ async def user_plan(request: Request, user_id: int):
     }
 
 
-# ─── Admin: Stats ─────────────────────────────────────────────────────────────
+# ─── Admin helpers ─────────────────────────────────────────────────────────────
 
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
-@app.get("/api/stats")
-async def admin_stats(request: Request):
-    """
-    Bearer token bilan himoyalangan admin statistikasi.
-    Header: Authorization: Bearer <ADMIN_TOKEN>
-    """
+def _check_admin(request: Request):
     if ADMIN_TOKEN:
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer ") or auth[7:] != ADMIN_TOKEN:
             raise HTTPException(status_code=403, detail="Ruxsat yo'q")
+
+# ─── Admin: Panel HTML ─────────────────────────────────────────────────────────
+
+@app.get("/admin", include_in_schema=False)
+async def admin_panel():
+    import os as _os
+    html_path = _os.path.join(_os.path.dirname(__file__), "admin.html")
+    if not _os.path.exists(html_path):
+        raise HTTPException(status_code=404, detail="admin.html topilmadi")
+    from fastapi.responses import HTMLResponse
+    with open(html_path, encoding="utf-8") as f:
+        return HTMLResponse(f.read())
+
+# ─── Admin: Stats ──────────────────────────────────────────────────────────────
+
+@app.get("/api/stats")
+async def admin_stats(request: Request):
+    _check_admin(request)
     stats = await db.get_stats()
     stats["uptime_seconds"] = int(time.time() - _start_time)
     return stats
+
+# ─── Admin: Users ──────────────────────────────────────────────────────────────
+
+@app.get("/api/admin/users")
+async def admin_users(
+    request: Request,
+    offset: int = 0,
+    limit: int = 50,
+    search: str = "",
+):
+    _check_admin(request)
+    return await db.get_users(offset=offset, limit=min(limit, 200), search=search)
+
+# ─── Admin: Payments ───────────────────────────────────────────────────────────
+
+@app.get("/api/admin/payments")
+async def admin_payments(
+    request: Request,
+    offset: int = 0,
+    limit: int = 50,
+):
+    _check_admin(request)
+    return await db.get_payments(offset=offset, limit=min(limit, 200))
+
+# ─── Admin: Set plan ───────────────────────────────────────────────────────────
+
+@app.post("/api/admin/user/{user_id}/plan")
+async def admin_set_plan(
+    request: Request,
+    user_id: int,
+):
+    _check_admin(request)
+    body = await request.json()
+    plan = body.get("plan", "free")
+    days = int(body.get("days", 30))
+    if plan not in ("free", "monthly", "yearly"):
+        raise HTTPException(status_code=400, detail="plan: free | monthly | yearly")
+    await db.admin_set_plan(user_id, plan, days)
+    return {"ok": True, "user_id": user_id, "plan": plan, "days": days}

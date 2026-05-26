@@ -212,6 +212,47 @@ if _USE_PG:
             "total_revenue":  total_revenue,
         }
 
+    async def get_users(offset: int = 0, limit: int = 50, search: str = "") -> list:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            if search:
+                rows = await conn.fetch("""
+                    SELECT id, username, first_name, plan, plan_until, created_at, usage_count
+                    FROM users
+                    WHERE username ILIKE $1 OR CAST(id AS TEXT) LIKE $1
+                    ORDER BY created_at DESC LIMIT $2 OFFSET $3
+                """, f"%{search}%", limit, offset)
+            else:
+                rows = await conn.fetch("""
+                    SELECT id, username, first_name, plan, plan_until, created_at, usage_count
+                    FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2
+                """, limit, offset)
+            total = await conn.fetchval("SELECT COUNT(*) FROM users")
+            return {"users": [dict(r) for r in rows], "total": total}
+
+    async def get_payments(offset: int = 0, limit: int = 50) -> list:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT p.id, p.user_id, p.plan, p.amount, p.status,
+                       p.payme_id, p.created_at, p.completed_at,
+                       u.username, u.first_name
+                FROM payments p LEFT JOIN users u ON p.user_id = u.id
+                ORDER BY p.created_at DESC LIMIT $1 OFFSET $2
+            """, limit, offset)
+            total = await conn.fetchval("SELECT COUNT(*) FROM payments")
+            return {"payments": [dict(r) for r in rows], "total": total}
+
+    async def admin_set_plan(user_id: int, plan: str, days: int = 30):
+        from datetime import timedelta
+        plan_until = datetime.now(timezone.utc) + timedelta(days=days) if plan != "free" else None
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE users SET plan=$1, plan_until=$2 WHERE id=$3",
+                plan, plan_until, user_id,
+            )
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SQLite fallback (local development — DATABASE_URL yo'q bo'lganda)
@@ -392,3 +433,49 @@ else:
             "today_revenue":  today_revenue,
             "total_revenue":  total_revenue,
         }
+
+    async def get_users(offset: int = 0, limit: int = 50, search: str = "") -> dict:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            if search:
+                q = f"%{search}%"
+                async with db.execute("""
+                    SELECT id, username, first_name, plan, plan_until, created_at, usage_count
+                    FROM users WHERE username LIKE ? OR CAST(id AS TEXT) LIKE ?
+                    ORDER BY created_at DESC LIMIT ? OFFSET ?
+                """, (q, q, limit, offset)) as cur:
+                    users = [dict(r) for r in await cur.fetchall()]
+            else:
+                async with db.execute("""
+                    SELECT id, username, first_name, plan, plan_until, created_at, usage_count
+                    FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?
+                """, (limit, offset)) as cur:
+                    users = [dict(r) for r in await cur.fetchall()]
+            async with db.execute("SELECT COUNT(*) as n FROM users") as cur:
+                total = (await cur.fetchone())["n"]
+        return {"users": users, "total": total}
+
+    async def get_payments(offset: int = 0, limit: int = 50) -> dict:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("""
+                SELECT p.id, p.user_id, p.plan, p.amount, p.status,
+                       p.payme_id, p.created_at, p.completed_at,
+                       u.username, u.first_name
+                FROM payments p LEFT JOIN users u ON p.user_id = u.id
+                ORDER BY p.created_at DESC LIMIT ? OFFSET ?
+            """, (limit, offset)) as cur:
+                payments = [dict(r) for r in await cur.fetchall()]
+            async with db.execute("SELECT COUNT(*) as n FROM payments") as cur:
+                total = (await cur.fetchone())["n"]
+        return {"payments": payments, "total": total}
+
+    async def admin_set_plan(user_id: int, plan: str, days: int = 30):
+        from datetime import timedelta
+        plan_until = (datetime.now() + timedelta(days=days)).isoformat() if plan != "free" else None
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "UPDATE users SET plan=?, plan_until=? WHERE id=?",
+                (plan, plan_until, user_id),
+            )
+            await db.commit()
