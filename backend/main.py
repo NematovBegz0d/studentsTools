@@ -34,7 +34,7 @@ from img2pdf_improved import (
 # ─── Config ──────────────────────────────────────────────────────────────────
 
 BOT_TOKEN     = os.environ.get("BOT_TOKEN", "")
-APP_URL       = os.environ.get("APP_URL", "https://nematovbegz0d.github.io/studentsTools/EduBot.html")
+APP_URL       = os.environ.get("APP_URL", "https://nematovbegz0d.github.io/studentsTools/EduBot.html?v=8")
 # Telegram webhook secret token — Telegram'ga setWebhook qilganda biz uzatamiz, har
 # kelgan so'rovda X-Telegram-Bot-Api-Secret-Token header bilan tasdiqlanadi.
 # Agar bo'sh bo'lsa, BOT_TOKEN dan hash hosil qilamiz (deterministik, hech kim taxmin qilolmaydi).
