@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y \
     libcairo2 \
     libgdk-pixbuf-2.0-0 \
     shared-mime-info \
+    libheif1 \
+    libde265-0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

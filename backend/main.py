@@ -2121,6 +2121,7 @@ async def img_to_pdf(
     margin_mm: float = Form(10.0),    # 0–30 mm
     fit_mode: str    = Form("fit"),   # fit | fill | center
     dpi: int         = Form(150),     # 72 | 96 | 150 | 300
+    mode: str        = Form("normal"),# normal | document | searchable
 ):
     t0 = time.time()
     try:
@@ -2129,22 +2130,24 @@ async def img_to_pdf(
 
         if not is_image_bytes(data):
             raise HTTPException(status_code=422,
-                detail="Rasm fayli emas. JPG, PNG, WebP, TIFF, BMP, GIF yuklang.")
+                detail="Rasm fayli emas. JPG, PNG, WebP, TIFF, BMP, GIF, HEIC, AVIF yuklang.")
 
         page_size, margin_mm, fit_mode, dpi = img2pdf_validate(page_size, margin_mm, fit_mode, dpi)
         fname = file.filename or "image"
+        # 'searchable' rejim OCR ishlatadi — vaqt ko'proq kerak
+        timeout = 90.0 if mode == "searchable" else (45.0 if mode == "document" else 30.0)
 
         loop = asyncio.get_event_loop()
         try:
             pdf_bytes, info = await asyncio.wait_for(
                 loop.run_in_executor(
                     _converter_pool,
-                    functools.partial(do_img2pdf_single, data, page_size, margin_mm, fit_mode, dpi, fname),
+                    functools.partial(do_img2pdf_single, data, page_size, margin_mm, fit_mode, dpi, fname, mode),
                 ),
-                timeout=30.0,
+                timeout=timeout,
             )
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=408, detail="Konversiya 30 soniyadan oshdi.")
+            raise HTTPException(status_code=408, detail=f"Konversiya {int(timeout)} soniyadan oshdi.")
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
@@ -2174,6 +2177,7 @@ async def imgs_to_pdf(
     margin_mm: float = Form(10.0),
     fit_mode: str    = Form("fit"),
     dpi: int         = Form(150),
+    mode: str        = Form("normal"),  # normal | document | searchable
 ):
     t0 = time.time()
     try:
@@ -2199,18 +2203,21 @@ async def imgs_to_pdf(
             raise HTTPException(status_code=422, detail="Yuklangan fayllar ichida rasm topilmadi.")
 
         page_size, margin_mm, fit_mode, dpi = img2pdf_validate(page_size, margin_mm, fit_mode, dpi)
+        # OCR rejimi ko'p sahifa uchun ancha vaqt oladi — har sahifaga ~5s
+        timeout = 30.0 + len(all_data) * (10.0 if mode == "searchable" else 3.0)
+        timeout = min(timeout, 300.0)  # max 5 daqiqa
 
         loop = asyncio.get_event_loop()
         try:
             pdf_bytes, info = await asyncio.wait_for(
                 loop.run_in_executor(
                     _converter_pool,
-                    functools.partial(do_imgs2pdf_multi, all_data, all_names, page_size, margin_mm, fit_mode, dpi),
+                    functools.partial(do_imgs2pdf_multi, all_data, all_names, page_size, margin_mm, fit_mode, dpi, mode),
                 ),
-                timeout=90.0,
+                timeout=timeout,
             )
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=408, detail="Konversiya 90 soniyadan oshdi.")
+            raise HTTPException(status_code=408, detail=f"Konversiya {int(timeout)} soniyadan oshdi.")
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
@@ -4259,73 +4266,161 @@ async def translate(request: Request):
     except Exception as e:
         return JSONResponse({"result": f"❌ {e}"})
 
-# ─── Wikipedia (proxy) ────────────────────────────────────────────────────────
+# ─── Wikipedia (proxy) — professional ─────────────────────────────────────────
 
 # ✅ Wikipedia 2024'dan beri User-Agent header'ini majburiy qildi
-# Yo'q bo'lsa: rate-limit, bo'sh natija yoki 403
 _WIKI_HEADERS = {
     "User-Agent": "EduBot/1.0 (https://t.me/edubot; contact@edubot.uz) httpx/0.27",
     "Accept": "application/json",
 }
 
 
-# ✅ YANGILANDI: Wiki natijalari 1 soat cache (Redis/in-memory)
-@_cache.cached(ttl=3600, key_prefix="wiki")
-async def _wiki_lookup(q: str, pref_lang: str) -> str:
+async def _wiki_search_titles(client, lang: str, q: str) -> list[str]:
+    """Top 5 mos keladigan maqola sarlavhalarini topadi (opensearch + search fallback)."""
+    titles: list[str] = []
+    try:
+        sr = await client.get(
+            f"https://{lang}.wikipedia.org/w/api.php",
+            params={"action": "opensearch", "search": q, "limit": 5,
+                    "namespace": 0, "format": "json"},
+        )
+        if sr.status_code == 200:
+            j = sr.json()
+            if isinstance(j, list) and len(j) > 1 and isinstance(j[1], list):
+                titles = [t for t in j[1] if t]
+    except Exception:
+        pass
+
+    if not titles:
+        try:
+            sr2 = await client.get(
+                f"https://{lang}.wikipedia.org/w/api.php",
+                params={"action": "query", "list": "search", "srsearch": q,
+                        "srlimit": 5, "format": "json"},
+            )
+            if sr2.status_code == 200:
+                data = sr2.json().get("query", {}).get("search", [])
+                titles = [s["title"] for s in data if s.get("title")]
+        except Exception:
+            pass
+    return titles
+
+
+async def _wiki_fetch_full(client, lang: str, title: str) -> dict | None:
+    """
+    To'liq maqola ma'lumotini oladi:
+      title, extract (1-paragraf), description, thumbnail, url, type
+    """
+    encoded = url_quote(title, safe="")
+    try:
+        r = await client.get(
+            f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}"
+        )
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        if not d.get("extract"):
+            return None
+        return {
+            "title":       d.get("title", title),
+            "extract":     d.get("extract", ""),
+            "description": d.get("description", ""),
+            "thumbnail":   d.get("thumbnail", {}).get("source", ""),
+            "url":         d.get("content_urls", {}).get("desktop", {}).get("page", ""),
+            "type":        d.get("type", "standard"),
+            "lang":        lang,
+        }
+    except Exception:
+        return None
+
+
+async def _wiki_fetch_related(client, lang: str, title: str, limit: int = 5) -> list[str]:
+    """Maqolaga tegishli boshqa maqolalar sarlavhalari (links from intro)."""
+    encoded = url_quote(title, safe="")
+    try:
+        r = await client.get(
+            f"https://{lang}.wikipedia.org/api/rest_v1/page/related/{encoded}"
+        )
+        if r.status_code == 200:
+            pages = r.json().get("pages", [])
+            return [p.get("title", "") for p in pages[:limit] if p.get("title")]
+    except Exception:
+        pass
+    return []
+
+
+@_cache.cached(ttl=3600, key_prefix="wiki_v2")
+async def _wiki_lookup(q: str, pref_lang: str) -> dict:
+    """
+    Professional Wikipedia qidiruv:
+      - Multi-lang (pref_lang → uz → ru → en)
+      - opensearch + query+search fallback
+      - Top 1 to'liq + 2-4 alternatives
+      - Thumbnail + URL + related articles
+      - Disambiguation page skip
+    """
     langs = ([pref_lang] + [l for l in ["uz", "ru", "en"] if l != pref_lang]) if pref_lang else ["uz", "ru", "en"]
     async with httpx.AsyncClient(timeout=15, headers=_WIKI_HEADERS, follow_redirects=True) as client:
         for lang in langs:
             try:
-                # 1. Qidiruv — opensearch + search action fallback
-                titles = []
-                try:
-                    sr = await client.get(
-                        f"https://{lang}.wikipedia.org/w/api.php",
-                        params={"action": "opensearch", "search": q, "limit": 3,
-                                "namespace": 0, "format": "json"},
-                    )
-                    if sr.status_code == 200:
-                        titles = sr.json()[1] if isinstance(sr.json(), list) and len(sr.json()) > 1 else []
-                except Exception:
-                    pass
-
-                # opensearch bo'sh bo'lsa, klassik search'ga o'tamiz
+                titles = await _wiki_search_titles(client, lang, q)
                 if not titles:
-                    try:
-                        sr2 = await client.get(
-                            f"https://{lang}.wikipedia.org/w/api.php",
-                            params={"action": "query", "list": "search", "srsearch": q,
-                                    "srlimit": 3, "format": "json"},
-                        )
-                        if sr2.status_code == 200:
-                            data = sr2.json().get("query", {}).get("search", [])
-                            titles = [s["title"] for s in data if s.get("title")]
-                    except Exception:
-                        pass
+                    titles = [q]
 
-                # 2. Har bir nomzodni summary endpoint'dan tekshirish
-                # (birinchi muvaffaqiyatli — qaytaramiz)
-                candidates = titles[:3] if titles else [q]
-                for title in candidates:
-                    encoded = url_quote(title, safe="")
-                    try:
-                        r = await client.get(
-                            f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}"
-                        )
-                        if r.status_code == 200:
-                            d = r.json()
-                            if d.get("extract") and d.get("type") != "disambiguation":
-                                url = d.get("content_urls", {}).get("desktop", {}).get("page", "")
-                                result = f"📖 {d['title']} [{lang.upper()}]\n\n{d['extract']}"
-                                if url:
-                                    result += f"\n\n🔗 {url}"
-                                return result
-                    except Exception:
+                # Birinchi non-disambig'ni topish
+                primary = None
+                alts_titles = []
+                for title in titles[:5]:
+                    info = await _wiki_fetch_full(client, lang, title)
+                    if not info:
                         continue
+                    if info["type"] == "disambiguation":
+                        continue
+                    if primary is None:
+                        primary = info
+                    else:
+                        alts_titles.append(info["title"])
+                    if len(alts_titles) >= 3:
+                        break
+
+                if not primary:
+                    continue  # bu tilda topilmadi → keyingisi
+
+                # Related articles (best-effort, optional)
+                related = await _wiki_fetch_related(client, lang, primary["title"], limit=5)
+
+                return {
+                    "title":       primary["title"],
+                    "extract":     primary["extract"],
+                    "description": primary["description"],
+                    "thumbnail":   primary["thumbnail"],
+                    "url":         primary["url"],
+                    "lang":        lang.upper(),
+                    "alternatives": alts_titles,
+                    "related":     related,
+                }
             except Exception as e:
                 logger.warning(f"wiki [{lang}] xato: {type(e).__name__}: {str(e)[:80]}")
                 continue
-    return ""
+    return {}
+
+
+def _wiki_format_text(d: dict) -> str:
+    """Backward-compat: structured dict → matn (eski frontend uchun)."""
+    if not d:
+        return ""
+    parts = [f"📖 {d['title']} [{d['lang']}]"]
+    if d.get("description"):
+        parts.append(f"_{d['description']}_")
+    parts.append("")
+    parts.append(d["extract"])
+    if d.get("url"):
+        parts.append(f"\n🔗 {d['url']}")
+    if d.get("alternatives"):
+        parts.append(f"\n📚 Boshqa natijalar: " + " · ".join(d["alternatives"]))
+    if d.get("related"):
+        parts.append(f"📎 Tegishli: " + " · ".join(d["related"][:3]))
+    return "\n".join(parts)
 
 
 @app.post("/api/wiki")
@@ -4336,10 +4431,21 @@ async def wiki(request: Request):
     pref_lang = (body.get("lang") or "").strip().lower()[:5]
     if not q:
         return JSONResponse({"result": "❌ Qidiruv so'zini kiriting"})
-    result = await _wiki_lookup(q, pref_lang)
-    if not result:
+    data = await _wiki_lookup(q, pref_lang)
+    if not data:
         return JSONResponse({"result": "❌ Wikipedia'da topilmadi. Boshqa so'z bilan qidiring."})
-    return JSONResponse({"result": result})
+    # Frontend yangilangan bo'lsa, strukturalashgan ma'lumotni ham ko'ra oladi
+    return JSONResponse({
+        "result":       _wiki_format_text(data),
+        "title":        data["title"],
+        "extract":      data["extract"],
+        "description":  data.get("description", ""),
+        "thumbnail":    data.get("thumbnail", ""),
+        "url":          data.get("url", ""),
+        "lang":         data["lang"],
+        "alternatives": data.get("alternatives", []),
+        "related":      data.get("related", []),
+    })
 
 # ─── Books (proxy) ────────────────────────────────────────────────────────────
 

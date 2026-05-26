@@ -40,3 +40,5 @@ redis>=5.0.0
 sentry-sdk[fastapi]>=2.0.0
 marker-pdf>=0.3.0
 pypandoc_binary>=1.13
+pillow-heif>=0.18.0
+pillow-avif-plugin>=1.4.0

@@ -475,14 +475,27 @@ async function docx2pdf({ file }) {
 
 // ─── File conversion ──────────────────────────────────────────────
 
-async function img2pdf({ file }) {
-  validateFile(file, ".jpg,.jpeg,.png");
-  return apiFile("/api/img2pdf", buildFormData("file", file), "image.pdf", "X-Info");
+// Barcha rasm formatlari (HEIC=iPhone, AVIF=zamonaviy kamera, TIFF=skan)
+const IMG_FORMATS = ".jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif,.heic,.heif,.avif";
+
+async function img2pdf({ file, opts = {} }) {
+  validateFile(file, IMG_FORMATS);
+  const form = buildFormData("file", file);
+  if (opts.mode) form.append("mode", opts.mode);          // normal | document | searchable
+  if (opts.page_size) form.append("page_size", opts.page_size);
+  if (opts.margin_mm != null) form.append("margin_mm", String(opts.margin_mm));
+  if (opts.fit_mode) form.append("fit_mode", opts.fit_mode);
+  return apiFile("/api/img2pdf", form, "image.pdf", "X-Info");
 }
 
-async function imgs2pdf({ files }) {
-  validateFiles(files, ".jpg,.jpeg,.png");
-  return apiFile("/api/imgs2pdf", buildFormData("files", files), "images.pdf", "X-Info");
+async function imgs2pdf({ files, opts = {} }) {
+  validateFiles(files, IMG_FORMATS);
+  const form = buildFormData("files", files);
+  if (opts.mode) form.append("mode", opts.mode);
+  if (opts.page_size) form.append("page_size", opts.page_size);
+  if (opts.margin_mm != null) form.append("margin_mm", String(opts.margin_mm));
+  if (opts.fit_mode) form.append("fit_mode", opts.fit_mode);
+  return apiFile("/api/imgs2pdf", form, "images.pdf", "X-Info");
 }
 
 async function xlsx2pdf({ file }) {
