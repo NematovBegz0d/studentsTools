@@ -101,17 +101,25 @@ def _do_pdf2docx_pymupdf(pdf_path: str, docx_path: str) -> None:
     pdf = fitz.open(pdf_path)
     doc_out = Document()
 
-    # Median font size → body text baseline for heading detection
-    all_sizes = []
-    for page in pdf:
+    # Median font size — faqat birinchi 3 sahifadan namuna (OOM oldini olish)
+    sample_sizes = []
+    for page in pdf[:3]:
         for block in page.get_text("dict")["blocks"]:
             if block.get("type") == 0:
                 for line in block.get("lines", []):
                     for span in line.get("spans", []):
                         sz = span.get("size", 0)
                         if sz > 0 and span.get("text", "").strip():
-                            all_sizes.append(sz)
-    body_size = sorted(all_sizes)[len(all_sizes) // 2] if all_sizes else 11.0
+                            sample_sizes.append(sz)
+                            if len(sample_sizes) >= 500:
+                                break
+                    if len(sample_sizes) >= 500:
+                        break
+            if len(sample_sizes) >= 500:
+                break
+        if len(sample_sizes) >= 500:
+            break
+    body_size = sorted(sample_sizes)[len(sample_sizes) // 2] if sample_sizes else 11.0
 
     for page_num, page in enumerate(pdf):
         if page_num > 0:
@@ -231,12 +239,15 @@ def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
             ("pdf2docx",      lambda: _do_pdf2docx(pdf_path, docx_path)),
         ]
     else:
-        chain = [
-            ("docling",       lambda: _do_pdf2docx_docling(pdf_path, docx_path)),
+        # ✅ YANGILANDI: DOCLING_DISABLED=1 bo'lsa docling o'tkazib yuboriladi
+        chain = []
+        if os.environ.get("DOCLING_DISABLED", "").lower() not in ("1", "true", "yes"):
+            chain.append(("docling", lambda: _do_pdf2docx_docling(pdf_path, docx_path)))
+        chain.extend([
             ("libreoffice",   lambda: _do_pdf2docx_libreoffice(pdf_path, docx_path)),
             ("pdf2docx",      lambda: _do_pdf2docx(pdf_path, docx_path)),
             ("pymupdf",       lambda: _do_pdf2docx_pymupdf(pdf_path, docx_path)),
-        ]
+        ])
 
     last_err = None
     for name, fn in chain:
@@ -398,98 +409,6 @@ def health():
         "ocr": ocr_ok, "rembg_ready": _rembg_session is not None,
         "max_file_mb": MAX_FILE_MB,
     }
-
-# ─── Debug (temporary — remove after diagnosis) ───────────────────────────────
-
-@app.get("/debug/libs")
-def debug_libs():
-    """Test which library operations work. Remove after debugging."""
-    results = {}
-
-    # Test reportlab
-    try:
-        from reportlab.platypus import SimpleDocTemplate, Paragraph
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.lib.pagesizes import A4
-        buf = io.BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=A4)
-        styles = getSampleStyleSheet()
-        doc.build([Paragraph("Test", styles["Normal"])])
-        pdf_bytes = buf.getvalue()
-        results["reportlab"] = f"ok ({len(pdf_bytes)} bytes)"
-    except Exception as e:
-        results["reportlab"] = f"FAIL: {type(e).__name__}: {e}"
-
-    # Test fitz open
-    try:
-        import fitz
-        results["fitz_version"] = fitz.version[0]
-    except Exception as e:
-        results["fitz_version"] = f"FAIL: {e}"
-
-    # Test fitz open + get_text
-    try:
-        import fitz
-        from reportlab.platypus import SimpleDocTemplate, Paragraph
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.lib.pagesizes import A4
-        buf2 = io.BytesIO()
-        doc2 = SimpleDocTemplate(buf2, pagesize=A4)
-        styles2 = getSampleStyleSheet()
-        doc2.build([Paragraph("Test content for fitz", styles2["Normal"])])
-        pdf_bytes2 = buf2.getvalue()
-        fdoc = fitz.open(stream=pdf_bytes2, filetype="pdf")
-        text = fdoc[0].get_text()
-        fdoc.close()
-        results["fitz_get_text"] = f"ok: '{text[:30]}'"
-    except Exception as e:
-        results["fitz_get_text"] = f"FAIL: {type(e).__name__}: {e}"
-
-    # Test fitz get_pixmap
-    try:
-        import fitz
-        fdoc2 = fitz.open(stream=pdf_bytes2, filetype="pdf")
-        pix = fdoc2[0].get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)
-        img = pix.tobytes("png")
-        fdoc2.close()
-        results["fitz_get_pixmap"] = f"ok ({len(img)} bytes)"
-    except Exception as e:
-        results["fitz_get_pixmap"] = f"FAIL: {type(e).__name__}: {e}"
-
-    # Test fitz tobytes (doc save)
-    try:
-        import fitz
-        fdoc3 = fitz.open(stream=pdf_bytes2, filetype="pdf")
-        saved = fdoc3.tobytes(garbage=4, deflate=True)
-        fdoc3.close()
-        results["fitz_tobytes"] = f"ok ({len(saved)} bytes)"
-    except Exception as e:
-        results["fitz_tobytes"] = f"FAIL: {type(e).__name__}: {e}"
-
-    # Test fitz doc.save to BytesIO
-    try:
-        import fitz
-        fdoc4 = fitz.open(stream=pdf_bytes2, filetype="pdf")
-        buf4 = io.BytesIO()
-        fdoc4.save(buf4, garbage=4, deflate=True)
-        fdoc4.close()
-        results["fitz_save_bytesio"] = f"ok ({len(buf4.getvalue())} bytes)"
-    except Exception as e:
-        results["fitz_save_bytesio"] = f"FAIL: {type(e).__name__}: {e}"
-
-    # Test pypdf
-    try:
-        from pypdf import PdfReader, PdfWriter
-        reader = PdfReader(io.BytesIO(pdf_bytes2))
-        writer = PdfWriter()
-        writer.add_page(reader.pages[0])
-        out = io.BytesIO()
-        writer.write(out)
-        results["pypdf"] = f"ok ({len(out.getvalue())} bytes)"
-    except Exception as e:
-        results["pypdf"] = f"FAIL: {type(e).__name__}: {e}"
-
-    return results
 
 # ─── Telegram Webhook ─────────────────────────────────────────────────────────
 
@@ -989,6 +908,29 @@ async def lock_pdf(
 
 # ─── PDF: Watermark ───────────────────────────────────────────────────────────
 
+# ✅ YANGILANDI: DejaVu fontni bir marta global cache qilish
+_wm_font_cached: str = ""
+
+def _get_wm_font() -> str:
+    """Register DejaVu-Bold once and cache the result."""
+    global _wm_font_cached
+    if _wm_font_cached:
+        return _wm_font_cached
+    import os as _os
+    _DEJAVU = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    if _os.path.exists(_DEJAVU):
+        try:
+            from reportlab.pdfbase import pdfmetrics as _pm
+            from reportlab.pdfbase.ttfonts import TTFont as _TTF
+            _pm.registerFont(_TTF("DejaVuSans-Bold", _DEJAVU))
+            _wm_font_cached = "DejaVuSans-Bold"
+            return _wm_font_cached
+        except Exception:
+            pass
+    _wm_font_cached = "Helvetica-Bold"
+    return _wm_font_cached
+
+
 def _make_wm_page(pw: float, ph: float, text: str,
                    opacity: float = 0.22, angle: int = 42, repeat: bool = True):
     """Create a ReportLab watermark overlay for one (pw×ph) page size."""
@@ -1005,20 +947,7 @@ def _make_wm_page(pw: float, ph: float, text: str,
     c.translate(pw / 2, ph / 2)
     c.rotate(angle)
     c.setFillColor(Color(0.5, 0.5, 0.5, alpha=max(0.05, min(0.9, opacity))))
-    # Use DejaVu for Cyrillic support; fall back to Helvetica if not installed
-    import os as _os
-    _DEJAVU = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    if _os.path.exists(_DEJAVU):
-        try:
-            from reportlab.pdfbase import pdfmetrics as _pm
-            from reportlab.pdfbase.ttfonts import TTFont as _TTF
-            _pm.registerFont(_TTF("DejaVuSans-Bold", _DEJAVU))
-            _wm_font = "DejaVuSans-Bold"
-        except Exception:
-            _wm_font = "Helvetica-Bold"
-    else:
-        _wm_font = "Helvetica-Bold"
-    c.setFont(_wm_font, font_size)
+    c.setFont(_get_wm_font(), font_size)
     offsets = (-spacing, 0, spacing) if repeat else (0,)
     for offset in offsets:
         c.drawCentredString(0, offset, text)
@@ -2793,6 +2722,7 @@ _PPTX_MAX_DIM  = 1920
 # ✅ YANGILANDI: python-pptx — rasm metadata va munosabatlarini saqlab siqish
 def _do_compresspptx(data: bytes) -> tuple:
     from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
     from pptx.oxml.ns import qn
     from PIL import Image
 
@@ -2802,7 +2732,7 @@ def _do_compresspptx(data: bytes) -> tuple:
     prs = Presentation(io.BytesIO(data))
     for slide in prs.slides:
         for shape in slide.shapes:
-            if shape.shape_type != 13:  # MSO_SHAPE_TYPE.PICTURE
+            if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
                 continue
             try:
                 img_blob = shape.image.blob
@@ -3174,35 +3104,50 @@ def _clean_ocr_text(text: str) -> str:
     return '\n'.join(result)
 
 
-# ✅ YANGILANDI: PaddleOCR birlamchi (tezroq, aniqroq), Tesseract fallback
-_paddle_ocr = None
+# ✅ YANGILANDI: PaddleOCR ikki sessiya — en (Latin) va cyrillic (Rus/Uzbek-kirill)
+_paddle_ocr_cache: dict = {}
 
-def _get_paddle_ocr():
-    global _paddle_ocr
-    if _paddle_ocr is None:
-        try:
-            from paddleocr import PaddleOCR
-            _paddle_ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
-        except ImportError:
-            pass
-    return _paddle_ocr
+def _get_paddle_ocr(lang: str = "en"):
+    """lang: 'en' (Latin/Uzbek-latin) | 'cyrillic' (Rus/Uzbek-kirill)"""
+    if lang in _paddle_ocr_cache:
+        return _paddle_ocr_cache[lang]
+    try:
+        from paddleocr import PaddleOCR
+        _paddle_ocr_cache[lang] = PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
+    except (ImportError, Exception) as e:
+        logger.debug(f"paddleocr {lang} sessiya yaratilmadi: {e}")
+        _paddle_ocr_cache[lang] = None
+    return _paddle_ocr_cache[lang]
 
 
-def _do_ocr_paddle(img_bytes: bytes) -> str:
-    ocr = _get_paddle_ocr()
-    if ocr is None:
-        raise ImportError("paddleocr not installed")
-    import numpy as np
-    from PIL import Image as _PIL
-    img = _PIL.open(io.BytesIO(img_bytes)).convert("RGB")
-    arr = np.array(img)
-    result = ocr.ocr(arr, cls=True)
+def _paddle_run(ocr_obj, arr) -> str:
+    if ocr_obj is None:
+        return ""
+    result = ocr_obj.ocr(arr, cls=True)
     lines = []
     for block in (result or []):
         for line in (block or []):
             if line and len(line) >= 2 and line[1]:
                 lines.append(line[1][0])
     return "\n".join(lines)
+
+
+def _do_ocr_paddle(img_bytes: bytes) -> str:
+    """Run both Latin and Cyrillic models, return longer/better result."""
+    import numpy as np
+    from PIL import Image as _PIL
+    en_ocr  = _get_paddle_ocr("en")
+    cyr_ocr = _get_paddle_ocr("cyrillic")
+    if en_ocr is None and cyr_ocr is None:
+        raise ImportError("paddleocr not installed")
+    img = _PIL.open(io.BytesIO(img_bytes)).convert("RGB")
+    arr = np.array(img)
+    en_text  = _paddle_run(en_ocr,  arr)
+    cyr_text = _paddle_run(cyr_ocr, arr)
+    # Cyrillic mavjudligini tekshir
+    if re.search(r'[а-яёўқғҳА-ЯЁ]', cyr_text):
+        return cyr_text if len(cyr_text) > len(en_text) * 0.5 else en_text
+    return en_text if len(en_text) >= len(cyr_text) else cyr_text
 
 
 def _do_ocr(data: bytes, is_pdf: bool) -> str:
@@ -4495,7 +4440,8 @@ async def admin_panel():
 
 # ─── Admin: Stats ──────────────────────────────────────────────────────────────
 
-@app.get("/api/stats")
+# Note: GET /api/admin/stats — admin panel uchun. POST /api/stats — public math statistika.
+@app.get("/api/admin/stats")
 async def admin_stats(request: Request):
     _check_admin(request)
     stats = await db.get_stats()

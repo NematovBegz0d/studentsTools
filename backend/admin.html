@@ -256,7 +256,7 @@ async function login() {
   document.getElementById('login-error').textContent = '';
   TOKEN = token;
   try {
-    await apiFetch('/api/stats');
+    await apiFetch('/api/admin/stats');
     localStorage.setItem('admin_token', token);
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'block';
@@ -305,7 +305,7 @@ function showPage(name) {
 // ── Dashboard ─────────────────────────────────────────────────────────
 async function loadDashboard() {
   try {
-    const s = await apiFetch('/api/stats');
+    const s = await apiFetch('/api/admin/stats');
     renderStats(s);
     renderTopServices(s.top_services || []);
     renderQuickInfo(s);
