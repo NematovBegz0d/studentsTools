@@ -876,6 +876,416 @@ function LockedState({
   }, t.subscribe)));
 }
 
+// ─── CV Form ──────────────────────────────────────────────────────
+const CV_TEMPLATES = [{
+  id: "modern",
+  label: "Modern",
+  color: "#4f46e5"
+}, {
+  id: "classic",
+  label: "Classic",
+  color: "#1e40af"
+}, {
+  id: "minimal",
+  label: "Minimal",
+  color: "#059669"
+}, {
+  id: "dark",
+  label: "Dark",
+  color: "#a78bfa"
+}];
+function CVForm({
+  data,
+  onChange,
+  accent
+}) {
+  const [expItems, setExpItems] = useS(data.experience?.length ? data.experience : [{
+    position: "",
+    company: "",
+    period: "",
+    desc: ""
+  }]);
+  const [eduItems, setEduItems] = useS(data.education?.length ? data.education : [{
+    degree: "",
+    school: "",
+    year: ""
+  }]);
+  const [skillsRaw, setSkillsRaw] = useS((data.skills || []).join(", "));
+  const [langsRaw, setLangsRaw] = useS((data.languages || []).join(", "));
+  const inp = {
+    width: "100%",
+    padding: "9px 12px",
+    borderRadius: "var(--radius-sm)",
+    border: "1px solid var(--border-medium)",
+    background: "var(--bg-surface-2)",
+    color: "var(--text-primary)",
+    fontSize: 13,
+    outline: "none",
+    boxSizing: "border-box",
+    marginBottom: 8
+  };
+  const label = {
+    fontSize: 11,
+    color: "var(--text-muted)",
+    marginBottom: 3,
+    display: "block"
+  };
+  const sectionTitle = {
+    fontSize: 12,
+    fontWeight: 700,
+    color: accent,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    margin: "14px 0 8px"
+  };
+  const addBtn = {
+    background: "transparent",
+    border: `1px dashed ${accent}`,
+    color: accent,
+    borderRadius: "var(--radius-sm)",
+    padding: "6px 12px",
+    fontSize: 12,
+    cursor: "pointer",
+    width: "100%"
+  };
+  const delBtn = {
+    background: "transparent",
+    border: "none",
+    color: "var(--text-muted)",
+    fontSize: 16,
+    cursor: "pointer",
+    padding: "2px 6px",
+    lineHeight: 1
+  };
+  const notify = patch => onChange({
+    ...data,
+    ...patch
+  });
+  const setExp = (i, key, val) => {
+    const next = expItems.map((e, idx) => idx === i ? {
+      ...e,
+      [key]: val
+    } : e);
+    setExpItems(next);
+    notify({
+      experience: next
+    });
+  };
+  const addExp = () => {
+    const next = [...expItems, {
+      position: "",
+      company: "",
+      period: "",
+      desc: ""
+    }];
+    setExpItems(next);
+    notify({
+      experience: next
+    });
+  };
+  const delExp = i => {
+    const next = expItems.filter((_, idx) => idx !== i);
+    setExpItems(next.length ? next : [{
+      position: "",
+      company: "",
+      period: "",
+      desc: ""
+    }]);
+    notify({
+      experience: next
+    });
+  };
+  const setEdu = (i, key, val) => {
+    const next = eduItems.map((e, idx) => idx === i ? {
+      ...e,
+      [key]: val
+    } : e);
+    setEduItems(next);
+    notify({
+      education: next
+    });
+  };
+  const addEdu = () => {
+    const next = [...eduItems, {
+      degree: "",
+      school: "",
+      year: ""
+    }];
+    setEduItems(next);
+    notify({
+      education: next
+    });
+  };
+  const delEdu = i => {
+    const next = eduItems.filter((_, idx) => idx !== i);
+    setEduItems(next.length ? next : [{
+      degree: "",
+      school: "",
+      year: ""
+    }]);
+    notify({
+      education: next
+    });
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      paddingBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: sectionTitle
+  }, "Shablon"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      marginBottom: 12
+    }
+  }, CV_TEMPLATES.map(tmpl => /*#__PURE__*/React.createElement("button", {
+    key: tmpl.id,
+    onClick: () => notify({
+      template: tmpl.id
+    }),
+    style: {
+      flex: 1,
+      padding: "7px 4px",
+      borderRadius: "var(--radius-sm)",
+      border: `2px solid ${data.template === tmpl.id ? tmpl.color : "var(--border-medium)"}`,
+      background: data.template === tmpl.id ? tmpl.color + "22" : "var(--bg-surface-2)",
+      color: data.template === tmpl.id ? tmpl.color : "var(--text-muted)",
+      fontSize: 11,
+      fontWeight: 600,
+      cursor: "pointer"
+    }
+  }, tmpl.label))), /*#__PURE__*/React.createElement("div", {
+    style: sectionTitle
+  }, "Asosiy ma'lumot"), /*#__PURE__*/React.createElement("label", {
+    style: label
+  }, "Ism Familiya *"), /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    placeholder: "Abdullayev Anvar",
+    value: data.name || "",
+    onChange: e => notify({
+      name: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("label", {
+    style: label
+  }, "Kasb / Lavozim"), /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    placeholder: "Frontend Developer",
+    value: data.title || "",
+    onChange: e => notify({
+      title: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: label
+  }, "Email"), /*#__PURE__*/React.createElement("input", {
+    style: {
+      ...inp,
+      marginBottom: 0
+    },
+    placeholder: "name@email.com",
+    value: data.email || "",
+    onChange: e => notify({
+      email: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: label
+  }, "Telefon"), /*#__PURE__*/React.createElement("input", {
+    style: {
+      ...inp,
+      marginBottom: 0
+    },
+    placeholder: "+998 90 123 45 67",
+    value: data.phone || "",
+    onChange: e => notify({
+      phone: e.target.value
+    })
+  }))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      ...label,
+      marginTop: 8
+    }
+  }, "Shahar / Manzil"), /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    placeholder: "Toshkent, O'zbekiston",
+    value: data.location || "",
+    onChange: e => notify({
+      location: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("div", {
+    style: sectionTitle
+  }, "Qisqacha ma'lumot"), /*#__PURE__*/React.createElement("textarea", {
+    style: {
+      ...inp,
+      resize: "vertical",
+      minHeight: 72,
+      fontFamily: "inherit"
+    },
+    placeholder: "O'zingiz haqingizda 2-3 jumla...",
+    value: data.summary || "",
+    onChange: e => notify({
+      summary: e.target.value
+    })
+  }), /*#__PURE__*/React.createElement("div", {
+    style: sectionTitle
+  }, "Ish tajribasi"), expItems.map((exp, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      border: "1px solid var(--border-medium)",
+      borderRadius: "var(--radius-sm)",
+      padding: "10px 12px",
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: "var(--text-muted)"
+    }
+  }, "#", i + 1), expItems.length > 1 && /*#__PURE__*/React.createElement("button", {
+    style: delBtn,
+    onClick: () => delExp(i)
+  }, "\u2715")), /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    placeholder: "Lavozim (masalan: Frontend Developer)",
+    value: exp.position,
+    onChange: e => setExp(i, "position", e.target.value)
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    style: {
+      ...inp,
+      marginBottom: 0
+    },
+    placeholder: "Kompaniya",
+    value: exp.company,
+    onChange: e => setExp(i, "company", e.target.value)
+  }), /*#__PURE__*/React.createElement("input", {
+    style: {
+      ...inp,
+      marginBottom: 0
+    },
+    placeholder: "2022\u20132024",
+    value: exp.period,
+    onChange: e => setExp(i, "period", e.target.value)
+  })), /*#__PURE__*/React.createElement("textarea", {
+    style: {
+      ...inp,
+      resize: "vertical",
+      minHeight: 56,
+      fontFamily: "inherit",
+      marginTop: 8
+    },
+    placeholder: "Vazifalar va yutuqlar...",
+    value: exp.desc,
+    onChange: e => setExp(i, "desc", e.target.value)
+  }))), /*#__PURE__*/React.createElement("button", {
+    style: addBtn,
+    onClick: addExp
+  }, "+ Ish tajriba qo'shish"), /*#__PURE__*/React.createElement("div", {
+    style: sectionTitle
+  }, "Ta'lim"), eduItems.map((edu, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      border: "1px solid var(--border-medium)",
+      borderRadius: "var(--radius-sm)",
+      padding: "10px 12px",
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: "var(--text-muted)"
+    }
+  }, "#", i + 1), eduItems.length > 1 && /*#__PURE__*/React.createElement("button", {
+    style: delBtn,
+    onClick: () => delEdu(i)
+  }, "\u2715")), /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    placeholder: "Diplom / Mutaxassislik",
+    value: edu.degree,
+    onChange: e => setEdu(i, "degree", e.target.value)
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    style: {
+      ...inp,
+      marginBottom: 0
+    },
+    placeholder: "Universitet",
+    value: edu.school,
+    onChange: e => setEdu(i, "school", e.target.value)
+  }), /*#__PURE__*/React.createElement("input", {
+    style: {
+      ...inp,
+      marginBottom: 0
+    },
+    placeholder: "2018\u20132022",
+    value: edu.year,
+    onChange: e => setEdu(i, "year", e.target.value)
+  })))), /*#__PURE__*/React.createElement("button", {
+    style: addBtn,
+    onClick: addEdu
+  }, "+ Ta'lim qo'shish"), /*#__PURE__*/React.createElement("div", {
+    style: sectionTitle
+  }, "Ko'nikmalar"), /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    placeholder: "Python, React, Figma, Ingliz tili...",
+    value: skillsRaw,
+    onChange: e => {
+      setSkillsRaw(e.target.value);
+      notify({
+        skills: e.target.value.split(",").map(s => s.trim()).filter(Boolean)
+      });
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "var(--text-muted)",
+      marginTop: -4,
+      marginBottom: 8
+    }
+  }, "Vergul bilan ajrating"), /*#__PURE__*/React.createElement("div", {
+    style: sectionTitle
+  }, "Tillar"), /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    placeholder: "O'zbek (ona tili), Ingliz (B2), Rus (C1)...",
+    value: langsRaw,
+    onChange: e => {
+      setLangsRaw(e.target.value);
+      notify({
+        languages: e.target.value.split(",").map(s => s.trim()).filter(Boolean)
+      });
+    }
+  }));
+}
+
 // ─── Per-service "How it works" steps ────────────────────────────
 const SERVICE_HOW_TO = {
   pdf2docx: ["PDF faylni yuklang", "Boshlash ni bosing — konvertatsiya 10-30 soniya oladi", "Tayyor DOCX faylni yuklab oling"],
@@ -905,6 +1315,7 @@ const SERVICE_HOW_TO = {
   cert: ["1-qator: Ism Familiya\n2-qator: Kurs yoki yutuq nomi", "Boshlash ni bosing", "Sertifikat rasmini yuklab oling"],
   bgremove: ["Rasm (JPG/PNG) yuklang", "Boshlash ni bosing — AI fon olib tashlaydi", "Fonsiz rasmni (PNG) yuklab oling"],
   photo3x4: ["Yuz ko'rinadigan rasm (JPG/PNG) yuklang", "Fon rangi va chiqish turini tanlang", "A4 da 6 ta 3×4 sm foto yoki bitta foto yuklab oling"],
+  cv: ["Ism, kasb, kontakt ma'lumotlarini kiriting", "Ish tajribasi, ta'lim, ko'nikmalar qo'shing", "Professional PDF CV ni yuklab oling"],
   schedule: ["Dars jadvalini kiriting:\nDushanba: Matematika 8:00, Fizika 10:00", "Boshlash ni bosing", "Haftalik jadval rasmini yuklab oling"],
   deadline: ["Sana kiriting: 31.12.2025 yoki 2025-12-31", "Boshlash ni bosing", "Qolgan vaqt va eslatma ko'rsatiladi"],
   zip: ["Arxivlanadigan fayllarni tanlang", "Parol kiriting (ixtiyoriy)", "ZIP arxivini yuklab oling"],
@@ -1103,14 +1514,27 @@ function ServiceSheet({
   const [hasInput, setHasInput] = useS(false);
   const [result, setResult] = useS(null);
   const [extraText, setExtraText] = useS("");
-  const [serviceOpts, setServiceOpts] = useS({
+  const [serviceOpts, setServiceOpts] = useS(service.id === "cv" ? {
+    name: "",
+    title: "",
+    email: "",
+    phone: "",
+    location: "",
+    summary: "",
+    template: "modern",
+    skills: [],
+    languages: [],
+    education: [],
+    experience: []
+  } : {
     bg: "white",
     sheet: true
   });
+  const isCvForm = service.id === "cv";
   const meta = isPremium ? t.p?.[service.id] : t.s?.[service.id];
   if (!meta) return null;
-  const acceptText = !service.accept;
-  const needsExtraText = !acceptText && EXTRA_TEXT_IDS.has(service.id);
+  const acceptText = !service.accept && !isCvForm;
+  const needsExtraText = !acceptText && !isCvForm && EXTRA_TEXT_IDS.has(service.id);
   const catColor = CAT_COLOR?.[service.cat] || "#a78bfa";
   const iconColor = isPremium ? "#fbbf24" : catColor;
 
@@ -1145,8 +1569,11 @@ function ServiceSheet({
         return;
       }
       let arg = {};
-      if (acceptText) {
-        // ✅ FIX: Text is sanitized in handler, but we trim here too
+      if (isCvForm) {
+        arg = {
+          opts: serviceOpts
+        };
+      } else if (acceptText) {
         arg = {
           text: String(inputData || "").trim()
         };
@@ -1186,11 +1613,23 @@ function ServiceSheet({
     setInputData(null);
     setHasInput(false);
     setResult(null);
-    setServiceOpts({
+    setServiceOpts(isCvForm ? {
+      name: "",
+      title: "",
+      email: "",
+      phone: "",
+      location: "",
+      summary: "",
+      template: "modern",
+      skills: [],
+      languages: [],
+      education: [],
+      experience: []
+    } : {
       bg: "white",
       sheet: true
     });
-  }, []);
+  }, [isCvForm]);
   return /*#__PURE__*/React.createElement("div", {
     style: {
       padding: embedded ? "4px 20px 20px" : "6px 20px 20px"
@@ -1246,7 +1685,17 @@ function ServiceSheet({
       onGoToPlans();
     },
     onClose: onClose
-  }), step === "input" && /*#__PURE__*/React.createElement(React.Fragment, null, acceptText ? /*#__PURE__*/React.createElement(TextInputBox, {
+  }), step === "input" && /*#__PURE__*/React.createElement(React.Fragment, null, isCvForm ? /*#__PURE__*/React.createElement(CVForm, {
+    data: serviceOpts,
+    onChange: patch => {
+      setServiceOpts(s => ({
+        ...s,
+        ...patch
+      }));
+      setHasInput(!!(patch.name ?? serviceOpts.name));
+    },
+    accent: accent
+  }) : acceptText ? /*#__PURE__*/React.createElement(TextInputBox, {
     t: t,
     placeholder: TEXT_HINTS[service.id] || t.sheetTextPlaceholder,
     onChange: v => {
@@ -1343,5 +1792,6 @@ Object.assign(window, {
   ResultFile,
   ResultText,
   ResultImage,
-  Photo3x4Options
+  Photo3x4Options,
+  CVForm
 });

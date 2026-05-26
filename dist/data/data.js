@@ -175,7 +175,7 @@ const FREE_SERVICES = [
   ai: false,
   input: 'text'
 },
-// Generator (3)
+// Generator (4)
 {
   id: 'qr',
   cat: 'gen',
@@ -190,6 +190,13 @@ const FREE_SERVICES = [
   new: false,
   ai: false,
   input: 'text'
+}, {
+  id: 'cv',
+  cat: 'gen',
+  icon: '📄',
+  new: true,
+  ai: false,
+  input: 'form'
 }, {
   id: 'bgremove',
   cat: 'gen',
@@ -510,6 +517,10 @@ const I18N = {
         name: 'Sertifikat',
         desc: 'Diplom va sertifikat yaratish'
       },
+      cv: {
+        name: 'CV / Rezyume',
+        desc: 'Professional PDF rezyume yaratish'
+      },
       bgremove: {
         name: 'Fon olib tashlash',
         desc: 'Rasmdan fonni avtomatik olib tashlash'
@@ -781,6 +792,10 @@ const I18N = {
         name: 'Сертификат',
         desc: 'Создать диплом или сертификат'
       },
+      cv: {
+        name: 'CV / Резюме',
+        desc: 'Создать профессиональное PDF резюме'
+      },
       bgremove: {
         name: 'Удалить фон',
         desc: 'Авто-удаление фона с фото'
@@ -1049,6 +1064,10 @@ const I18N = {
       cert: {
         name: 'Certificate',
         desc: 'Create certificate or diploma'
+      },
+      cv: {
+        name: 'CV / Resume',
+        desc: 'Create professional PDF resume'
       },
       bgremove: {
         name: 'Remove background',
