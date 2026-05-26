@@ -390,7 +390,16 @@ _default_origins = (
     "https://nematovbegz0d.github.io,"
     "https://web.telegram.org,"
     "https://telegram.org,"
-    "https://t.me"
+    "https://t.me,"
+    # Lokal dev (VS Code Live Server, Vite, CRA, va h.k.)
+    "http://127.0.0.1:5500,"
+    "http://localhost:5500,"
+    "http://127.0.0.1:3000,"
+    "http://localhost:3000,"
+    "http://127.0.0.1:5173,"
+    "http://localhost:5173,"
+    "http://127.0.0.1:8000,"
+    "http://localhost:8000"
 )
 _cors_raw = os.environ.get("CORS_ORIGINS", _default_origins)
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
