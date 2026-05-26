@@ -96,6 +96,42 @@ def _do_pdf2docx(pdf_path: str, docx_path: str) -> None:
         cv.close()
 
 
+# ─── Marker-PDF (ML-based, best quality) ──────────────────────────────────────
+# Marker — IBM/research-grade ML model. Best layout+table preservation among
+# open-source tools. Heavy (PyTorch ~700MB + models ~1GB on first run).
+# Can be disabled via env: MARKER_DISABLED=1
+
+_marker_converter = None  # Lazy init — only loaded when first used
+
+def _get_marker_converter():
+    """Singleton — initializes once, reuses ML models."""
+    global _marker_converter
+    if _marker_converter is None:
+        from marker.converters.pdf import PdfConverter
+        from marker.models import create_model_dict
+        _marker_converter = PdfConverter(artifact_dict=create_model_dict())
+        logger.info("marker-pdf model loaded")
+    return _marker_converter
+
+
+def _do_pdf2docx_marker(pdf_path: str, docx_path: str) -> None:
+    """Marker (ML) → markdown → DOCX via pypandoc. Best layout/table fidelity."""
+    from marker.output import text_from_rendered
+    import pypandoc
+
+    converter = _get_marker_converter()
+    rendered = converter(pdf_path)
+    md_text, _, _ = text_from_rendered(rendered)
+
+    if not md_text or len(md_text.strip()) < 10:
+        raise RuntimeError("marker bo'sh natija qaytardi")
+
+    pypandoc.convert_text(
+        md_text, to="docx", format="md", outputfile=docx_path,
+        extra_args=["--standalone"],
+    )
+
+
 def _do_pdf2docx_libreoffice(pdf_path: str, docx_path: str) -> None:
     """LibreOffice writer_pdf_import filter → DOCX. Best quality, requires libreoffice in PATH."""
     import subprocess, shutil
@@ -263,15 +299,32 @@ def _do_pdf2docx_docling(pdf_path: str, docx_path: str) -> None:
 
 def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
     """Tries best available method in order. Returns method name on success."""
+    def _disabled(name: str) -> bool:
+        return os.environ.get(f"{name}_DISABLED", "").lower() in ("1", "true", "yes")
+
+    # Sahifa sonini olish — katta PDFlarda marker'ni o'tkazib yuboramiz (timeout xavfi)
+    try:
+        import fitz
+        with fitz.open(pdf_path) as _pdf:
+            page_count = _pdf.page_count
+    except Exception:
+        page_count = 999  # noma'lum bo'lsa, ehtiyot uchun marker'ni ishlatmaymiz
+
+    MARKER_MAX_PAGES = int(os.environ.get("MARKER_MAX_PAGES", "10"))
+
     if is_scanned:
         chain = [
             ("ocr-tesseract", lambda: _do_pdf2docx_ocr(pdf_path, docx_path)),
             ("pdf2docx",      lambda: _do_pdf2docx(pdf_path, docx_path)),
         ]
     else:
-        # ✅ YANGILANDI: DOCLING_DISABLED=1 bo'lsa docling o'tkazib yuboriladi
+        # Zanjir tartibi: marker (ML, eng yaxshi sifat) → docling → libreoffice → pdf2docx → pymupdf
+        # Har bir bosqichni env var orqali o'chirish mumkin: MARKER_DISABLED=1, DOCLING_DISABLED=1
+        # marker faqat MARKER_MAX_PAGES dan kichik PDFlarda (timeout oldini olish)
         chain = []
-        if os.environ.get("DOCLING_DISABLED", "").lower() not in ("1", "true", "yes"):
+        if not _disabled("MARKER") and page_count <= MARKER_MAX_PAGES:
+            chain.append(("marker", lambda: _do_pdf2docx_marker(pdf_path, docx_path)))
+        if not _disabled("DOCLING"):
             chain.append(("docling", lambda: _do_pdf2docx_docling(pdf_path, docx_path)))
         chain.extend([
             ("libreoffice",   lambda: _do_pdf2docx_libreoffice(pdf_path, docx_path)),
