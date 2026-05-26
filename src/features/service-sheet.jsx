@@ -638,6 +638,161 @@ function ResultText({ t, accent, result, onAgain, onClose, onToast }) {
   );
 }
 
+// ─── ResultWiki ───────────────────────────────────────────────────
+function ResultWiki({ t, accent, result, onAgain, onToast }) {
+  const [copied, setCopied] = useS(false);
+
+  const extract   = result.extract || result.content || "";
+  const title     = result.title || "";
+  const desc      = result.description || "";
+  const thumb     = result.thumbnail || null;
+  const url       = result.url || null;
+  const alts      = result.alternatives || [];
+  const related   = result.related || [];
+
+  const handleCopy = useC(async () => {
+    const ok = await copyToClipboard(extract);
+    if (ok) {
+      setCopied(true);
+      onToast?.(t.sheetCopied || "Nusxalandi ✓");
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      onToast?.("❌ Nusxalab bo'lmadi");
+    }
+  }, [extract, t, onToast]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Thumbnail */}
+      {thumb && (
+        <img
+          src={thumb}
+          alt={title || "Wikipedia"}
+          style={{
+            width: "100%", maxHeight: 160, objectFit: "cover",
+            borderRadius: 12, border: "0.5px solid var(--border-subtle)",
+          }}
+        />
+      )}
+
+      {/* Title + description */}
+      {title && (
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary)" }}>
+            {title}
+          </div>
+          {desc && (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 3 }}>
+              {desc}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Extract */}
+      <div
+        role="textbox"
+        aria-readonly="true"
+        aria-label="Wikipedia matni"
+        style={{
+          background: "var(--bg-surface-1)", border: "0.5px solid var(--border-subtle)",
+          borderRadius: 14, padding: 14,
+          color: "var(--text-primary)", fontSize: 13.5, lineHeight: 1.6,
+          maxHeight: 200, overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word",
+          userSelect: "text",
+        }}
+      >
+        {extract || "Ma'lumot topilmadi."}
+      </div>
+
+      {/* Related articles */}
+      {related.length > 0 && (
+        <div>
+          <div
+            style={{
+              fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: 0.5, color: "var(--text-muted)", marginBottom: 6,
+            }}
+          >
+            Bog'liq maqolalar
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {related.map((item, i) => (
+              <a
+                key={i}
+                href={item.url || "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  padding: "4px 10px", borderRadius: 20,
+                  background: "var(--bg-surface-2)", border: "0.5px solid var(--border-medium)",
+                  color: accent, fontSize: 12, textDecoration: "none", fontWeight: 500,
+                }}
+              >
+                {item.title || item}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Alternative titles */}
+      {alts.length > 0 && (
+        <div>
+          <div
+            style={{
+              fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: 0.5, color: "var(--text-muted)", marginBottom: 6,
+            }}
+          >
+            Boshqa nomlar
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {alts.map((alt, i) => (
+              <span
+                key={i}
+                style={{
+                  padding: "4px 10px", borderRadius: 20,
+                  background: "var(--bg-surface-1)", border: "0.5px solid var(--border-light)",
+                  color: "var(--text-secondary)", fontSize: 12,
+                }}
+              >
+                {alt}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div style={{ display: "flex", gap: 10 }}>
+        <Button variant="secondary" full onClick={onAgain}>
+          {t.sheetAgain}
+        </Button>
+        {url ? (
+          <Button
+            variant="primary" accent={accent} full
+            onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+          >
+            Wikipedia →
+          </Button>
+        ) : (
+          <Button variant="primary" accent={accent} full onClick={handleCopy}>
+            {copied ? "✓ Nusxalandi" : t.sheetCopy}
+          </Button>
+        )}
+      </div>
+
+      {/* Copy button when URL button already shown */}
+      {url && (
+        <Button variant="secondary" full onClick={handleCopy}>
+          {copied ? "✓ " + (t.sheetCopied || "Nusxalandi") : t.sheetCopy || "Nusxalash"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 // ─── ResultImage ──────────────────────────────────────────────────
 function ResultImage({ t, accent, result, onAgain, onToast }) {
   const download = useC(() => {
@@ -716,6 +871,58 @@ function SuccessRing() {
           strokeLinejoin="round"
         />
       </svg>
+    </div>
+  );
+}
+
+// ─── Img2PdfOptions ───────────────────────────────────────────────
+function Img2PdfOptions({ opts, onChange, accent }) {
+  const MODES = [
+    { value: "normal",     label: "Oddiy",         icon: "📄", desc: "Tez" },
+    { value: "document",   label: "Skan",           icon: "📑", desc: "Tenglashtiradi" },
+    { value: "searchable", label: "Qidiriladigan",  icon: "🔍", desc: "OCR matn" },
+  ];
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div
+        style={{
+          color: "var(--text-muted)", fontSize: 11, fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 7,
+        }}
+      >
+        Rejim
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {MODES.map(({ value, label, icon, desc }) => {
+          const active = opts.mode === value;
+          return (
+            <button
+              key={value} type="button"
+              onClick={() => onChange({ ...opts, mode: value })}
+              aria-pressed={active}
+              style={{
+                flex: 1, padding: "9px 4px", borderRadius: 12,
+                border: active ? `1.5px solid ${accent}` : "1.5px solid var(--border-medium)",
+                background: active ? `${accent}18` : "var(--bg-surface-1)",
+                cursor: "pointer", font: "inherit",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                transition: "all 0.15s",
+              }}
+            >
+              <span style={{ fontSize: 18 }} aria-hidden="true">{icon}</span>
+              <span
+                style={{
+                  fontSize: 11.5, fontWeight: active ? 700 : 500,
+                  color: active ? accent : "var(--text-secondary)",
+                }}
+              >
+                {label}
+              </span>
+              <span style={{ fontSize: 9.5, color: "var(--text-faint)" }}>{desc}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1251,12 +1458,14 @@ function ServiceSheet({
   const [hasInput, setHasInput] = useS(false);
   const [result, setResult] = useS(null);
   const [extraText, setExtraText] = useS("");
-  const [serviceOpts, setServiceOpts] = useS(
-    service.id === "cv"
-      ? { name: "", title: "", email: "", phone: "", location: "", summary: "",
-          template: "modern", skills: [], languages: [], education: [], experience: [] }
-      : { bg: "white", sheet: true }
-  );
+  const _defaultOpts = (id) => {
+    if (id === "cv") return { name: "", title: "", email: "", phone: "", location: "", summary: "",
+      template: "modern", skills: [], languages: [], education: [], experience: [] };
+    if (id === "img2pdf" || id === "imgs2pdf") return { mode: "normal" };
+    return { bg: "white", sheet: true };
+  };
+
+  const [serviceOpts, setServiceOpts] = useS(() => _defaultOpts(service.id));
 
   const isCvForm = service.id === "cv";
 
@@ -1306,7 +1515,7 @@ function ServiceSheet({
         arg = { text: String(inputData || "").trim() };
       } else if (service.multi) {
         const files = Array.isArray(inputData) ? inputData : [inputData];
-        arg = { files, file: files[0], text: needsExtraText ? extraText.trim() : "" };
+        arg = { files, file: files[0], text: needsExtraText ? extraText.trim() : "", opts: serviceOpts };
       } else {
         arg = { file: inputData, text: needsExtraText ? extraText.trim() : "", opts: serviceOpts };
       }
@@ -1334,13 +1543,8 @@ function ServiceSheet({
     setInputData(null);
     setHasInput(false);
     setResult(null);
-    setServiceOpts(
-      isCvForm
-        ? { name: "", title: "", email: "", phone: "", location: "", summary: "",
-            template: "modern", skills: [], languages: [], education: [], experience: [] }
-        : { bg: "white", sheet: true }
-    );
-  }, [isCvForm]);
+    setServiceOpts(_defaultOpts(service.id));
+  }, [service.id]);
 
   return (
     <div style={{ padding: embedded ? "4px 20px 20px" : "6px 20px 20px" }}>
@@ -1444,6 +1648,13 @@ function ServiceSheet({
               accent={accent}
             />
           )}
+          {(service.id === "img2pdf" || service.id === "imgs2pdf") && (
+            <Img2PdfOptions
+              opts={serviceOpts}
+              onChange={setServiceOpts}
+              accent={accent}
+            />
+          )}
           {needsExtraText && (
             <input
               type={service.id === "pdflock" ? "password" : "text"}
@@ -1506,6 +1717,15 @@ function ServiceSheet({
               onToast={onToast}
             />
           )}
+          {result.type === "wiki" && (
+            <ResultWiki
+              t={t}
+              accent={accent}
+              result={result}
+              onAgain={reset}
+              onToast={onToast}
+            />
+          )}
           {result.type === "image" && (
             <ResultImage
               t={t}
@@ -1542,7 +1762,9 @@ Object.assign(window, {
   SuccessRing,
   ResultFile,
   ResultText,
+  ResultWiki,
   ResultImage,
   Photo3x4Options,
+  Img2PdfOptions,
   CVForm,
 });

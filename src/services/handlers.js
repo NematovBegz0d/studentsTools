@@ -625,7 +625,28 @@ async function translate({ text }) {
 
 async function wiki({ text }) {
   if (!text?.trim()) throw new Error("Maqola nomini kiriting.");
-  return apiText("/api/wiki", { text: sanitizeText(text, 200) });
+  const response = await fetchWithTimeout(
+    `${BACKEND_URL}/api/wiki`,
+    {
+      method: "POST",
+      headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ text: sanitizeText(text, 200) }),
+    },
+  );
+  await handleResponseError(response);
+  const data = await response.json();
+  return {
+    type: "wiki",
+    content:      data.result      ?? "",
+    title:        data.title       ?? "",
+    extract:      data.extract     ?? data.result ?? "",
+    description:  data.description ?? "",
+    thumbnail:    data.thumbnail   ?? null,
+    url:          data.url         ?? null,
+    lang:         data.lang        ?? "",
+    alternatives: data.alternatives ?? [],
+    related:      data.related     ?? [],
+  };
 }
 
 async function books({ text }) {
