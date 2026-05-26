@@ -196,6 +196,33 @@ def _do_pdf2docx_ocr(pdf_path: str, docx_path: str) -> None:
     doc_out.save(docx_path)
 
 
+# ✅ YANGILANDI: docling (IBM) — AI bilan jadvallarni aniq taniydi, birlamchi usul
+def _do_pdf2docx_docling(pdf_path: str, docx_path: str) -> None:
+    from docling.document_converter import DocumentConverter
+    converter = DocumentConverter()
+    result = converter.convert(pdf_path)
+    doc = result.document
+    # docling 2.x API
+    saved = False
+    try:
+        docx_bytes = doc.export_to_docx()
+        with open(docx_path, "wb") as f:
+            f.write(docx_bytes)
+        saved = True
+    except AttributeError:
+        pass
+    if not saved:
+        try:
+            from docling.backend.docx_backend import DocxDocumentBackend
+            with open(docx_path, "wb") as f:
+                DocxDocumentBackend().write(doc, f)
+            saved = True
+        except Exception:
+            pass
+    if not saved:
+        raise RuntimeError("docling DOCX saqlash usuli topilmadi")
+
+
 def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
     """Tries best available method in order. Returns method name on success."""
     if is_scanned:
@@ -205,6 +232,7 @@ def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
         ]
     else:
         chain = [
+            ("docling",       lambda: _do_pdf2docx_docling(pdf_path, docx_path)),
             ("libreoffice",   lambda: _do_pdf2docx_libreoffice(pdf_path, docx_path)),
             ("pdf2docx",      lambda: _do_pdf2docx(pdf_path, docx_path)),
             ("pymupdf",       lambda: _do_pdf2docx_pymupdf(pdf_path, docx_path)),
@@ -547,24 +575,25 @@ async def send_file(
 _MERGEPDF_MAX_FILES = 30
 
 
+# ✅ YANGILANDI: pikepdf (qpdf asosida) — buzilgan PDFlarni tuzatadi, linearizatsiya, MPL-2.0
 def _do_mergepdf(data_list: list) -> tuple:
-    import fitz
+    import pikepdf
 
-    out_doc = fitz.open()
+    out_pdf = pikepdf.new()
     page_count = 0
     for data in data_list:
         if data[:4] != b"%PDF":
             raise ValueError("Faqat PDF fayllar qabul qilinadi")
-        src = fitz.open(stream=data, filetype="pdf")
-        if src.is_encrypted:
-            src.close()
+        try:
+            src = pikepdf.open(io.BytesIO(data))
+        except pikepdf.PasswordError:
             raise ValueError("Himoyalangan PDF birlashtirish uchun ochib bo'lmadi")
-        out_doc.insert_pdf(src)
-        page_count += len(src)
+        out_pdf.pages.extend(src.pages)
+        page_count += len(src.pages)
         src.close()
     buf = io.BytesIO()
-    out_doc.save(buf, garbage=4, deflate=True)
-    out_doc.close()
+    out_pdf.save(buf, linearize=True)
+    out_pdf.close()
     info = f"{len(data_list)} fayl, {page_count} sahifa"
     return buf.getvalue(), info, page_count
 
@@ -632,13 +661,17 @@ def _parse_page_ranges(pages_str: str, total: int) -> list:
     return sorted(x for x in result if 0 <= x < total)
 
 
+# ✅ YANGILANDI: pikepdf — har bir sahifani mustaqil PDF sifatida ajratadi, linearize=True
 def _do_splitpdf(data: bytes, page_indices: list) -> tuple:
-    import fitz
+    import pikepdf
 
     if data[:4] != b"%PDF":
         raise ValueError("PDF fayl emas")
-    doc = fitz.open(stream=data, filetype="pdf")
-    n = doc.page_count
+    try:
+        doc = pikepdf.open(io.BytesIO(data))
+    except pikepdf.PasswordError:
+        raise ValueError("PDF parol bilan himoyalangan")
+    n = len(doc.pages)
     if n == 0:
         doc.close()
         raise ValueError("PDF sahifasiz")
@@ -650,10 +683,10 @@ def _do_splitpdf(data: bytes, page_indices: list) -> tuple:
     with zipfile.ZipFile(zf_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         pad = len(str(max(page_indices) + 1))
         for i in page_indices:
-            out = fitz.open()
-            out.insert_pdf(doc, from_page=i, to_page=i)
+            out = pikepdf.new()
+            out.pages.append(doc.pages[i])
             pb = io.BytesIO()
-            out.save(pb, garbage=4, deflate=True)
+            out.save(pb, linearize=True)
             out.close()
             zf.writestr(f"page_{str(i + 1).zfill(pad)}.pdf", pb.getvalue())
     doc.close()
@@ -670,10 +703,15 @@ async def split_pdf(
     try:
         data = await file.read()
         check_size(data, "/api/splitpdf")
-        import fitz as _fitz_check
-        doc_check = _fitz_check.open(stream=data, filetype="pdf")
-        total_n = doc_check.page_count
-        doc_check.close()
+        import pikepdf as _pike_check
+        try:
+            _pdf_check = _pike_check.open(io.BytesIO(data))
+        except _pike_check.PasswordError:
+            raise HTTPException(status_code=422, detail="PDF parol bilan himoyalangan.")
+        except Exception:
+            raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+        total_n = len(_pdf_check.pages)
+        _pdf_check.close()
         try:
             indices = _parse_page_ranges(pages, total_n)
         except Exception:
@@ -722,9 +760,16 @@ async def pdf_select_pages(
         check_size(data, "/api/pdfpages")
         if data[:4] != b"%PDF":
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
-        import fitz as _fitz
-        doc = _fitz.open(stream=data, filetype="pdf")
-        total_n = doc.page_count
+        # ✅ YANGILANDI: pikepdf — sahifalarni tanlash va linearize qilib saqlash
+        import pikepdf as _pike
+        try:
+            _pdf_tmp = _pike.open(io.BytesIO(data))
+        except _pike.PasswordError:
+            raise HTTPException(status_code=422, detail="PDF parol bilan himoyalangan.")
+        except Exception:
+            raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+        total_n = len(_pdf_tmp.pages)
+        _pdf_tmp.close()
         try:
             indices = _parse_page_ranges(pages, total_n)
         except Exception:
@@ -733,13 +778,13 @@ async def pdf_select_pages(
             raise HTTPException(status_code=400, detail="Sahifalar ro'yxati bo'sh")
 
         def _extract():
-            out = _fitz.open()
+            src = _pike.open(io.BytesIO(data))
+            out = _pike.new()
             for i in indices:
-                out.insert_pdf(doc, from_page=i, to_page=i)
+                out.pages.append(src.pages[i])
             buf = io.BytesIO()
-            out.save(buf, garbage=4, deflate=True)
-            out.close()
-            doc.close()
+            out.save(buf, linearize=True)
+            src.close()
             return buf.getvalue()
 
         loop = asyncio.get_event_loop()
@@ -853,15 +898,16 @@ async def pdf_text(request: Request, file: UploadFile = File(...)):
 
 # ─── PDF: Lock ────────────────────────────────────────────────────────────────
 
+# ✅ YANGILANDI: pikepdf AES-256 shifrlash — qpdf asosida, Encryption() API
 def _do_pdflock(data: bytes, user_pwd: str, owner_pwd: str,
                 allow_print: bool, allow_copy: bool, allow_modify: bool) -> tuple:
-    import fitz
+    import pikepdf
 
-    doc = fitz.open(stream=data, filetype="pdf")
-    if doc.is_encrypted:
-        doc.close()
+    try:
+        doc = pikepdf.open(io.BytesIO(data))
+    except pikepdf.PasswordError:
         raise ValueError("PDF allaqachon parol bilan himoyalangan.")
-    n = doc.page_count
+    n = len(doc.pages)
     if n == 0:
         doc.close()
         raise ValueError("PDF bo'sh (0 sahifa).")
@@ -869,24 +915,20 @@ def _do_pdflock(data: bytes, user_pwd: str, owner_pwd: str,
         doc.close()
         raise ValueError(f"PDF {n} sahifa. Maksimal 200 sahifa qabul qilinadi.")
 
-    perm = fitz.PDF_PERM_ACCESSIBILITY
-    if allow_print:
-        perm |= fitz.PDF_PERM_PRINT | fitz.PDF_PERM_PRINT_HQ
-    if allow_copy:
-        perm |= fitz.PDF_PERM_COPY
-    if allow_modify:
-        perm |= fitz.PDF_PERM_MODIFY | fitz.PDF_PERM_ANNOTATE
-
-    buf = io.BytesIO()
-    doc.save(
-        buf,
-        encryption=fitz.PDF_ENCRYPT_AES_256,
-        user_pw=user_pwd,
-        owner_pw=owner_pwd,
-        permissions=perm,
-        garbage=4,
-        deflate=True,
+    enc = pikepdf.Encryption(
+        owner=owner_pwd,
+        user=user_pwd,
+        aes=True,
+        allow=pikepdf.Permissions(
+            print_lowres=allow_print,
+            print_highres=allow_print,
+            extract=allow_copy,
+            modify_other=allow_modify,
+            modify_annotation=allow_modify,
+        ),
     )
+    buf = io.BytesIO()
+    doc.save(buf, encryption=enc, linearize=True)
     doc.close()
 
     perms = []
@@ -2748,55 +2790,54 @@ _PPTX_IMG_EXTS = {"jpg", "jpeg", "png", "bmp", "webp", "gif", "tiff"}
 _PPTX_MAX_DIM  = 1920
 
 
+# ✅ YANGILANDI: python-pptx — rasm metadata va munosabatlarini saqlab siqish
 def _do_compresspptx(data: bytes) -> tuple:
-    from PIL import Image, ImageOps
+    from pptx import Presentation
+    from pptx.oxml.ns import qn
+    from PIL import Image
 
     orig_size = len(data)
     compressed = 0
+
+    prs = Presentation(io.BytesIO(data))
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.shape_type != 13:  # MSO_SHAPE_TYPE.PICTURE
+                continue
+            try:
+                img_blob = shape.image.blob
+                img_ext = shape.image.ext.lower()
+                img = Image.open(io.BytesIO(img_blob))
+                if max(img.width, img.height) > _PPTX_MAX_DIM:
+                    ratio = _PPTX_MAX_DIM / max(img.width, img.height)
+                    img = img.resize(
+                        (int(img.width * ratio), int(img.height * ratio)),
+                        Image.LANCZOS,
+                    )
+                if len(img_blob) > 2 * 1024 * 1024:
+                    quality = 65
+                elif len(img_blob) > 512 * 1024:
+                    quality = 72
+                else:
+                    quality = 82
+                buf = io.BytesIO()
+                if img.mode == "RGBA" or img_ext in ("png", "gif"):
+                    img.save(buf, format="PNG", optimize=True)
+                else:
+                    img.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True)
+                candidate = buf.getvalue()
+                if len(candidate) < len(img_blob):
+                    blip = shape.element.blipFill.blip
+                    rId = blip.get(qn("r:embed"))
+                    image_part = shape.part.related_parts[rId]
+                    image_part._blob = candidate
+                    compressed += 1
+            except Exception:
+                continue
+
     out_buf = io.BytesIO()
-
-    with zipfile.ZipFile(io.BytesIO(data), "r") as zin, \
-         zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zout:
-        for item in zin.infolist():
-            item_data = zin.read(item.filename)
-            ext = item.filename.rsplit(".", 1)[-1].lower() if "." in item.filename else ""
-            if "media/" in item.filename and ext in _PPTX_IMG_EXTS:
-                try:
-                    img = Image.open(io.BytesIO(item_data))
-                    img = ImageOps.exif_transpose(img)
-                    ratio = min(1.0, _PPTX_MAX_DIM / max(img.width, img.height))
-                    if ratio < 1.0:
-                        img = img.resize(
-                            (int(img.width * ratio), int(img.height * ratio)),
-                            Image.LANCZOS,
-                        )
-                    # Adaptive quality: larger embedded image → more aggressive
-                    if len(item_data) > 2 * 1024 * 1024:
-                        quality = 65
-                    elif len(item_data) > 512 * 1024:
-                        quality = 72
-                    else:
-                        quality = 82
-                    cb = io.BytesIO()
-                    if img.mode == "RGBA" or (img.mode == "P" and "transparency" in img.info):
-                        # Keep alpha channel → save as PNG (converting to JPEG would lose transparency)
-                        if img.mode != "RGBA":
-                            img = img.convert("RGBA")
-                        img.save(cb, format="PNG", optimize=True)
-                    else:
-                        if img.mode != "RGB":
-                            img = img.convert("RGB")
-                        img.save(cb, format="JPEG", quality=quality, optimize=True)
-                    candidate = cb.getvalue()
-                    if len(candidate) < len(item_data):
-                        item_data = candidate
-                        compressed += 1
-                except Exception:
-                    pass
-            zout.writestr(item, item_data)
-
+    prs.save(out_buf)
     out_bytes = out_buf.getvalue()
-    # Never return larger than original
     if len(out_bytes) >= orig_size:
         out_bytes = data
     saved = max(0, round((1 - len(out_bytes) / orig_size) * 100))
@@ -2841,9 +2882,61 @@ _IMGCOMPRESS_ALLOWED = {b"\xff\xd8\xff", b"\x89PNG", b"RIFF", b"WEBP"}  # JPEG, 
 
 
 def _do_imgcompress(data: bytes, output_format: str = "jpeg", user_quality: int = 0) -> tuple:
+    orig_size = len(data)
+
+    # ✅ YANGILANDI: pyvips birlamchi (10x tez, 4x kam RAM, streaming pipeline)
+    try:
+        import pyvips
+        vimg = pyvips.Image.new_from_buffer(data, "")
+        w, h = vimg.width, vimg.height
+        if max(w, h) > _IMGCOMPRESS_MAX_DIM:
+            scale = _IMGCOMPRESS_MAX_DIM / max(w, h)
+            vimg = vimg.resize(scale)
+        if user_quality:
+            quality = max(30, min(95, user_quality))
+        elif orig_size > 3 * 1024 * 1024:
+            quality = 65
+        elif orig_size > 1024 * 1024:
+            quality = 72
+        else:
+            quality = 82
+        has_alpha = vimg.hasalpha()
+        fmt = output_format
+        if has_alpha and fmt == "jpeg":
+            fmt = "webp"
+        if fmt == "webp":
+            out_bytes = vimg.webpsave_buffer(Q=quality)
+            media_type, ext = "image/webp", "webp"
+        elif fmt == "png":
+            out_bytes = vimg.pngsave_buffer()
+            media_type, ext = "image/png", "png"
+        else:
+            if has_alpha:
+                vimg = vimg.flatten()
+            out_bytes = vimg.jpegsave_buffer(Q=quality, optimize_coding=True)
+            media_type, ext = "image/jpeg", "jpg"
+        if len(out_bytes) >= orig_size:
+            out_bytes = data
+            quality = 0
+            if data[:3] == b"\xff\xd8\xff":
+                media_type, ext = "image/jpeg", "jpg"
+            elif data[:8] == b"\x89PNG\r\n\x1a\n":
+                media_type, ext = "image/png", "png"
+            elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+                media_type, ext = "image/webp", "webp"
+            else:
+                media_type, ext = "image/jpeg", "jpg"
+        saved = max(0, round((1 - len(out_bytes) / orig_size) * 100))
+        info = f"{w}x{h} -> {vimg.width}x{vimg.height}, {fmt}, saved {saved}%"
+        return out_bytes, info, saved, media_type, ext
+    except ImportError:
+        pass
+    except Exception as _vips_err:
+        logger.debug(f"pyvips xato, Pillow fallback: {_vips_err}")
+
+    # Pillow fallback
     from PIL import Image, ImageOps
 
-    orig_size = len(data)
     img = Image.open(io.BytesIO(data))
     _orig_fmt = (img.format or "jpeg").lower()
     img = ImageOps.exif_transpose(img)
@@ -3081,39 +3174,68 @@ def _clean_ocr_text(text: str) -> str:
     return '\n'.join(result)
 
 
+# ✅ YANGILANDI: PaddleOCR birlamchi (tezroq, aniqroq), Tesseract fallback
+_paddle_ocr = None
+
+def _get_paddle_ocr():
+    global _paddle_ocr
+    if _paddle_ocr is None:
+        try:
+            from paddleocr import PaddleOCR
+            _paddle_ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+        except ImportError:
+            pass
+    return _paddle_ocr
+
+
+def _do_ocr_paddle(img_bytes: bytes) -> str:
+    ocr = _get_paddle_ocr()
+    if ocr is None:
+        raise ImportError("paddleocr not installed")
+    import numpy as np
+    from PIL import Image as _PIL
+    img = _PIL.open(io.BytesIO(img_bytes)).convert("RGB")
+    arr = np.array(img)
+    result = ocr.ocr(arr, cls=True)
+    lines = []
+    for block in (result or []):
+        for line in (block or []):
+            if line and len(line) >= 2 and line[1]:
+                lines.append(line[1][0])
+    return "\n".join(lines)
+
+
 def _do_ocr(data: bytes, is_pdf: bool) -> str:
     """
     Full OCR pipeline — runs in _converter_pool (CPU-bound).
+    Primary: PaddleOCR. Fallback: Tesseract LSTM.
 
     PDF path:
       • Has extractable text → direct fitz.get_text() (fast, accurate)
-      • Scanned PDF         → render 200 DPI + Tesseract (up to 8 pages)
+      • Scanned PDF         → render 200 DPI + PaddleOCR → Tesseract
 
     Image path:
-      • Preprocess → Tesseract LSTM
+      • PaddleOCR → Tesseract fallback
     """
     import pytesseract
     from PIL import Image
 
     LANGS  = 'rus+eng+uzb'
-    CONFIG = '--oem 3 --psm 6'   # LSTM engine, single uniform text block
+    CONFIG = '--oem 3 --psm 6'
 
     if is_pdf:
         import fitz
-        doc         = fitz.open(stream=data, filetype='pdf')
+        doc = fitz.open(stream=data, filetype='pdf')
         if doc.is_encrypted:
             doc.close()
             return 'PDF parol bilan himoyalangan. Avval parolini oching.'
         total_pages = doc.page_count
-
         if total_pages == 0:
             doc.close()
             return 'PDF bo\'sh (0 sahifa).'
 
-        # ── Does the PDF already contain text? ────────────────────
         sample = ''.join(doc[i].get_text() for i in range(min(3, total_pages)))
         if len(sample.strip()) > 50:
-            # Text-based PDF: direct extraction (no OCR needed)
             MAX_P = 15
             parts = []
             for i in range(min(total_pages, MAX_P)):
@@ -3128,24 +3250,28 @@ def _do_ocr(data: bytes, is_pdf: bool) -> str:
                 result += f'\n\n⚠️ Faqat {MAX_P} sahifa o\'qildi (PDF jami {total_pages} sahifa).'
             return result or 'Matn topilmadi.'
 
-        # ── Scanned PDF: render each page + Tesseract ─────────────
-        zoom    = 200 / 72      # 200 DPI — better accuracy than 150 for OCR
-        mat     = fitz.Matrix(zoom, zoom)
-        MAX_P   = 8             # OCR is ~3–5 s/page; cap for fast response
-        parts   = []
-
+        zoom  = 200 / 72
+        mat   = fitz.Matrix(zoom, zoom)
+        MAX_P = 8
+        parts = []
         for i in range(min(total_pages, MAX_P)):
-            pix  = doc[i].get_pixmap(matrix=mat, alpha=False)
-            img  = Image.frombytes('RGB', [pix.width, pix.height], pix.samples)
+            pix      = doc[i].get_pixmap(matrix=mat, alpha=False)
+            img      = Image.frombytes('RGB', [pix.width, pix.height], pix.samples)
             del pix
-            img  = _preprocess_for_ocr(img)
-            text = pytesseract.image_to_string(img, lang=LANGS, config=CONFIG)
+            img_bytes = io.BytesIO()
+            img.save(img_bytes, format="PNG")
+            img_bytes = img_bytes.getvalue()
+            # PaddleOCR urinish
+            try:
+                text = _do_ocr_paddle(img_bytes)
+            except Exception:
+                img = _preprocess_for_ocr(img)
+                text = pytesseract.image_to_string(img, lang=LANGS, config=CONFIG)
             cleaned = _clean_ocr_text(text)
             if cleaned:
                 if total_pages > 1:
                     parts.append(f'── Sahifa {i + 1} ──')
                 parts.append(cleaned)
-
         doc.close()
         result = '\n\n'.join(parts)
         if total_pages > MAX_P:
@@ -3153,7 +3279,13 @@ def _do_ocr(data: bytes, is_pdf: bool) -> str:
                        f'(PDF jami {total_pages} sahifali).')
         return result or 'Matn topilmadi.'
 
-    # ── Image ─────────────────────────────────────────────────────
+    # Image: PaddleOCR → Tesseract fallback
+    try:
+        text = _do_ocr_paddle(data)
+        if text.strip():
+            return _clean_ocr_text(text) or 'Matn topilmadi.'
+    except Exception:
+        pass
     img  = Image.open(io.BytesIO(data))
     img  = _preprocess_for_ocr(img)
     text = pytesseract.image_to_string(img, lang=LANGS, config=CONFIG)
@@ -3844,11 +3976,12 @@ _LANG_ALIASES = {
     "vie": "vi", "ind": "id", "fas": "fa", "ukr": "uk",
 }
 
+# ✅ YANGILANDI: Google → argostranslate (offline) → MyMemory zanjiri
 def _do_translate(query: str, lang: str) -> str:
-    """Translate query → lang.  Primary: Google (deep-translator). Fallback: MyMemory."""
+    """Translate query → lang. Chain: Google → argostranslate (offline) → MyMemory."""
     import httpx as _httpx
 
-    # ── Primary: Google Translate (unofficial) ──────────────────────
+    # 1. Google Translate (deep-translator)
     try:
         from deep_translator import GoogleTranslator
         result = GoogleTranslator(source="auto", target=lang).translate(query)
@@ -3857,7 +3990,24 @@ def _do_translate(query: str, lang: str) -> str:
     except Exception as google_err:
         logger.warning(f"translate google xato: {google_err}")
 
-    # ── Fallback: MyMemory — try common source languages ────────────
+    # 2. argostranslate — offline fallback (API key shart emas)
+    try:
+        import argostranslate.translate as _at
+        installed = _at.get_installed_languages()
+        lang_map = {l.code: l for l in installed}
+        for src_code in ("en", "ru", "uz"):
+            if src_code == lang:
+                continue
+            if src_code in lang_map and lang in lang_map:
+                translation = lang_map[src_code].get_translation(lang_map[lang])
+                if translation:
+                    result = translation.translate(query)
+                    if result and result.strip():
+                        return result.strip()
+    except Exception as argo_err:
+        logger.debug(f"argostranslate xato: {argo_err}")
+
+    # 3. MyMemory — oxirgi zaxira
     chunk = query[:500]
     suffix = "\n⚠️ Faqat 500 belgi tarjima qilindi (MyMemory chegarasi)" if len(query) > 500 else ""
     for src in ("uz", "ru", "en"):
