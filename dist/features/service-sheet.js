@@ -572,6 +572,8 @@ function ResultWiki({
   const url = result.url || null;
   const alts = result.alternatives || [];
   const related = result.related || [];
+  // lang: backend "UZ"/"RU"/"EN" → lowercase for URL construction
+  const langCode = (result.lang || "en").toLowerCase().slice(0, 2);
   const handleCopy = useC(async () => {
     const ok = await copyToClipboard(extract);
     if (ok) {
@@ -643,22 +645,27 @@ function ResultWiki({
       flexWrap: "wrap",
       gap: 6
     }
-  }, related.map((item, i) => /*#__PURE__*/React.createElement("a", {
-    key: i,
-    href: item.url || "#",
-    target: "_blank",
-    rel: "noopener noreferrer",
-    style: {
-      padding: "4px 10px",
-      borderRadius: 20,
-      background: "var(--bg-surface-2)",
-      border: "0.5px solid var(--border-medium)",
-      color: accent,
-      fontSize: 12,
-      textDecoration: "none",
-      fontWeight: 500
-    }
-  }, item.title || item)))), alts.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, related.map((item, i) => {
+    // backend returns plain strings (article titles)
+    const itemTitle = typeof item === "string" ? item : item.title || "";
+    const itemUrl = typeof item === "object" && item.url ? item.url : `https://${langCode}.wikipedia.org/wiki/${encodeURIComponent(itemTitle)}`;
+    return /*#__PURE__*/React.createElement("a", {
+      key: i,
+      href: itemUrl,
+      target: "_blank",
+      rel: "noopener noreferrer",
+      style: {
+        padding: "4px 10px",
+        borderRadius: 20,
+        background: "var(--bg-surface-2)",
+        border: "0.5px solid var(--border-medium)",
+        color: accent,
+        fontSize: 12,
+        textDecoration: "none",
+        fontWeight: 500
+      }
+    }, itemTitle);
+  }))), alts.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10.5,
       fontWeight: 700,
