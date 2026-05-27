@@ -2255,11 +2255,19 @@ _mp_face_lock = threading.Lock()
 
 
 def _get_mp_face_detector():
-    """MediaPipe FaceDetection singleton — thread-safe lazy init."""
+    """MediaPipe FaceDetection singleton — thread-safe lazy init.
+    Returns the detector or None. Caches False internally as "don't retry" marker
+    but never returns it to callers."""
     global _mp_face_detector
+    # False sentinel ni callerlardan yashir — None qaytaramiz
+    if _mp_face_detector is False:
+        return None
     if _mp_face_detector is not None:
         return _mp_face_detector
     with _mp_face_lock:
+        # Double-check inside lock
+        if _mp_face_detector is False:
+            return None
         if _mp_face_detector is not None:
             return _mp_face_detector
         try:
@@ -2270,10 +2278,12 @@ def _get_mp_face_detector():
                 min_detection_confidence=0.5,
             )
             logger.info("MediaPipe FaceDetection init muvaffaqiyatli")
-        except (ImportError, Exception) as e:
+            return _mp_face_detector
+        except Exception as e:
+            # Exception ImportError ni o'z ichiga oladi — ikkala holat uchun yetarli
             logger.debug(f"MediaPipe yo'q yoki xato: {e}")
             _mp_face_detector = False  # marker — qayta urinmaslik
-        return _mp_face_detector or None
+            return None
 
 
 def _detect_face_mediapipe(img_pil):
@@ -2579,11 +2589,15 @@ def _do_cv(
 ) -> bytes:
     """CV → PDF zanjiri: WeasyPrint (birlamchi) → ReportLab (fallback)."""
     try:
-        from jinja2 import Template
+        # ✅ YANGILANDI: Environment(autoescape=True) — HTML injection oldini olish
+        # Foydalanuvchi inputlarida <script>, <style>, <>` belgilar avtomatik escape
+        from jinja2 import Environment, BaseLoader
         from weasyprint import HTML
 
-        theme    = _CV_HTML_THEMES.get(template, _CV_HTML_THEMES["modern"])
-        html_str = Template(_CV_HTML_TMPL).render(
+        theme = _CV_HTML_THEMES.get(template, _CV_HTML_THEMES["modern"])
+        env   = Environment(loader=BaseLoader(), autoescape=True)
+        jtmpl = env.from_string(_CV_HTML_TMPL)
+        html_str = jtmpl.render(
             name=name, title=title, email=email, phone=phone,
             location=location, summary=summary, skills=skills,
             education=education, experience=experience, languages=languages,
@@ -3543,7 +3557,8 @@ def _get_paddle_ocr(lang: str = "en"):
             from paddleocr import PaddleOCR
             _paddle_ocr_cache[lang] = PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
             logger.info(f"PaddleOCR init muvaffaqiyatli: lang={lang}")
-        except (ImportError, Exception) as e:
+        except Exception as e:
+            # Exception ImportError ni o'z ichiga oladi
             logger.debug(f"paddleocr {lang} sessiya yaratilmadi: {e}")
             _paddle_ocr_cache[lang] = None
         return _paddle_ocr_cache[lang]
@@ -4321,6 +4336,7 @@ def _do_cert_pdf(name: str, course: str, issuer: str, theme: str,
                  cert_id: str, verify_url: str, issue_dt: str) -> bytes:
     """WeasyPrint A5-landscape PDF sertifikat + QR verifikatsiya."""
     from weasyprint import HTML
+    from html import escape as _esc
     import segno, base64 as _b64
 
     th = _CERT_THEMES.get(theme, _CERT_THEMES["classic"])
@@ -4328,6 +4344,13 @@ def _do_cert_pdf(name: str, course: str, issuer: str, theme: str,
     r1, g1, b1 = th["bg_bot"]
     accent     = "#{:02x}{:02x}{:02x}".format(*th["accent"])
     bg_grad    = f"linear-gradient(180deg, rgb({r0},{g0},{b0}), rgb({r1},{g1},{b1}))"
+
+    # ✅ YANGILANDI: HTML injection oldini olish — foydalanuvchi inputlari escape
+    name_s    = _esc(name or "")
+    course_s  = _esc(course or "")
+    issuer_s  = _esc(issuer or "")
+    cert_id_s = _esc(cert_id or "")
+    issue_s   = _esc(issue_dt or "")
 
     qr_buf = io.BytesIO()
     segno.make(verify_url, error="M").save(qr_buf, kind="png", scale=4, border=1)
@@ -4358,12 +4381,12 @@ def _do_cert_pdf(name: str, course: str, issuer: str, theme: str,
   <div class="title">🏆 Sertifikat</div>
   <hr class="line">
   <div style="font-size:9pt;color:rgba(255,255,255,.7)">Ushbu sertifikat taqdim etiladi</div>
-  <div class="name">{name}</div>
+  <div class="name">{name_s}</div>
   <div style="font-size:9pt;color:rgba(255,255,255,.7)">muvaffaqiyatli tugatgani uchun</div>
-  <div class="course">{course}</div>
+  <div class="course">{course_s}</div>
   <hr class="line">
-  <div class="issuer">{issuer} · {issue_dt}</div>
-  <div class="meta">ID: {cert_id}</div>
+  <div class="issuer">{issuer_s} · {issue_s}</div>
+  <div class="meta">ID: {cert_id_s}</div>
   <div class="qr">
     <img src="data:image/png;base64,{qr_b64}" alt="QR">
     <div class="qr-label">verify</div>
@@ -4671,21 +4694,29 @@ def _do_schedule_ics(schedule: list, weeks: int = 16) -> bytes:
         if day_idx is None:
             continue
         for num, subject, time_str in lessons:
-            ev = Event()
-            ev.add("summary", subject or f"Dars {num}")
-            ev.add("description", f"EduBot · {subject}")
-            if time_str:
-                try:
-                    h, m = map(int, time_str.split(":"))
-                    dt   = _dt.datetime.combine(
-                        week_start + _dt.timedelta(days=day_idx),
-                        _dt.time(h, m, tzinfo=tz),
-                    )
-                    ev.add("dtstart", dt)
-                    ev.add("dtend",   dt + _dt.timedelta(minutes=90))
-                    ev.add("rrule",   {"freq": "weekly", "count": weeks})
-                except (ValueError, AttributeError):
+            # ✅ YANGILANDI: RFC 5545 — VEVENT da DTSTART majburiy.
+            # Vaqt yo'q dars iCalendar'ga qo'shilmaydi (PNG da ko'rinadi)
+            if not time_str:
+                continue
+            try:
+                h, m = map(int, time_str.split(":"))
+                if not (0 <= h <= 23 and 0 <= m <= 59):
                     continue
+                dt = _dt.datetime.combine(
+                    week_start + _dt.timedelta(days=day_idx),
+                    _dt.time(h, m, tzinfo=tz),
+                )
+            except (ValueError, AttributeError):
+                continue
+
+            ev = Event()
+            ev.add("uid",     f"{day_idx}-{num}-{h:02d}{m:02d}@edubot.uz")
+            ev.add("summary", subject.strip() or f"Dars {num}")
+            if subject and subject.strip():
+                ev.add("description", f"EduBot · {subject.strip()}")
+            ev.add("dtstart", dt)
+            ev.add("dtend",   dt + _dt.timedelta(minutes=90))
+            ev.add("rrule",   {"freq": "weekly", "count": weeks})
             cal.add_component(ev)
 
     return cal.to_ical()
