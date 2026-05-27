@@ -22,7 +22,17 @@ RUN apt-get update && apt-get install -y \
     shared-mime-info \
     libheif1 \
     libde265-0 \
+    fontconfig \
+    fonts-liberation2 \
+    fonts-crosextra-carlito \
+    fonts-crosextra-caladea \
+    fonts-noto-core \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
+
+ENV SAL_USE_VCLPLUGIN=svp \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 

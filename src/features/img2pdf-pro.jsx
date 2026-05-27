@@ -164,6 +164,42 @@ function _ensureLibs() {
   }
 }
 
+// Blob ni fayl sifatida yuklab olish
+function _downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// Faylni Telegram botga yuborish (boshqa xizmatlardagi naqshga mos)
+async function _sendToBot(blob, filename, onToast) {
+  const userId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+  if (!userId || !window.BACKEND_URL) {
+    onToast?.("❌ Telegram ID topilmadi");
+    return;
+  }
+  try {
+    const form = new FormData();
+    form.append("file", blob, filename);
+    form.append("user_id", String(userId));
+    form.append("filename", filename);
+    const r = await fetch(`${window.BACKEND_URL}/api/send-file`, {
+      method:  "POST",
+      headers: { "X-User-Id": String(userId) },
+      body:    form,
+    });
+    if (!r.ok) throw new Error("Server xatosi");
+    onToast?.("✅ Telegram botga yuborildi");
+  } catch (e) {
+    onToast?.("❌ Yuborishda xato: " + (e.message || "Qayta urinib ko'ring"));
+  }
+}
+
 // Rasm uchun PDF sahifa o'lchami va render geometriyasi
 function _layoutFor(img, pageSize, marginMm, fitMode, dpi) {
   // Sahifa o'lchami
@@ -906,6 +942,188 @@ function _ConsoleLog({ images, pageSize, marginMm, fitMode, dpi, mode }) {
   );
 }
 
+// ─── Result View — boshqa xizmatlardagidek 3 ta tugma ──────────────
+
+function _ResultView({ result, accent, onAgain, onToast }) {
+  const [sending, setSending] = _useS(false);
+
+  const handleDownload = _useC(() => {
+    _downloadBlob(result.blob, result.filename);
+    onToast?.("✅ Yuklandi");
+  }, [result, onToast]);
+
+  const handleSendToBot = _useC(async () => {
+    setSending(true);
+    await _sendToBot(result.blob, result.filename, onToast);
+    setSending(false);
+  }, [result, onToast]);
+
+  const fileSizeMB = result.blob?.size
+    ? (result.blob.size / 1024 / 1024).toFixed(2)
+    : null;
+
+  // Yashil muvaffaqiyat halqasi (window.SuccessRing mavjud bo'lsa undan foydalanamiz)
+  const successIcon =
+    typeof window.SuccessRing === "function"
+      ? React.createElement(window.SuccessRing)
+      : (
+          <div
+            aria-hidden="true"
+            style={{
+              width:           72,
+              height:          72,
+              borderRadius:    "50%",
+              background:      "rgba(34,197,94,0.15)",
+              border:          "1px solid rgba(34,197,94,0.35)",
+              display:         "flex",
+              alignItems:      "center",
+              justifyContent:  "center",
+            }}
+          >
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M5 12l5 5L20 7"
+                stroke="#22c55e"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+        );
+
+  // Button — window dan (components.js orqali yuklangan)
+  const Btn = window.Button;
+  const Spin = window.Spinner;
+
+  return (
+    <div
+      style={{
+        display:        "flex",
+        flexDirection:  "column",
+        alignItems:     "center",
+        gap:            14,
+        padding:        "4px 0",
+      }}
+    >
+      {successIcon}
+
+      <div style={{ textAlign: "center" }}>
+        <div
+          style={{
+            color:     "var(--text-primary)",
+            fontSize:  17,
+            fontWeight: 700,
+          }}
+        >
+          Tayyor!
+        </div>
+        <div
+          style={{
+            color:       "var(--text-muted)",
+            fontSize:    12.5,
+            marginTop:   4,
+            fontFamily:  "ui-monospace, SFMono-Regular, Menlo, monospace",
+            wordBreak:   "break-all",
+          }}
+        >
+          📎 {result.filename}
+          {fileSizeMB && <span> · {fileSizeMB} MB</span>}
+        </div>
+        <div
+          style={{
+            marginTop:    8,
+            color:        EMERALD,
+            fontSize:     12.5,
+            fontWeight:   600,
+            background:   "rgba(16,185,129,0.12)",
+            padding:      "6px 12px",
+            borderRadius: 8,
+            display:      "inline-block",
+          }}
+        >
+          PDF brauzerda yaratildi · {result.pages} sahifa
+        </div>
+      </div>
+
+      {/* 3 ta tugma — Yana ishlash · Telegramga · Yuklab olish */}
+      {Btn ? (
+        <div style={{ display: "flex", gap: 8, width: "100%", flexWrap: "wrap" }}>
+          <Btn variant="secondary" onClick={onAgain} style={{ flex: 1 }}>
+            Yana ishlash
+          </Btn>
+          <Btn
+            variant="secondary"
+            onClick={handleSendToBot}
+            disabled={sending}
+            style={{ flex: 1 }}
+          >
+            {sending && Spin
+              ? React.createElement(Spin, { size: 16, color: "var(--text-muted)" })
+              : "📨"}
+          </Btn>
+          <Btn variant="primary" accent={accent} onClick={handleDownload} style={{ flex: 1 }}>
+            Yuklab olish
+          </Btn>
+        </div>
+      ) : (
+        // Fallback — Button global'i topilmasa, oddiy tugmalar
+        <div style={{ display: "flex", gap: 8, width: "100%" }}>
+          <button
+            type="button"
+            onClick={onAgain}
+            style={_resultBtnStyle("secondary", accent)}
+          >
+            Yana ishlash
+          </button>
+          <button
+            type="button"
+            onClick={handleSendToBot}
+            disabled={sending}
+            style={_resultBtnStyle("secondary", accent)}
+          >
+            📨
+          </button>
+          <button
+            type="button"
+            onClick={handleDownload}
+            style={_resultBtnStyle("primary", accent)}
+          >
+            Yuklab olish
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function _resultBtnStyle(variant, accent) {
+  const base = {
+    flex:         1,
+    padding:      "12px 18px",
+    borderRadius: 14,
+    fontSize:     14,
+    fontWeight:   600,
+    cursor:       "pointer",
+    font:         "inherit",
+    border:       "none",
+  };
+  if (variant === "primary") {
+    return {
+      ...base,
+      background: accent || "var(--accent)",
+      color:      "#fff",
+      boxShadow:  `0 8px 24px ${accent || "var(--accent)"}40`,
+    };
+  }
+  return {
+    ...base,
+    background: "var(--bg-surface-2)",
+    color:      "var(--text-primary)",
+    border:     "0.5px solid var(--border-medium)",
+  };
+}
+
 // ─── Asosiy komponent ──────────────────────────────────────────────
 
 function Img2PdfPro({ t, accent, onToast }) {
@@ -920,6 +1138,8 @@ function Img2PdfPro({ t, accent, onToast }) {
   const [statusLog, setStatusLog] = _useS("");
   const [isWorking, setIsWorking] = _useS(false);
   const [dragOver,  setDragOver]  = _useS(false);
+  // result: { blob, filename, pages } — null bo'lsa input UI, aks holda result UI
+  const [result,    setResult]    = _useS(null);
   const inputRef = _useR(null);
 
   // Yangi fayllar qo'shish
@@ -1036,10 +1256,12 @@ function Img2PdfPro({ t, accent, onToast }) {
       }
 
       setProgress(90);
-      setStatusLog("PDF fayl yig'ilmoqda va saqlanmoqda...");
+      setStatusLog("PDF fayl yig'ilmoqda...");
 
       const filename = `img2pdf_pro_${pageSize}_${images.length}sahifa.pdf`;
-      pdf.save(filename);
+      // ⚠️ pdf.save() o'rniga blob qaytaramiz — boshqa xizmatlardagidek
+      // result view orqali Yuklab olish / Telegramga yuborish tugmalari ko'rsatiladi
+      const pdfBlob = pdf.output("blob");
 
       setProgress(100);
       setStatusLog("Muvaffaqiyatli yakunlandi!");
@@ -1053,13 +1275,16 @@ function Img2PdfPro({ t, accent, onToast }) {
         });
       }
       window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.("success");
-      onToast?.("✅ PDF yuklab olindi");
 
-      setTimeout(() => {
-        setIsWorking(false);
-        setProgress(0);
-        setStatusLog("");
-      }, 2500);
+      // Progress paneli yopilib, result view ochiladi
+      setIsWorking(false);
+      setProgress(0);
+      setStatusLog("");
+      setResult({
+        blob:     pdfBlob,
+        filename,
+        pages:    images.length,
+      });
     } catch (e) {
       console.error("[Img2PdfPro]", e);
       setIsWorking(false);
@@ -1070,11 +1295,35 @@ function Img2PdfPro({ t, accent, onToast }) {
     }
   }, [images, pageSize, marginMm, fitMode, dpi, mode, isWorking, onToast]);
 
+  // Yana ishlash — result'ni tozalaymiz, rasmlar va sozlamalar saqlanadi
+  // (foydalanuvchi sozlamani o'zgartirib qayta PDF yaratishi mumkin)
+  const handleAgain = _useC(() => {
+    setResult(null);
+    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
+  }, []);
+
   // Telegram MainButton (mobil uchun qulay)
+  // Result view ochiq bo'lsa — MainButton "Yuklab olish"ga aylanadi
   _useE(() => {
     const TG  = window.Telegram?.WebApp;
     const btn = TG?.MainButton;
     if (!btn) return;
+
+    if (result) {
+      btn.setText("PDF yuklab olish");
+      try { btn.setParams({ color: AMBER, text_color: SLATE_BLACK }); } catch (_) {}
+      btn.show();
+      const handler = () => {
+        _downloadBlob(result.blob, result.filename);
+        onToast?.("✅ Yuklandi");
+      };
+      btn.onClick(handler);
+      return () => {
+        btn.hide();
+        btn.offClick(handler);
+      };
+    }
+
     if (!images.length || isWorking) {
       btn.hide();
       return;
@@ -1088,8 +1337,30 @@ function Img2PdfPro({ t, accent, onToast }) {
       btn.hide();
       btn.offClick(handler);
     };
-  }, [images.length, isWorking, generatePdf]);
+  }, [images.length, isWorking, generatePdf, result, onToast]);
 
+  // ─── RESULT VIEW (boshqa xizmatlardagidek) ──────────────────────
+  if (result) {
+    return (
+      <div
+        style={{
+          padding:       "12px 16px 28px",
+          display:       "flex",
+          flexDirection: "column",
+          gap:           14,
+        }}
+      >
+        <_ResultView
+          result={result}
+          accent={accent}
+          onAgain={handleAgain}
+          onToast={onToast}
+        />
+      </div>
+    );
+  }
+
+  // ─── INPUT VIEW ──────────────────────────────────────────────────
   return (
     <div
       style={{

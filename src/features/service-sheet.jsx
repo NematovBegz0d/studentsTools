@@ -941,11 +941,20 @@ function Photo3x4Options({ opts, onChange, accent }) {
   const BG = [
     { value: "white", label: "Oq",      color: "#ffffff", border: "#bbb" },
     { value: "blue",  label: "Ko'k",    color: "#6495ed", border: "#6495ed" },
-    { value: "gray",  label: "Kulrang", color: "#c8c8c8", border: "#aaa" },
+    { value: "lightblue", label: "Och ko'k", color: "#deeeff", border: "#9cc7f2" },
+    { value: "gray",  label: "Kulrang", color: "#dce0e6", border: "#aeb5bf" },
+  ];
+  const ATTIRE = [
+    { value: "suit", label: "Kostyum", sub: "Rasmiy ko'rinish" },
+    { value: "natural", label: "Asl kiyim", sub: "Faqat crop/fon" },
+  ];
+  const FRAME = [
+    { value: "formal", label: "Yuz + yelka", sub: "Kostyum ko'rinadi" },
+    { value: "tight", label: "Yaqin", sub: "Yuz kattaroq" },
   ];
   const OUT = [
     { value: true,  label: "A4 da 6 ta", sub: "Bosib chiqarish uchun" },
-    { value: false, label: "Bitta foto", sub: "3×4 sm rasm"           },
+    { value: false, label: "Bitta foto", sub: "3x4 sm rasm"           },
   ];
 
   return (
@@ -977,6 +986,60 @@ function Photo3x4Options({ opts, onChange, accent }) {
                   color: active ? "var(--text-primary)" : "var(--text-muted)" }}>
                   {label}
                 </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 7 }}>
+          Libos
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {ATTIRE.map(({ value, label, sub }) => {
+            const active = (opts.attire || "suit") === value;
+            return (
+              <button key={value} type="button"
+                onClick={() => onChange({ ...opts, attire: value })}
+                style={{
+                  flex: 1, padding: "9px 12px", borderRadius: 12, cursor: "pointer",
+                  border: active ? `2px solid ${accent}` : `1.5px solid var(--border-medium)`,
+                  background: active ? `${accent}12` : "var(--bg-surface-1)",
+                  textAlign: "left", font: "inherit", transition: "all 0.15s",
+                }}
+              >
+                <div style={{ fontSize: 12.5, fontWeight: 600,
+                  color: "var(--text-primary)" }}>{label}</div>
+                <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 7 }}>
+          Kadr
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {FRAME.map(({ value, label, sub }) => {
+            const active = (opts.framing || "formal") === value;
+            return (
+              <button key={value} type="button"
+                onClick={() => onChange({ ...opts, framing: value })}
+                style={{
+                  flex: 1, padding: "9px 12px", borderRadius: 12, cursor: "pointer",
+                  border: active ? `2px solid ${accent}` : `1.5px solid var(--border-medium)`,
+                  background: active ? `${accent}12` : "var(--bg-surface-1)",
+                  textAlign: "left", font: "inherit", transition: "all 0.15s",
+                }}
+              >
+                <div style={{ fontSize: 12.5, fontWeight: 600,
+                  color: "var(--text-primary)" }}>{label}</div>
+                <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>
               </button>
             );
           })}
@@ -1289,7 +1352,7 @@ const SERVICE_HOW_TO = {
   qr:          ["Matn, URL yoki telefon raqam kiriting", "Boshlash ni bosing", "QR kodini yuklab oling"],
   cert:        ["1-qator: Ism Familiya\n2-qator: Kurs yoki yutuq nomi", "Boshlash ni bosing", "Sertifikat rasmini yuklab oling"],
   bgremove:    ["Rasm (JPG/PNG) yuklang", "Boshlash ni bosing — AI fon olib tashlaydi", "Fonsiz rasmni (PNG) yuklab oling"],
-  photo3x4:    ["Yuz ko'rinadigan rasm (JPG/PNG) yuklang", "Fon rangi va chiqish turini tanlang", "A4 da 6 ta 3×4 sm foto yoki bitta foto yuklab oling"],
+  photo3x4:    ["Yuz ko'rinadigan rasm (JPG/PNG) yuklang", "Fon, libos va kadr turini tanlang", "Yuz + yelka/kostyum ko'rinadigan 3x4 foto yuklab oling"],
   cv:          ["Ism, kasb, kontakt ma'lumotlarini kiriting", "Ish tajribasi, ta'lim, ko'nikmalar qo'shing", "Professional PDF CV ni yuklab oling"],
   schedule:    ["Dars jadvalini kiriting:\nDushanba: Matematika 8:00, Fizika 10:00", "Boshlash ni bosing", "Haftalik jadval rasmini yuklab oling"],
   deadline:    ["Sana kiriting: 31.12.2025 yoki 2025-12-31", "Boshlash ni bosing", "Qolgan vaqt va eslatma ko'rsatiladi"],
@@ -1479,6 +1542,7 @@ function ServiceSheet({
     if (id === "cv") return { name: "", title: "", email: "", phone: "", location: "", summary: "",
       template: "modern", skills: [], languages: [], education: [], experience: [] };
     if (id === "img2pdf" || id === "imgs2pdf") return { mode: "normal" };
+    if (id === "photo3x4") return { bg: "white", sheet: true, attire: "suit", framing: "formal" };
     return { bg: "white", sheet: true };
   };
 

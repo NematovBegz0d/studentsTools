@@ -1614,6 +1614,133 @@ def _rl_fonts():
         return 'Helvetica', 'Helvetica-Bold'
 
 
+_WORD_TO_PDF_EXTS = {".doc", ".docx"}
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except Exception:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+_OFFICE_CONVERT_TIMEOUT = _env_int("OFFICE_CONVERT_TIMEOUT", 120, 30, 300)
+_OFFICE_CONVERT_SLOTS = _env_int("OFFICE_CONVERT_SLOTS", 2, 1, max(1, _CONVERTER_WORKERS))
+_office_convert_sem = threading.BoundedSemaphore(_OFFICE_CONVERT_SLOTS)
+
+
+def _looks_like_docx(data: bytes) -> bool:
+    if not data.startswith(b"PK"):
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = set(zf.namelist())
+        return "[Content_Types].xml" in names and any(n.startswith("word/") for n in names)
+    except Exception:
+        return False
+
+
+def _looks_like_legacy_doc(data: bytes) -> bool:
+    sample = data[:512].lstrip().lower()
+    return (
+        data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")  # OLE compound file
+        or sample.startswith(b"{\\rtf")
+        or sample.startswith(b"<html")
+        or b"<html" in sample[:128]
+    )
+
+
+def _detect_word_extension(filename: str, data: bytes) -> str:
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext not in _WORD_TO_PDF_EXTS:
+        if _looks_like_docx(data):
+            return ".docx"
+        if _looks_like_legacy_doc(data):
+            return ".doc"
+        raise HTTPException(status_code=415, detail="Faqat .doc yoki .docx fayl qabul qilinadi.")
+
+    if ext == ".docx":
+        if _looks_like_docx(data):
+            return ".docx"
+        if _looks_like_legacy_doc(data):
+            return ".doc"
+        raise HTTPException(status_code=422, detail="DOCX fayl buzilgan yoki noto'g'ri formatda.")
+
+    if _looks_like_docx(data):
+        return ".docx"
+    if not _looks_like_legacy_doc(data):
+        raise HTTPException(status_code=422, detail="DOC fayl buzilgan yoki noto'g'ri formatda.")
+    return ".doc"
+
+
+def _safe_pdf_filename(filename: str) -> str:
+    stem = os.path.splitext(os.path.basename(filename or ""))[0]
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-")
+    stem = stem[:64] or "document"
+    return f"{stem}.pdf"
+
+
+def _inspect_docx(data: bytes) -> dict:
+    if not _looks_like_docx(data):
+        return {"readable": False, "paragraphs": None, "tables": None, "images": None}
+    try:
+        from docx import Document as _DocCheck
+        doc = _DocCheck(io.BytesIO(data))
+        para_count = sum(1 for p in doc.paragraphs if p.text.strip())
+        table_count = len(doc.tables)
+        image_count = sum(
+            1 for rel in doc.part.rels.values()
+            if "image" in getattr(rel, "reltype", "")
+        )
+        return {
+            "readable": True,
+            "paragraphs": para_count,
+            "tables": table_count,
+            "images": image_count,
+        }
+    except Exception:
+        return {"readable": False, "paragraphs": None, "tables": None, "images": None}
+
+
+def _validate_pdf_bytes(pdf_bytes: bytes) -> tuple[int, int]:
+    if not pdf_bytes or len(pdf_bytes) < 500:
+        raise RuntimeError("PDF natija bo'sh yoki juda kichik")
+    if not pdf_bytes[:1024].lstrip().startswith(b"%PDF"):
+        raise RuntimeError("PDF natija noto'g'ri formatda")
+
+    import fitz
+    pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        page_count = pdf.page_count
+        if page_count < 1:
+            raise RuntimeError("PDF sahifa topilmadi")
+        text_chars = 0
+        for i in range(min(page_count, 3)):
+            text_chars += len((pdf[i].get_text("text") or "").strip())
+        return page_count, text_chars
+    finally:
+        pdf.close()
+
+
+def _read_lo_pdf_output(outdir: str, input_stem: str) -> bytes:
+    expected = os.path.join(outdir, input_stem + ".pdf")
+    candidates = [expected]
+    try:
+        candidates.extend(
+            os.path.join(outdir, name)
+            for name in os.listdir(outdir)
+            if name.lower().endswith(".pdf") and os.path.join(outdir, name) != expected
+        )
+    except Exception:
+        pass
+    for path in candidates:
+        if os.path.exists(path) and os.path.getsize(path) > 500:
+            with open(path, "rb") as f:
+                return f.read()
+    raise RuntimeError("LibreOffice PDF chiqarilmadi yoki bo'sh")
+
+
 def _do_docx2pdf(data: bytes, fn_regular: str, fn_bold: str) -> bytes:
     """
     CPU-bound DOCX→PDF conversion using python-docx + ReportLab.
@@ -1892,28 +2019,87 @@ def _do_docx2pdf(data: bytes, fn_regular: str, fn_bold: str) -> bytes:
     return out.getvalue()
 
 
-def _do_docx2pdf_libreoffice(data: bytes) -> bytes:
-    """LibreOffice headless → highest quality. HOME isolated per call to avoid concurrency conflicts."""
+def _do_docx2pdf_libreoffice(data: bytes, ext: str) -> bytes:
+    """LibreOffice/soffice is the primary engine for high-fidelity DOC/DOCX -> PDF."""
     import subprocess
-    with tempfile.TemporaryDirectory() as tmpdir:
-        docx_path = os.path.join(tmpdir, "input.docx")
-        pdf_path  = os.path.join(tmpdir, "input.pdf")
-        with open(docx_path, "wb") as f:
-            f.write(data)
-        env = os.environ.copy()
-        env["HOME"] = tmpdir  # unique profile dir — prevents concurrent LibreOffice conflicts
-        result = subprocess.run(
-            ["libreoffice", "--headless", "--norestore",
-             "--convert-to", "pdf", "--outdir", tmpdir, docx_path],
-            env=env, capture_output=True, timeout=60,
-        )
-        if result.returncode != 0:
-            stderr = (result.stderr or b"").decode(errors="replace")[:300]
-            raise RuntimeError(f"libreoffice exit {result.returncode}: {stderr}")
-        if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) < 100:
-            raise RuntimeError("libreoffice PDF chiqarilmadi yoki bo'sh")
-        with open(pdf_path, "rb") as f:
-            return f.read()
+    import shutil
+    from pathlib import Path
+
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        raise RuntimeError("LibreOffice/soffice topilmadi")
+
+    ext = ext if ext in _WORD_TO_PDF_EXTS else ".docx"
+    with _office_convert_sem:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_stem = "input"
+            input_path = os.path.join(tmpdir, input_stem + ext)
+            with open(input_path, "wb") as f:
+                f.write(data)
+
+            profile_dir = tempfile.mkdtemp(prefix="lo_profile_")
+            try:
+                env = os.environ.copy()
+                env["HOME"] = profile_dir
+                env.setdefault("SAL_USE_VCLPLUGIN", "svp")
+                env.setdefault("LC_ALL", "C.UTF-8")
+                profile_uri = Path(profile_dir).resolve().as_uri()
+
+                configured_filter = os.environ.get("OFFICE_PDF_EXPORT_FILTER", "").strip()
+                export_filters = []
+                for candidate in (configured_filter, "pdf:writer_pdf_Export", "pdf"):
+                    if candidate and candidate not in export_filters:
+                        export_filters.append(candidate)
+                errors = []
+                for export_filter in export_filters:
+                    for name in os.listdir(tmpdir):
+                        if name.lower().endswith(".pdf"):
+                            try:
+                                os.remove(os.path.join(tmpdir, name))
+                            except Exception:
+                                pass
+
+                    cmd = [
+                        soffice,
+                        "--headless",
+                        "--invisible",
+                        "--nodefault",
+                        "--nologo",
+                        "--nofirststartwizard",
+                        "--norestore",
+                        f"-env:UserInstallation={profile_uri}",
+                        "--convert-to",
+                        export_filter,
+                        "--outdir",
+                        tmpdir,
+                        input_path,
+                    ]
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            env=env,
+                            capture_output=True,
+                            timeout=_OFFICE_CONVERT_TIMEOUT,
+                        )
+                    except subprocess.TimeoutExpired:
+                        raise RuntimeError(f"LibreOffice timeout {_OFFICE_CONVERT_TIMEOUT}s")
+
+                    stdout = (result.stdout or b"").decode(errors="replace")[:300]
+                    stderr = (result.stderr or b"").decode(errors="replace")[:300]
+                    if result.returncode != 0:
+                        errors.append(f"{export_filter}: exit {result.returncode}: {stderr or stdout}")
+                        continue
+
+                    try:
+                        pdf_bytes = _read_lo_pdf_output(tmpdir, input_stem)
+                        _validate_pdf_bytes(pdf_bytes)
+                        return pdf_bytes
+                    except Exception as e:
+                        errors.append(f"{export_filter}: {type(e).__name__}: {str(e)[:120]}")
+
+                raise RuntimeError("; ".join(errors[-3:]) or "LibreOffice konvertatsiya qila olmadi")
+            finally:
+                shutil.rmtree(profile_dir, ignore_errors=True)
 
 
 def _do_docx2pdf_mammoth(data: bytes) -> bytes:
@@ -1941,24 +2127,27 @@ def _do_docx2pdf_mammoth(data: bytes) -> bytes:
     return pdf_bytes
 
 
-def _do_docx2pdf_best(data: bytes, fn_regular: str, fn_bold: str) -> tuple:
-    """Tries LibreOffice → mammoth+WeasyPrint → ReportLab. Returns (pdf_bytes, method_name)."""
+def _do_docx2pdf_best(data: bytes, ext: str, fn_regular: str, fn_bold: str) -> tuple:
+    """Tries the best available DOC/DOCX -> PDF engines and validates the PDF."""
     attempts = [
-        ("libreoffice", lambda: _do_docx2pdf_libreoffice(data)),
-        ("mammoth",     lambda: _do_docx2pdf_mammoth(data)),
-        ("reportlab",   lambda: _do_docx2pdf(data, fn_regular, fn_bold)),
+        ("libreoffice", lambda: _do_docx2pdf_libreoffice(data, ext)),
     ]
+    if ext == ".docx":
+        attempts.extend([
+            ("mammoth",     lambda: _do_docx2pdf_mammoth(data)),
+            ("reportlab",   lambda: _do_docx2pdf(data, fn_regular, fn_bold)),
+        ])
     last_err = None
     for name, fn in attempts:
         try:
             result = fn()
-            if result and len(result) > 500:
-                return result, name
+            page_count, text_chars = _validate_pdf_bytes(result)
+            return result, name, page_count, text_chars
         except Exception as e:
             last_err = e
             logger.warning(f"docx2pdf [{name}] muvaffaqiyatsiz: {type(e).__name__}: {str(e)[:120]}")
     raise RuntimeError(
-        f"Barcha 3 usul (LibreOffice, mammoth, ReportLab) muvaffaqiyatsiz: {type(last_err).__name__}: {str(last_err)[:100]}"
+        f"Barcha usullar muvaffaqiyatsiz: {type(last_err).__name__}: {str(last_err)[:100]}"
     )
 
 
@@ -1972,55 +2161,62 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
         fn, fn_bold = _rl_fonts()
 
         # ── 1. Fayl validatsiyasi ─────────────────────────────────
-        fname = (file.filename or "").lower()
-        if fname.endswith(".doc") and not fname.endswith(".docx"):
-            raise HTTPException(status_code=400,
-                detail="Eski .doc format qo'llab-quvvatlanmaydi. "
-                       "Faylni Microsoft Word'da ochib, 'Word hujjati (.docx)' formatida saqlang.")
+        original_name = file.filename or "document"
+        ext = _detect_word_extension(original_name, data)
+        doc_stats = _inspect_docx(data) if ext == ".docx" else {
+            "readable": False,
+            "paragraphs": None,
+            "tables": None,
+            "images": None,
+        }
 
-        # ── 2. Hujjat tarkibini oldindan tekshirish ───────────────
-        try:
-            from docx import Document as _DocCheck
-            _doc_check = _DocCheck(io.BytesIO(data))
-            para_count  = sum(1 for p in _doc_check.paragraphs if p.text.strip())
-            table_count = len(_doc_check.tables)
-            del _doc_check
-        except Exception as e:
-            raise HTTPException(status_code=422,
-                detail="DOCX fayl ochib bo'lmadi. Fayl buzilgan yoki parol bilan himoyalangan.")
+        if doc_stats["readable"]:
+            para_count = doc_stats["paragraphs"] or 0
+            table_count = doc_stats["tables"] or 0
+            image_count = doc_stats["images"] or 0
+            if para_count == 0 and table_count == 0 and image_count == 0:
+                raise HTTPException(status_code=422, detail="Hujjat bo'sh (matn, jadval yoki rasm topilmadi).")
+        else:
+            para_count = table_count = image_count = None
 
-        if para_count == 0 and table_count == 0:
-            raise HTTPException(status_code=422, detail="Hujjat bo'sh (matn yoki jadval topilmadi).")
-
-        # ── 3. Thread pool'da konversiya (90s timeout) ────────────
+        # ── 2. Thread pool'da konversiya (server-safe timeout) ─────
         loop = asyncio.get_event_loop()
         try:
-            pdf_bytes, conv_method = await asyncio.wait_for(
-                loop.run_in_executor(_converter_pool, _do_docx2pdf_best, data, fn, fn_bold),
-                timeout=90.0,
+            pdf_bytes, conv_method, page_count, text_chars = await asyncio.wait_for(
+                loop.run_in_executor(_converter_pool, _do_docx2pdf_best, data, ext, fn, fn_bold),
+                timeout=float(_OFFICE_CONVERT_TIMEOUT + 30),
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=408,
-                detail="Konversiya 90 soniyadan oshdi. Hujjat juda katta yoki murakkab.")
+                detail=f"Konversiya {_OFFICE_CONVERT_TIMEOUT + 30} soniyadan oshdi. Hujjat juda katta yoki murakkab.")
 
-        if len(pdf_bytes) < 500:
+        if len(pdf_bytes) < 500 or page_count < 1:
             raise HTTPException(status_code=500, detail="Konversiya natijasi bo'sh. Qayta urinib ko'ring.")
 
-        # ── 4. Info xabar ─────────────────────────────────────────
-        info_parts = [f"{para_count} paragraf"]
+        # ── 3. Info xabar ─────────────────────────────────────────
+        info_parts = [ext.lstrip(".").upper()]
+        if para_count is not None:
+            info_parts.append(f"{para_count} paragraf")
         if table_count:
             info_parts.append(f"{table_count} jadval")
+        if image_count:
+            info_parts.append(f"{image_count} rasm")
+        info_parts.append(f"{page_count} sahifa")
         info_parts.append(f"aylantirildi ({conv_method})")
         info = " - ".join(info_parts)
 
-        logger.info(f"docx2pdf [{conv_method}]: {para_count}p+{table_count}t, "
-                    f"{len(data)//1024}KB → {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
+        logger.info(f"docx2pdf [{conv_method}/{ext}]: "
+                    f"{para_count if para_count is not None else '?'}p+"
+                    f"{table_count if table_count is not None else '?'}t+"
+                    f"{image_count if image_count is not None else '?'}i, "
+                    f"{page_count} pages, text={text_chars}, "
+                    f"{len(data)//1024}KB -> {len(pdf_bytes)//1024}KB, {time.time()-t0:.1f}s")
 
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
             headers={
-                "Content-Disposition": "attachment; filename=document.pdf",
+                "Content-Disposition": f"attachment; filename={_safe_pdf_filename(original_name)}",
                 "X-Info": safe_header(info),
             },
         )
@@ -2218,7 +2414,16 @@ def _detect_face_mediapipe(img_pil):
         fy = max(0, int(bb.ymin * ih))
         fw = max(1, int(bb.width * iw))
         fh = max(1, int(bb.height * ih))
-        return (fx, fy, fw, fh)
+        keypoints = {}
+        names = ("right_eye", "left_eye", "nose_tip", "mouth_center", "right_ear", "left_ear")
+        for name, kp in zip(names, best.location_data.relative_keypoints):
+            keypoints[name] = (float(kp.x) * iw, float(kp.y) * ih)
+        return {
+            "bbox": (fx, fy, fw, fh),
+            "keypoints": keypoints,
+            "score": float(best.score[0]) if best.score else 0.0,
+            "detector": "MediaPipe",
+        }
     except Exception as e:
         logger.debug(f"MediaPipe detect xato: {e}")
         return None
@@ -2238,13 +2443,239 @@ def _detect_face_haar(img_pil):
         )
         if len(faces) == 0:
             return None
-        return tuple(sorted(faces, key=lambda f: f[2] * f[3], reverse=True)[0])
+        fx, fy, fw, fh = tuple(sorted(faces, key=lambda f: f[2] * f[3], reverse=True)[0])
+        return {
+            "bbox": (int(fx), int(fy), int(fw), int(fh)),
+            "keypoints": {},
+            "score": 0.0,
+            "detector": "Haar",
+        }
     except Exception as e:
         logger.debug(f"Haar detect xato: {e}")
         return None
 
 
-def _do_photo3x4(data: bytes, bg: str = "white", sheet: bool = True) -> tuple[bytes, str]:
+def _scale_face_profile(face: Optional[dict], scale: float) -> Optional[dict]:
+    if not face or scale == 1:
+        return face
+    fx, fy, fw, fh = face["bbox"]
+    inv = 1 / scale
+    return {
+        **face,
+        "bbox": (
+            int(round(fx * inv)),
+            int(round(fy * inv)),
+            int(round(fw * inv)),
+            int(round(fh * inv)),
+        ),
+        "keypoints": {
+            name: (x * inv, y * inv)
+            for name, (x, y) in (face.get("keypoints") or {}).items()
+        },
+    }
+
+
+def _detect_best_face(img_pil):
+    """Detect on a smaller copy, then map coordinates back to the source image."""
+    from PIL import Image
+
+    iw, ih = img_pil.size
+    max_side = max(iw, ih)
+    scale = min(1.0, 1600 / max_side) if max_side else 1.0
+    detect_img = img_pil
+    if scale < 1:
+        resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+        detect_img = img_pil.resize(
+            (max(1, int(iw * scale)), max(1, int(ih * scale))),
+            resample,
+        )
+
+    try:
+        face = _detect_face_mediapipe(detect_img)
+    except Exception as e:
+        logger.debug(f"MediaPipe detect import/run xato: {e}")
+        face = None
+    if face is None:
+        try:
+            face = _detect_face_haar(detect_img)
+        except Exception as e:
+            logger.debug(f"Haar detect import/run xato: {e}")
+            face = None
+    return _scale_face_profile(face, scale)
+
+
+def _photo3x4_crop_rect(iw: int, ih: int, face: Optional[dict], framing: str = "formal") -> tuple[int, int, int, int]:
+    """Return a 3:4 crop rect. Formal framing leaves room for shoulders and suit."""
+    target_ratio = 3 / 4
+    if not face:
+        if iw / max(1, ih) > target_ratio:
+            ch = ih
+            cw = int(ch * target_ratio)
+        else:
+            cw = iw
+            ch = int(cw / target_ratio)
+        x0 = (iw - cw) // 2
+        y0 = max(0, int((ih - ch) * 0.38))
+        return (x0, y0, x0 + cw, y0 + ch)
+
+    fx, fy, fw, fh = face["bbox"]
+    kps = face.get("keypoints") or {}
+    eye_pts = [kps[name] for name in ("left_eye", "right_eye") if name in kps]
+    eye_cx = sum(p[0] for p in eye_pts) / len(eye_pts) if eye_pts else fx + fw / 2
+    eye_cy = sum(p[1] for p in eye_pts) / len(eye_pts) if eye_pts else fy + fh * 0.38
+
+    if framing == "tight":
+        face_target_h = 0.50
+        eye_target_y = 0.35
+        face_top_target_y = 0.10
+    else:
+        face_target_h = 0.42
+        eye_target_y = 0.32
+        face_top_target_y = 0.11
+
+    crop_h = max(fh / face_target_h, fw / 0.46)
+    crop_w = crop_h * target_ratio
+    if crop_w < fw * 2.05:
+        crop_w = fw * 2.05
+        crop_h = crop_w / target_ratio
+
+    cx = eye_cx
+    y_from_eyes = eye_cy - crop_h * eye_target_y
+    y_from_face = fy - crop_h * face_top_target_y
+    y0 = int(round(y_from_eyes * 0.55 + y_from_face * 0.45))
+    x0 = int(round(cx - crop_w / 2))
+    x1 = int(round(x0 + crop_w))
+    y1 = int(round(y0 + crop_h))
+    return (x0, y0, x1, y1)
+
+
+def _crop_with_padding(img, rect: tuple[int, int, int, int], fill: tuple[int, int, int]):
+    from PIL import Image
+
+    x0, y0, x1, y1 = rect
+    out_w = max(1, x1 - x0)
+    out_h = max(1, y1 - y0)
+    canvas = Image.new("RGB", (out_w, out_h), fill)
+    ix0, iy0 = max(0, x0), max(0, y0)
+    ix1, iy1 = min(img.width, x1), min(img.height, y1)
+    if ix1 > ix0 and iy1 > iy0:
+        canvas.paste(img.crop((ix0, iy0, ix1, iy1)), (ix0 - x0, iy0 - y0))
+    return canvas
+
+
+def _map_face_to_crop(face: Optional[dict], rect: tuple[int, int, int, int], out_size: tuple[int, int]) -> Optional[dict]:
+    if not face:
+        return None
+    x0, y0, x1, y1 = rect
+    sx = out_size[0] / max(1, x1 - x0)
+    sy = out_size[1] / max(1, y1 - y0)
+    fx, fy, fw, fh = face["bbox"]
+    return {
+        **face,
+        "bbox": (
+            int(round((fx - x0) * sx)),
+            int(round((fy - y0) * sy)),
+            int(round(fw * sx)),
+            int(round(fh * sy)),
+        ),
+    }
+
+
+def _replace_photo_background(crop, bg_rgb: tuple[int, int, int]) -> tuple[object, bool]:
+    try:
+        from PIL import Image, ImageFilter
+        from rembg import remove as rembg_remove
+        try:
+            crop_no_bg = rembg_remove(
+                crop,
+                alpha_matting=True,
+                alpha_matting_foreground_threshold=240,
+                alpha_matting_background_threshold=10,
+                alpha_matting_erode_size=10,
+            )
+        except TypeError:
+            crop_no_bg = rembg_remove(crop)
+        if crop_no_bg.mode != "RGBA":
+            crop_no_bg = crop_no_bg.convert("RGBA")
+        alpha = crop_no_bg.getchannel("A").filter(ImageFilter.GaussianBlur(0.45))
+        bg_layer = Image.new("RGB", crop.size, bg_rgb)
+        bg_layer.paste(crop_no_bg.convert("RGB"), mask=alpha)
+        return bg_layer, True
+    except Exception as e:
+        logger.debug(f"rembg xato photo3x4: {e}")
+        return crop, False
+
+
+def _draw_formal_suit(photo, face_out: Optional[dict], attire: str = "suit"):
+    if attire != "suit":
+        return photo
+    from PIL import ImageDraw
+
+    img = photo.copy()
+    draw = ImageDraw.Draw(img, "RGBA")
+    W, H = img.size
+    if face_out:
+        fx, fy, fw, fh = face_out["bbox"]
+        cx = fx + fw / 2
+        chin_y = fy + fh
+        shoulder_w = max(W * 0.74, fw * 2.45)
+        neck_y = int(min(max(chin_y - H * 0.015, H * 0.50), H * 0.66))
+    else:
+        cx = W / 2
+        shoulder_w = W * 0.78
+        neck_y = int(H * 0.57)
+
+    left_shoulder = int(max(0, cx - shoulder_w / 2))
+    right_shoulder = int(min(W, cx + shoulder_w / 2))
+    center = int(round(cx))
+    bottom = H + 10
+
+    jacket = (25, 32, 45, 238)
+    jacket_hi = (38, 50, 68, 232)
+    shirt = (250, 250, 248, 245)
+    collar = (242, 242, 240, 246)
+    tie = (38, 55, 104, 242)
+
+    shoulder_y = min(H - 40, neck_y + int(H * 0.18))
+    draw.polygon(
+        [(left_shoulder, shoulder_y), (center - 22, neck_y + 18), (center - 58, bottom), (0, bottom), (0, H - 55)],
+        fill=jacket,
+    )
+    draw.polygon(
+        [(right_shoulder, shoulder_y), (center + 22, neck_y + 18), (center + 58, bottom), (W, bottom), (W, H - 55)],
+        fill=jacket,
+    )
+    draw.polygon(
+        [(center - 34, neck_y + 8), (center + 34, neck_y + 8), (center + 68, bottom), (center - 68, bottom)],
+        fill=shirt,
+    )
+    draw.polygon([(center - 40, neck_y + 8), (center - 6, neck_y + 54), (center - 58, neck_y + 36)], fill=collar)
+    draw.polygon([(center + 40, neck_y + 8), (center + 6, neck_y + 54), (center + 58, neck_y + 36)], fill=collar)
+    draw.polygon([(center - 13, neck_y + 44), (center + 13, neck_y + 44), (center + 20, bottom), (center - 20, bottom)], fill=tie)
+    draw.polygon([(center - 16, neck_y + 32), (center, neck_y + 48), (center + 16, neck_y + 32), (center, neck_y + 20)], fill=tie)
+    draw.line([(center - 74, neck_y + 54), (center - 28, bottom)], fill=jacket_hi, width=2)
+    draw.line([(center + 74, neck_y + 54), (center + 28, bottom)], fill=jacket_hi, width=2)
+    return img
+
+
+def _enhance_passport_photo(photo):
+    from PIL import ImageEnhance, ImageOps
+
+    photo = ImageOps.autocontrast(photo, cutoff=0.4)
+    photo = ImageEnhance.Color(photo).enhance(1.03)
+    photo = ImageEnhance.Contrast(photo).enhance(1.04)
+    photo = ImageEnhance.Sharpness(photo).enhance(1.12)
+    return photo
+
+
+def _do_photo3x4_legacy(
+    data: bytes,
+    bg: str = "white",
+    sheet: bool = True,
+    attire: str = "suit",
+    framing: str = "formal",
+) -> tuple[bytes, str]:
+    return _do_photo3x4(data, bg, sheet, attire, framing)
     """
     Rasm → 3×4 sm passport foto (300 DPI).
     1. HEIC/HEIF qabul qilinadi (pillow_heif Dockerfile da)
@@ -2344,12 +2775,91 @@ def _do_photo3x4(data: bytes, bg: str = "white", sheet: bool = True) -> tuple[by
     return buf.getvalue(), f"✅ A4 · 6 ta 3×4 · 300 DPI · {detector_used}{bg_note}"
 
 
+def _do_photo3x4(
+    data: bytes,
+    bg: str = "white",
+    sheet: bool = True,
+    attire: str = "suit",
+    framing: str = "formal",
+) -> tuple[bytes, str]:
+    """Improved 3x4 passport photo renderer with face+shoulder framing."""
+    from PIL import Image, ImageOps, ImageDraw
+
+    W, H = 354, 472  # 3x4 cm at 300 DPI
+    BG_COLORS = {
+        "white":     (255, 255, 255),
+        "blue":      (100, 149, 237),
+        "lightblue": (222, 238, 255),
+        "gray":      (220, 224, 230),
+    }
+    bg_rgb = BG_COLORS.get(bg, BG_COLORS["white"])
+    attire = attire if attire in ("suit", "natural") else "suit"
+    framing = framing if framing in ("formal", "tight") else "formal"
+
+    img_pil = Image.open(io.BytesIO(data))
+    img_pil = ImageOps.exif_transpose(img_pil)
+    if img_pil.mode != "RGB":
+        img_pil = img_pil.convert("RGB")
+
+    iw, ih = img_pil.size
+    face = _detect_best_face(img_pil)
+    detector_used = face.get("detector", "face") if face else "markaz crop"
+    rect = _photo3x4_crop_rect(iw, ih, face, framing)
+    crop = _crop_with_padding(img_pil, rect, bg_rgb)
+    crop, bg_replaced = _replace_photo_background(crop, bg_rgb)
+
+    resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+    photo = crop.resize((W, H), resample)
+    face_out = _map_face_to_crop(face, rect, (W, H))
+    photo = _draw_formal_suit(photo, face_out, attire)
+    photo = _enhance_passport_photo(photo)
+
+    bg_note = " - fon almashtirildi" if bg_replaced else ""
+    suit_note = " - kostyum" if attire == "suit" else ""
+
+    if not sheet:
+        buf = io.BytesIO()
+        photo.save(buf, format="JPEG", quality=96, subsampling=0, optimize=True, dpi=(300, 300))
+        return buf.getvalue(), f"3x4 sm - 300 DPI - {detector_used}{suit_note}{bg_note}"
+
+    # A4 sheet: 6 photos, compact 3x2 layout with crop marks.
+    A4W, A4H = 2480, 3508
+    COLS, ROWS = 3, 2
+    GAP_X, GAP_Y = 70, 70
+    grid_w = COLS * W + (COLS - 1) * GAP_X
+    start_x = (A4W - grid_w) // 2
+    start_y = 230
+    canvas = Image.new("RGB", (A4W, A4H), (255, 255, 255))
+    draw = ImageDraw.Draw(canvas)
+    for row in range(ROWS):
+        for col in range(COLS):
+            px = start_x + col * (W + GAP_X)
+            py = start_y + row * (H + GAP_Y)
+            canvas.paste(photo, (px, py))
+            draw.rectangle([px - 1, py - 1, px + W, py + H], outline=(170, 170, 170), width=1)
+            cut = 16
+            draw.line([(px - cut, py), (px - 3, py)], fill=(210, 210, 210), width=1)
+            draw.line([(px, py - cut), (px, py - 3)], fill=(210, 210, 210), width=1)
+            draw.line([(px + W + 3, py), (px + W + cut, py)], fill=(210, 210, 210), width=1)
+            draw.line([(px + W, py - cut), (px + W, py - 3)], fill=(210, 210, 210), width=1)
+            draw.line([(px - cut, py + H), (px - 3, py + H)], fill=(210, 210, 210), width=1)
+            draw.line([(px, py + H + 3), (px, py + H + cut)], fill=(210, 210, 210), width=1)
+            draw.line([(px + W + 3, py + H), (px + W + cut, py + H)], fill=(210, 210, 210), width=1)
+            draw.line([(px + W, py + H + 3), (px + W, py + H + cut)], fill=(210, 210, 210), width=1)
+
+    buf = io.BytesIO()
+    canvas.save(buf, format="JPEG", quality=96, subsampling=0, optimize=True, dpi=(300, 300))
+    return buf.getvalue(), f"A4 - 6 ta 3x4 - 300 DPI - {detector_used}{suit_note}{bg_note}"
+
+
 @app.post("/api/photo3x4")
 @limiter.limit("15/minute")
 async def photo3x4(
     request: Request,
     file: UploadFile  = File(...),
-    bg: str           = Form("white"),   # white | blue | gray
+    bg: str           = Form("white"),   # white | blue | lightblue | gray
+    attire: str       = Form("suit"),
+    framing: str      = Form("formal"),
     sheet: str        = Form("true"),    # "true" → A4 da 6 ta, "false" → bitta
 ):
     t0 = time.time()
@@ -2359,22 +2869,24 @@ async def photo3x4(
 
         if not is_image_bytes(data):
             raise HTTPException(status_code=422,
-                detail="Rasm fayli emas. JPG yoki PNG yuklang.")
+                detail="Rasm fayli emas. JPG, PNG, WebP yoki HEIC yuklang.")
 
-        bg      = bg if bg in ("white", "blue", "gray") else "white"
+        bg      = bg if bg in ("white", "blue", "lightblue", "gray") else "white"
         do_sheet = sheet.lower() not in ("false", "0", "no")
+        attire = attire if attire in ("suit", "natural") else "suit"
+        framing = framing if framing in ("formal", "tight") else "formal"
 
         loop = asyncio.get_event_loop()
         try:
             jpg_bytes, info = await asyncio.wait_for(
                 loop.run_in_executor(
                     _converter_pool,
-                    functools.partial(_do_photo3x4, data, bg, do_sheet),
+                    functools.partial(_do_photo3x4, data, bg, do_sheet, attire, framing),
                 ),
-                timeout=30.0,
+                timeout=60.0,
             )
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=408, detail="Konversiya 30 soniyadan oshdi.")
+            raise HTTPException(status_code=408, detail="Konversiya 60 soniyadan oshdi.")
 
         fname = "photo3x4_sheet.jpg" if do_sheet else "photo3x4.jpg"
         logger.info(f"photo3x4: {len(data)//1024}KB → {len(jpg_bytes)//1024}KB [{bg} sheet={do_sheet}] {time.time()-t0:.1f}s")

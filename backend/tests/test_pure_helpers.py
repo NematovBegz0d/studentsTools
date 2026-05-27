@@ -137,6 +137,34 @@ def test_readtime_cjk_uses_chars_not_words():
 
 # ─── _SCHEDULE_DAY_IDX mapping ────────────────────────────────────────────────
 
+def test_photo3x4_formal_crop_keeps_shoulder_room():
+    from main import _photo3x4_crop_rect
+
+    face = {
+        "bbox": (400, 220, 220, 260),
+        "keypoints": {"left_eye": (460, 310), "right_eye": (560, 310)},
+    }
+    formal = _photo3x4_crop_rect(1200, 1600, face, "formal")
+    tight = _photo3x4_crop_rect(1200, 1600, face, "tight")
+
+    formal_w, formal_h = formal[2] - formal[0], formal[3] - formal[1]
+    tight_h = tight[3] - tight[1]
+    assert formal_h > tight_h
+    assert abs((formal_w / formal_h) - 0.75) < 0.02
+
+
+def test_photo3x4_face_maps_into_output_frame():
+    from main import _map_face_to_crop
+
+    face = {"bbox": (400, 220, 220, 260), "keypoints": {}, "detector": "test"}
+    mapped = _map_face_to_crop(face, (300, 120, 750, 720), (354, 472))
+    x, y, w, h = mapped["bbox"]
+
+    assert 0 <= x < 354
+    assert 0 <= y < 472
+    assert w > 0 and h > 0
+
+
 def test_schedule_day_idx_all_uzbek_days():
     from main import _SCHEDULE_DAY_IDX
     # Dushanba=0 (Monday) ... Yakshanba=6 (Sunday)

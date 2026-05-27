@@ -471,11 +471,11 @@ async function pdf2docx({ file }) {
 async function docx2pdf({ file }) {
   validateFile(file, ".doc,.docx");
   const form = buildFormData("file", file);
-  // Murakkab hujjatlar uchun 60 soniya — default 30s etarli emas
+  // Murakkab DOC/DOCX hujjatlar uchun 150 soniya — LibreOffice server-side ishlaydi
   const response = await fetchWithTimeout(
     `${BACKEND_URL}/api/docx2pdf`,
     { method: "POST", headers: getAuthHeaders(), body: form },
-    60000,
+    150000,
   );
   await handleResponseError(response);
   const blob = await response.blob();
@@ -525,15 +525,17 @@ async function imgcompress({ file }) {
 // ─── AI (with mobile fallback) ────────────────────────────────────
 
 async function photo3x4({ file, opts = {} }) {
-  validateFile(file, ".jpg,.jpeg,.png");
+  validateFile(file, ".jpg,.jpeg,.png,.webp,.heic,.heif");
   const form = new FormData();
   form.append("file", file);
-  form.append("bg", ["white", "blue", "gray"].includes(opts.bg) ? opts.bg : "white");
+  form.append("bg", ["white", "blue", "lightblue", "gray"].includes(opts.bg) ? opts.bg : "white");
   form.append("sheet", opts.sheet !== false ? "true" : "false");
+  form.append("attire", ["suit", "natural"].includes(opts.attire) ? opts.attire : "suit");
+  form.append("framing", ["formal", "tight"].includes(opts.framing) ? opts.framing : "formal");
   const response = await fetchWithTimeout(
     `${BACKEND_URL}/api/photo3x4`,
     { method: "POST", headers: getAuthHeaders(), body: form },
-    30000,
+    60000,
   );
   await handleResponseError(response);
   const blob = await response.blob();
