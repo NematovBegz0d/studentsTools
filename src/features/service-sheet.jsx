@@ -497,7 +497,7 @@ function ResultFile({ t, accent, result, onAgain, onClose, onToast }) {
             fontWeight: 700,
           }}
         >
-          {t.sheetDone}
+          {t.sheetDone || t.sheetReady}
         </div>
         <div
           style={{
@@ -1308,6 +1308,8 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
 
   const meta = isPremium ? t.p?.[service.id] : t.s?.[service.id];
   const howTo = SERVICE_HOW_TO[service.id] || [];
+  // img2pdf/imgs2pdf — endi client-side jsPDF (Python backend ishlatilmaydi)
+  const isImg2PdfPro = !isPremium && (service.id === "img2pdf" || service.id === "imgs2pdf");
 
   return (
     <div
@@ -1367,8 +1369,8 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
       {/* Scrollable body */}
       <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
 
-        {/* How-to card */}
-        {howTo.length > 0 && (
+        {/* How-to card — client-side img2pdf/imgs2pdf da ko'rsatilmaydi (alohida UI) */}
+        {howTo.length > 0 && !isImg2PdfPro && (
           <div
             style={{
               margin: "16px 16px 0",
@@ -1410,19 +1412,25 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
         )}
 
         {/* Divider */}
-        <div style={{ height: "0.5px", background: "var(--border-subtle)", margin: "16px 0 0" }} />
+        {!isImg2PdfPro && (
+          <div style={{ height: "0.5px", background: "var(--border-subtle)", margin: "16px 0 0" }} />
+        )}
 
-        {/* Embedded ServiceSheet (no header) */}
-        <ServiceSheet
-          service={service}
-          isPremium={isPremium}
-          t={t}
-          accent={accent}
-          embedded={true}
-          onClose={onBack}
-          onToast={onToast}
-          onGoToPlans={onGoToPlans}
-        />
+        {/* img2pdf/imgs2pdf → CLIENT-SIDE Img2PdfPro (jsPDF); aks holda — standart ServiceSheet */}
+        {isImg2PdfPro ? (
+          <Img2PdfPro t={t} accent={accent} onToast={onToast} />
+        ) : (
+          <ServiceSheet
+            service={service}
+            isPremium={isPremium}
+            t={t}
+            accent={accent}
+            embedded={true}
+            onClose={onBack}
+            onToast={onToast}
+            onGoToPlans={onGoToPlans}
+          />
+        )}
       </div>
     </div>
   );
@@ -1545,7 +1553,7 @@ function ServiceSheet({
       setStep("done");
       window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("error");
     }
-  }, [service, inputData, acceptText, serviceOpts]);
+  }, [service, inputData, acceptText, serviceOpts, extraText, needsExtraText]);
 
   const reset = useC(() => {
     setStep("input");

@@ -485,38 +485,9 @@ async function docx2pdf({ file }) {
 
 // ─── File conversion ──────────────────────────────────────────────
 
-// Barcha rasm formatlari (HEIC=iPhone, AVIF=zamonaviy kamera, TIFF=skan)
-const IMG_FORMATS = ".jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif,.heic,.heif,.avif";
-
-function _img2pdfTimeout(mode, fileCount = 1) {
-  // Server timeoutiga mos: searchable 90s, document 45s, normal 30s (single)
-  // Multi: har rasmga 10s (searchable) yoki 3s (boshqa)
-  if (mode === "searchable") return Math.min(30000 + fileCount * 10000, 300000);
-  if (mode === "document")   return Math.min(30000 + fileCount * 5000, 180000);
-  return Math.min(30000 + fileCount * 3000, 120000);
-}
-
-async function img2pdf({ file, opts = {} }) {
-  validateFile(file, IMG_FORMATS);
-  const form = buildFormData("file", file);
-  if (opts.mode) form.append("mode", opts.mode);          // normal | document | searchable
-  if (opts.page_size) form.append("page_size", opts.page_size);
-  if (opts.margin_mm != null) form.append("margin_mm", String(opts.margin_mm));
-  if (opts.fit_mode) form.append("fit_mode", opts.fit_mode);
-  const timeoutMs = _img2pdfTimeout(opts.mode || "normal", 1);
-  return apiFile("/api/img2pdf", form, "image.pdf", "X-Info", timeoutMs);
-}
-
-async function imgs2pdf({ files, opts = {} }) {
-  validateFiles(files, IMG_FORMATS);
-  const form = buildFormData("files", files);
-  if (opts.mode) form.append("mode", opts.mode);
-  if (opts.page_size) form.append("page_size", opts.page_size);
-  if (opts.margin_mm != null) form.append("margin_mm", String(opts.margin_mm));
-  if (opts.fit_mode) form.append("fit_mode", opts.fit_mode);
-  const timeoutMs = _img2pdfTimeout(opts.mode || "normal", files?.length || 1);
-  return apiFile("/api/imgs2pdf", form, "images.pdf", "X-Info", timeoutMs);
-}
+// Eslatma: img2pdf va imgs2pdf endi backend'ga so'rov yubormaydi — ServicePage
+// to'g'ridan-to'g'ri Img2PdfPro (jsPDF) komponentini render qiladi, shuning
+// uchun bu yerda handler funksiyalar talab qilinmaydi.
 
 async function xlsx2pdf({ file }) {
   validateFile(file, ".xlsx,.xls");
@@ -812,8 +783,7 @@ const SERVICE_HANDLERS = {
   pdflock,
   watermark,
   pdf2img,
-  img2pdf,
-  imgs2pdf,
+  // img2pdf, imgs2pdf → endi browser tomonida (Img2PdfPro / jsPDF)
   xlsx2pdf,
   pdf2docx,
   docx2pdf,

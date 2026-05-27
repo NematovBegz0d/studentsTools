@@ -16,12 +16,13 @@ numpy>=1.26,<2.0
 scipy>=1.11,<2.0
 
 # ─── PDF tools ──────────────────────────────────────────────────────
+# Eslatma: img2pdf paketi olib tashlandi — img2pdf/imgs2pdf xizmatlari endi
+# brauzer tomonida jsPDF orqali (Img2PdfPro komponenti) ishlaydi.
 PyMuPDF==1.25.1
 pdfplumber==0.11.4
 pypdf==5.1.0
 pikepdf==9.4.0
 reportlab==4.2.5
-img2pdf==0.6.0
 pdf2docx==0.5.8
 marker-pdf>=0.3.0
 weasyprint==62.3

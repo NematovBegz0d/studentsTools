@@ -28,9 +28,44 @@ from concurrent.futures import ThreadPoolExecutor
 import database as db
 import payment as pay
 import cache as _cache
-from img2pdf_improved import (
-    do_img2pdf_single, do_imgs2pdf_multi, validate_params as img2pdf_validate, is_image_bytes,
+
+# ─── HEIC/HEIF (iPhone) + AVIF qo'llab-quvvatlash ─────────────────────────────
+# Bu modullar PIL.Image.open() global registratsiyasini bajaradi — photo3x4,
+# bgremove, ocr xizmatlari shu rasm formatlarini qabul qila olishi uchun kerak.
+# (img2pdf/imgs2pdf endi client-side jsPDF bilan, backend'ga so'rov yubormaydi.)
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
+
+try:
+    import pillow_avif  # noqa: F401  (registers AVIF opener on import)
+except ImportError:
+    pass
+
+# Rasm baytlarini magic byte orqali aniqlash — photo3x4 va boshqalar uchun
+_IMG_MAGIC = (
+    b'\xff\xd8\xff',        # JPEG
+    b'\x89PNG',             # PNG
+    b'RIFF',                # WebP
+    b'GIF8',                # GIF
+    b'II*\x00', b'MM\x00*', # TIFF
+    b'BM',                  # BMP
 )
+_HEIC_BRANDS = (b'heic', b'heix', b'mif1', b'msf1', b'heim', b'hevc', b'hevx')
+_AVIF_BRANDS = (b'avif', b'avis')
+
+def is_image_bytes(data: bytes) -> bool:
+    """JPEG/PNG/WEBP/GIF/TIFF/BMP/HEIC/AVIF magic baytlarini tekshiradi."""
+    if any(data[:len(s)] == s for s in _IMG_MAGIC):
+        return True
+    # HEIC/HEIF/AVIF: 4-7 baytda "ftyp" + 8-11 baytda brand
+    if len(data) >= 12 and data[4:8] == b'ftyp':
+        brand = data[8:12]
+        if brand in _HEIC_BRANDS or brand in _AVIF_BRANDS:
+            return True
+    return False
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -2120,131 +2155,10 @@ async def docx_edit(
             detail=f"docxedit: {type(e).__name__}: {str(e)[:160]}")
 
 
-# ─── Image → PDF ──────────────────────────────────────────────────────────────
-
-@app.post("/api/img2pdf")
-@limiter.limit("20/minute")
-async def img_to_pdf(
-    request: Request,
-    file: UploadFile = File(...),
-    page_size: str   = Form("a4"),    # a4 | a3 | a5 | letter | legal | original
-    margin_mm: float = Form(10.0),    # 0–30 mm
-    fit_mode: str    = Form("fit"),   # fit | fill | center
-    dpi: int         = Form(150),     # 72 | 96 | 150 | 300
-    mode: str        = Form("normal"),# normal | document | searchable
-):
-    t0 = time.time()
-    try:
-        data = await file.read()
-        check_size(data, "/api/img2pdf")
-
-        if not is_image_bytes(data):
-            raise HTTPException(status_code=422,
-                detail="Rasm fayli emas. JPG, PNG, WebP, TIFF, BMP, GIF, HEIC, AVIF yuklang.")
-
-        page_size, margin_mm, fit_mode, dpi = img2pdf_validate(page_size, margin_mm, fit_mode, dpi)
-        fname = file.filename or "image"
-        # 'searchable' rejim OCR ishlatadi — vaqt ko'proq kerak
-        timeout = 90.0 if mode == "searchable" else (45.0 if mode == "document" else 30.0)
-
-        loop = asyncio.get_event_loop()
-        try:
-            pdf_bytes, info = await asyncio.wait_for(
-                loop.run_in_executor(
-                    _converter_pool,
-                    functools.partial(do_img2pdf_single, data, page_size, margin_mm, fit_mode, dpi, fname, mode),
-                ),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            raise HTTPException(status_code=408, detail=f"Konversiya {int(timeout)} soniyadan oshdi.")
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
-
-        logger.info(f"img2pdf: {len(data)//1024}KB → {len(pdf_bytes)//1024}KB [{page_size} {fit_mode}] {time.time()-t0:.1f}s")
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": "attachment; filename=image.pdf",
-                "X-Info": safe_header(info),
-            },
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"img2pdf xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"img2pdf: {type(e).__name__}: {str(e)[:160]}")
-
-# ─── Images → PDF ─────────────────────────────────────────────────────────────
-
-@app.post("/api/imgs2pdf")
-@limiter.limit("10/minute")
-async def imgs_to_pdf(
-    request: Request,
-    files: List[UploadFile] = File(...),
-    page_size: str   = Form("a4"),
-    margin_mm: float = Form(10.0),
-    fit_mode: str    = Form("fit"),
-    dpi: int         = Form(150),
-    mode: str        = Form("normal"),  # normal | document | searchable
-):
-    t0 = time.time()
-    try:
-        if not files:
-            raise HTTPException(status_code=400, detail="Rasm yuklanmadi.")
-        if len(files) > 50:
-            raise HTTPException(status_code=400,
-                detail=f"Juda ko'p rasm ({len(files)} ta). Maksimal 50 ta.")
-
-        all_data, all_names, total = [], [], 0
-        for f in files:
-            d = await f.read()
-            total += len(d)
-            if total > MAX_FILE_BYTES * 3:
-                raise HTTPException(status_code=413,
-                    detail="Rasmlarning umumiy hajmi juda katta (max 60 MB).")
-            if not is_image_bytes(d):
-                continue  # rasm bo'lmagan fayllar o'tkazib yuboriladi
-            all_data.append(d)
-            all_names.append(f.filename or f"image_{len(all_data)}")
-
-        if not all_data:
-            raise HTTPException(status_code=422, detail="Yuklangan fayllar ichida rasm topilmadi.")
-
-        page_size, margin_mm, fit_mode, dpi = img2pdf_validate(page_size, margin_mm, fit_mode, dpi)
-        # OCR rejimi ko'p sahifa uchun ancha vaqt oladi — har sahifaga ~5s
-        timeout = 30.0 + len(all_data) * (10.0 if mode == "searchable" else 3.0)
-        timeout = min(timeout, 300.0)  # max 5 daqiqa
-
-        loop = asyncio.get_event_loop()
-        try:
-            pdf_bytes, info = await asyncio.wait_for(
-                loop.run_in_executor(
-                    _converter_pool,
-                    functools.partial(do_imgs2pdf_multi, all_data, all_names, page_size, margin_mm, fit_mode, dpi, mode),
-                ),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            raise HTTPException(status_code=408, detail=f"Konversiya {int(timeout)} soniyadan oshdi.")
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
-
-        logger.info(f"imgs2pdf: {len(all_data)} rasm {total//1024}KB → {len(pdf_bytes)//1024}KB [{page_size}] {time.time()-t0:.1f}s")
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": "attachment; filename=images.pdf",
-                "X-Info": safe_header(info),
-            },
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"imgs2pdf xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"imgs2pdf: {type(e).__name__}: {str(e)[:160]}")
+# ─── Image → PDF / Images → PDF ───────────────────────────────────────────────
+# /api/img2pdf va /api/imgs2pdf endi mavjud emas — client-side jsPDF (Img2PdfPro)
+# orqali browserda PDF yaratiladi. Backend tomonida hech qanday qayta ishlash
+# kerak emas, shuningdek img2pdf/pdf2docx/pillow-heif paketlari ham yengillashtirildi.
 
 # ─── 3x4 Passport foto ────────────────────────────────────────────────────────
 
