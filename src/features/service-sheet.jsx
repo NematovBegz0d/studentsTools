@@ -1371,8 +1371,22 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
 
   const meta = isPremium ? t.p?.[service.id] : t.s?.[service.id];
   const howTo = SERVICE_HOW_TO[service.id] || [];
-  // img2pdf/imgs2pdf — endi client-side jsPDF (Python backend ishlatilmaydi)
-  const isImg2PdfPro = !isPremium && (service.id === "img2pdf" || service.id === "imgs2pdf");
+  // Client-side services — har biri o'z ixtisoslashgan komponentini to'g'ridan-to'g'ri render qiladi,
+  // generik ServiceSheet ni chetlab o'tadi (backend chaqiruvi yo'q).
+  const _clientComps = {
+    img2pdf:     window.Img2PdfPro,
+    imgs2pdf:    window.Img2PdfPro,
+    imgcompress: window.ImgCompressPro,
+    qr:          window.QrPro,
+    stats:       window.StatsPro,
+    readtime:    window.ReadTimePro,
+    translit:    window.TranslitPro,
+    deadline:    window.DeadlinePro,
+    password:    window.PasswordPro,
+  };
+  // isImg2PdfPro: endi barcha client-side xizmatlarni qamrab oladi (nom orqaga mos saqlanadi)
+  const isImg2PdfPro = !isPremium && service.id in _clientComps;
+  const ClientComp   = isImg2PdfPro ? _clientComps[service.id] : null;
 
   return (
     <div
@@ -1479,9 +1493,9 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
           <div style={{ height: "0.5px", background: "var(--border-subtle)", margin: "16px 0 0" }} />
         )}
 
-        {/* img2pdf/imgs2pdf → CLIENT-SIDE Img2PdfPro (jsPDF); aks holda — standart ServiceSheet */}
+        {/* Client-side xizmatlar → ixtisoslashgan komponent; aks holda — standart ServiceSheet */}
         {isImg2PdfPro ? (
-          <Img2PdfPro t={t} accent={accent} onToast={onToast} />
+          <ClientComp t={t} accent={accent} onToast={onToast} />
         ) : (
           <ServiceSheet
             service={service}

@@ -335,8 +335,15 @@ if _USE_PG:
 else:
     import aiosqlite
 
-    DB_PATH = os.environ.get("DB_PATH", "edubot.db")
-
+    _RAW_DB_PATH = os.environ.get("DB_PATH", "edubot.db")
+    # aiosqlite opens a new connection for every operation; plain ':memory:'
+    # would create a fresh empty DB per connection. Use an OS temp file for tests.
+    import tempfile
+    DB_PATH = (
+    os.path.join(tempfile.gettempdir(), f"edubot_test_{os.getpid()}.sqlite3")
+    if _RAW_DB_PATH == ":memory:"
+    else _RAW_DB_PATH
+    )
     async def init_db():
         async with aiosqlite.connect(DB_PATH) as db:
             await db.executescript("""

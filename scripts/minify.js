@@ -26,6 +26,8 @@ const TERSER_OPTS = {
       "Processing", "LockedState", "SuccessRing",
       "ResultFile", "ResultText", "ResultWiki", "ResultImage",
       "Photo3x4Options", "Img2PdfOptions", "CVForm",
+      "Img2PdfPro", "ImgCompressPro", "QrPro", "StatsPro",
+      "ReadTimePro", "TranslitPro", "DeadlinePro", "PasswordPro",
     ],
   },
   format: { comments: false, ecma: 2018 },

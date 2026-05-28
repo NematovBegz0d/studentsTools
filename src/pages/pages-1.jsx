@@ -388,17 +388,20 @@ function PremiumPage({ t, accent, isSubscribed, onOpenService, onGoTo }) {
         {PREMIUM_SERVICES.map(s => {
           const meta = t.p[s.id];
           if (!meta) return null;
+          const disabled = !!s.comingSoon;
           return (
             <button
               key={s.id}
-              className="press"
-              onClick={() => onOpenService(s, true)}
+              className={disabled ? undefined : 'press'}
+              disabled={disabled}
+              onClick={disabled ? undefined : () => onOpenService(s, true)}
               style={{
                 position: 'relative', overflow: 'hidden', textAlign: 'left',
                 padding: 14, borderRadius: 18,
                 background: 'linear-gradient(140deg, rgba(245,158,11,0.08), rgba(139,92,246,0.04) 60%, var(--bg-surface-1))',
                 border: '0.5px solid rgba(245,158,11,0.18)',
-                cursor: 'pointer', font: 'inherit',
+                cursor: disabled ? 'default' : 'pointer', font: 'inherit',
+                opacity: disabled ? 0.55 : 1,
                 display: 'flex', alignItems: 'center', gap: 12,
               }}
             >
@@ -414,19 +417,24 @@ function PremiumPage({ t, accent, isSubscribed, onOpenService, onGoTo }) {
                   <div style={{ color: 'var(--text-primary)', fontSize: 14.5, fontWeight: 700, letterSpacing: -0.15 }}>
                     {meta.name}
                   </div>
-                  {s.badge && <Badge kind={s.badge.toLowerCase()}>{s.badge}</Badge>}
+                  {disabled
+                    ? <Badge kind="new">Tez kunda</Badge>
+                    : s.badge && <Badge kind={s.badge.toLowerCase()}>{s.badge}</Badge>
+                  }
                 </div>
                 <div style={{ color: 'var(--text-secondary)', fontSize: 11.5, lineHeight: 1.35, textWrap: 'pretty' }}>
                   {meta.desc}
                 </div>
-                <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: '#fbbf24', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-                    {s.price.toLocaleString('ru-RU')}
-                  </span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t.perRequest}</span>
-                </div>
+                {!disabled && (
+                  <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: '#fbbf24', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      {s.price.toLocaleString('ru-RU')}
+                    </span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t.perRequest}</span>
+                  </div>
+                )}
               </div>
-              {!isSubscribed && (
+              {!disabled && !isSubscribed && (
                 <div style={{
                   width: 32, height: 32, borderRadius: 10,
                   background: 'var(--bg-surface-3)',

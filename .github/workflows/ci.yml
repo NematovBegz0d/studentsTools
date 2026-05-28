@@ -2,39 +2,54 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
+  release:
+    types: [published]
 
-# Cancel in-progress runs when a new commit is pushed to the same PR/branch.
+# Cancel in-progress runs on the same ref so stale runs don't queue.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# ─── Job overview ──────────────────────────────────────────────────────────────
+#
+# Every push / PR
+#   backend-fast      pure-function + endpoint tests, no system tools, ~8 min
+#   frontend-build    npm build + bundle-size report
+#
+# Push to main AND release
+#   backend-integration  LibreOffice / Ghostscript / Tesseract / system tools
+#
+# Release only
+#   docker-build      needs backend-fast AND backend-integration
+#                     (integration tests are a hard gate for image publication)
+#
+# Push to main (non-release)
+#   docker-build      needs backend-fast only  (integration runs in parallel,
+#                     not blocking; canary builds are not published)
+
 jobs:
-  # ─── Backend: pure-function unit tests (no heavy ML imports) ────────────────
-  backend-tests:
-    name: Backend unit tests
+  # ─── Fast tests: every push/PR ───────────────────────────────────────────────
+  backend-fast:
+    name: "Backend — fast tests"
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
 
-      - name: Install minimal test deps
-        # We install only what the pure-function tests need to import main.
-        # Heavy deps (paddleocr, mediapipe, marker-pdf) are skipped — they
-        # would 10x the CI runtime and the tests don't exercise them.
+      - name: Install deps
         run: |
           pip install --upgrade pip
           pip install -r requirements-dev.txt
@@ -48,36 +63,149 @@ jobs:
             "asyncpg==0.30.0" \
             "aiosqlite==0.20.0" \
             "Pillow==10.4.0" \
+            "PyMuPDF==1.25.1" \
+            "pikepdf==9.4.0" \
+            "reportlab==4.2.5" \
+            "python-docx==1.1.2" \
+            "openpyxl==3.1.5" \
+            "python-pptx==1.0.2" \
+            "icalendar>=5.0.0" \
+            "segno>=1.5.0" \
             "python-dateutil==2.9.0.post0" \
             "dateparser>=1.2.0" \
-            "pillow-heif>=0.18.0"
+            "pillow-heif>=0.18.0" \
+            "redis==5.2.1"
 
-      - name: Run pytest
-        # Selectively run only the pure-helper + DB tests. Tests that need
-        # heavy deps should be marked @pytest.mark.slow and excluded here.
+      # Fixture generation failure exits non-zero → job fails, not silently skips
+      - name: Generate test fixtures
+        run: python tests/make_fixtures.py
+
+      - name: Run fast tests
         run: |
-          pytest tests/test_pure_helpers.py tests/test_database.py \
-                 -v --tb=short -m "not slow"
+          pytest \
+            tests/test_pure_helpers.py \
+            tests/test_database.py \
+            tests/test_auth.py \
+            tests/test_startup.py \
+            tests/test_pdf_ops.py \
+            tests/test_tools_ops.py \
+            tests/test_media_ops.py \
+            tests/test_convert_ops.py \
+            -m "not slow and not integration" \
+            --tb=short -q \
+            --cov=. \
+            --cov-report=term-missing:skip-covered \
+            --cov-report=xml:coverage-fast.xml
+        env:
+          DB_PATH: ":memory:"
+          BOT_TOKEN: ""
 
-  # ─── Frontend: build + minify must succeed ─────────────────────────────────
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-fast
+          path: backend/coverage-fast.xml
+
+  # ─── Integration tests: main push + release (required for release) ────────────
+  backend-integration:
+    name: "Backend — integration tests (LibreOffice, Ghostscript, Tesseract)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Run on main push and every release — not on PRs or feature-branch pushes.
+    # workflow_dispatch can trigger it manually but it's not blocking anything there.
+    if: >
+      github.event_name == 'release' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice \
+            ghostscript \
+            tesseract-ocr \
+            tesseract-ocr-rus \
+            fonts-dejavu-core
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install Python deps
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install \
+            "fastapi==0.115.6" \
+            "uvicorn[standard]==0.32.1" \
+            "python-multipart==0.0.12" \
+            "httpx==0.28.1" \
+            "slowapi==0.1.9" \
+            "loguru==0.7.3" \
+            "asyncpg==0.30.0" \
+            "aiosqlite==0.20.0" \
+            "Pillow==10.4.0" \
+            "PyMuPDF==1.25.1" \
+            "pikepdf==9.4.0" \
+            "reportlab==4.2.5" \
+            "python-docx==1.1.2" \
+            "openpyxl==3.1.5" \
+            "python-pptx==1.0.2" \
+            "icalendar>=5.0.0" \
+            "segno>=1.5.0" \
+            "python-dateutil==2.9.0.post0" \
+            "dateparser>=1.2.0" \
+            "pillow-heif>=0.18.0" \
+            "redis==5.2.1" \
+            "pdf2docx==0.5.8" \
+            "mammoth==1.8.0"
+
+      - name: Generate test fixtures
+        run: python tests/make_fixtures.py
+
+      - name: Run integration tests
+        run: |
+          pytest \
+            -m "integration" \
+            --tb=short -v \
+            --cov=. \
+            --cov-report=xml:coverage-integration.xml
+        env:
+          DB_PATH: ":memory:"
+          BOT_TOKEN: ""
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-integration
+          path: backend/coverage-integration.xml
+
+  # ─── Frontend build: every push/PR ───────────────────────────────────────────
   frontend-build:
-    name: Frontend build + minify
+    name: "Frontend — build + bundle size"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Build
-        run: npm run build
+      - run: npm run build
 
       - name: Report bundle size
         run: |
@@ -86,16 +214,44 @@ jobs:
           find dist -name '*.js' -exec du -h {} + | sort -h >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-  # ─── Docker: backend image must build cleanly ──────────────────────────────
+  # ─── Docker build ─────────────────────────────────────────────────────────────
+  #
+  # On RELEASE:  needs fast + integration (hard gate — image must not publish
+  #              if integration tests fail).
+  # On main push: needs fast only (integration runs in parallel as a quality
+  #              signal but canary images are not published externally).
+  #
+  # The conditional `needs` trick: both jobs are always listed in `needs` so
+  # GitHub sees them; the `if` expression then decides whether to proceed based
+  # on what actually ran and passed.
+
   docker-build:
-    name: Docker build (backend)
+    name: "Docker build (backend)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: [backend-fast, backend-integration]
+    # On release: both fast AND integration must have succeeded.
+    # On main push: fast must succeed; integration may be 'success' or 'skipped'
+    #               (it runs on main so it should be 'success' — if it fails,
+    #               the release gate would catch it; main builds are canary only).
+    if: >
+      always() &&
+      needs.backend-fast.result == 'success' &&
+      (
+        (
+          github.event_name == 'release' &&
+          needs.backend-integration.result == 'success'
+        ) ||
+        (
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.backend-fast.result == 'success'
+        )
+      )
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
       - name: Build backend image (no push)
         uses: docker/build-push-action@v5

@@ -34,12 +34,19 @@ RUN apt-get update && apt-get install -y \
 ENV SAL_USE_VCLPLUGIN=svp \
     PYTHONUNBUFFERED=1
 
+RUN groupadd -r -g 1000 appgroup && useradd -r -u 1000 -g appgroup appuser
+
 WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py database.py payment.py cache.py admin.html ./
+COPY main.py database.py payment.py cache.py shared.py startup_checks.py admin.html ./
+COPY routers ./routers
+
+RUN chown -R appuser:appgroup /app
+
+USER 1000
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \

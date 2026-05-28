@@ -32,6 +32,7 @@ const FREE_SERVICES = [
   { id: 'summarize', cat: 'text',  icon: '🤖', new: true,  ai: true,  input: 'text' },
   // Generator (4)
   { id: 'qr',        cat: 'gen',   icon: '🔲', new: false, ai: false, input: 'text' },
+  { id: 'password',  cat: 'gen',   icon: '🔐', new: true,  ai: false, input: 'form' },
   { id: 'cert',      cat: 'gen',   icon: '🏆', new: false, ai: false, input: 'text' },
   { id: 'cv',        cat: 'gen',   icon: '📄', new: true,  ai: false, input: 'form' },
   { id: 'bgremove',  cat: 'gen',   icon: '🪄', new: true,  ai: true,  accept: '.jpg,.png' },
@@ -45,16 +46,16 @@ const FREE_SERVICES = [
 ];
 
 const PREMIUM_SERVICES = [
-  { id: 'referat',     icon: '📝', price: 9900,  badge: 'POPULAR' },
-  { id: 'amaliy',      icon: '🔬', price: 7900,  badge: null },
-  { id: 'kursish',     icon: '📚', price: 19900, badge: 'PRO' },
-  { id: 'insho',       icon: '✍️', price: 5900,  badge: null },
-  { id: 'taqdimot',    icon: '🎯', price: 9900,  badge: null },
-  { id: 'audio2text',  icon: '🎙️', price: 4900,  badge: 'NEW' },
-  { id: 'text2audio',  icon: '🔊', price: 5900,  badge: null },
-  { id: 'deepl',       icon: '🌍', price: 3900,  badge: null },
-  { id: 'image',       icon: '🎨', price: 12900, badge: 'NEW' },
-  { id: 'pptx',        icon: '📊', price: 14900, badge: 'PRO' },
+  { id: 'referat',     icon: '📝', price: 9900,  badge: 'POPULAR', comingSoon: true },
+  { id: 'amaliy',      icon: '🔬', price: 7900,  badge: null,      comingSoon: true },
+  { id: 'kursish',     icon: '📚', price: 19900, badge: 'PRO',     comingSoon: true },
+  { id: 'insho',       icon: '✍️', price: 5900,  badge: null,      comingSoon: true },
+  { id: 'taqdimot',    icon: '🎯', price: 9900,  badge: null,      comingSoon: true },
+  { id: 'audio2text',  icon: '🎙️', price: 4900,  badge: 'NEW',     comingSoon: true },
+  { id: 'text2audio',  icon: '🔊', price: 5900,  badge: null,      comingSoon: true },
+  { id: 'deepl',       icon: '🌍', price: 3900,  badge: null,      comingSoon: true },
+  { id: 'image',       icon: '🎨', price: 12900, badge: 'NEW',     comingSoon: true },
+  { id: 'pptx',        icon: '📊', price: 14900, badge: 'PRO',     comingSoon: true },
 ];
 
 const CATEGORIES = [
@@ -184,6 +185,7 @@ const I18N = {
       books:       { name: 'Kitob izlash',        desc: 'Open Library bazasidan' },
       summarize:   { name: 'AI Xulosalash',       desc: 'Uzun matnni 3-5 jumlada xulosalash' },
       qr:          { name: 'QR kod',              desc: 'Matn yoki link uchun QR' },
+      password:    { name: 'Parol Generator',    desc: 'Kuchli va xavfsiz parol yaratish' },
       cert:        { name: 'Sertifikat',          desc: 'Diplom va sertifikat yaratish' },
       cv:          { name: 'CV / Rezyume',        desc: 'Professional PDF rezyume yaratish' },
       bgremove:    { name: 'Fon olib tashlash',   desc: 'Rasmdan fonni avtomatik olib tashlash' },
@@ -310,6 +312,7 @@ const I18N = {
       books: { name: 'Поиск книг', desc: 'База Open Library' },
       summarize: { name: 'AI Резюме', desc: 'Краткий пересказ длинного текста' },
       qr: { name: 'QR код', desc: 'Генератор QR для текста' },
+      password: { name: 'Генератор паролей', desc: 'Создать надёжный пароль' },
       cert: { name: 'Сертификат', desc: 'Создать диплом или сертификат' },
       cv: { name: 'CV / Резюме', desc: 'Создать профессиональное PDF резюме' },
       bgremove: { name: 'Удалить фон', desc: 'Авто-удаление фона с фото' },
@@ -432,6 +435,7 @@ const I18N = {
       books: { name: 'Book search', desc: 'From Open Library' },
       summarize: { name: 'AI Summary', desc: 'Summarize long text in 3-5 sentences' },
       qr: { name: 'QR code', desc: 'QR generator for text/link' },
+      password: { name: 'Password Generator', desc: 'Generate strong secure passwords' },
       cert: { name: 'Certificate', desc: 'Create certificate or diploma' },
       cv: { name: 'CV / Resume', desc: 'Create professional PDF resume' },
       bgremove: { name: 'Remove background', desc: 'Auto-remove image background' },

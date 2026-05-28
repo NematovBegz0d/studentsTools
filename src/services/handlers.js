@@ -138,22 +138,24 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
 }
 
 // ─── Response error handling ──────────────────────────────────────
-// Reads the actual server error detail so users see WHY it failed,
-// not just a generic message. Without this, every backend error looks
-// identical and is impossible to debug from the user side.
+// Reads the structured error body (error_code, request_id, message)
+// produced by the unified error middleware, with fallback to legacy
+// { "detail": "..." } format for compatibility.
 async function handleResponseError(response) {
   if (response.ok) return;
 
-  // Always try to read the server's error message (FastAPI returns
-  // { "detail": "..." } for HTTPException)
   let serverDetail = "";
+  let errorCode = "";
+  let requestId = response.headers.get("X-Request-Id") || "";
   try {
     const text = await response.text();
     try {
       const json = JSON.parse(text);
-      serverDetail = json.detail || json.message || json.error || "";
+      // Unified format: { error_code, request_id, message, processing_ms }
+      serverDetail = json.message || json.detail || json.error || "";
+      errorCode = json.error_code || "";
+      requestId = requestId || json.request_id || "";
     } catch {
-      // Not JSON — use raw text (trimmed)
       serverDetail = (text || "").slice(0, 300);
     }
   } catch (_) {}
@@ -161,14 +163,12 @@ async function handleResponseError(response) {
   const base =
     HTTP_ERROR_MESSAGES[response.status] ||
     `Xato ${response.status}. Qayta urinib ko\'ring.`;
+  const message = serverDetail ? `${serverDetail} (${response.status})` : base;
 
-  // Combine: short server detail wins (more useful), otherwise base
-  const message = serverDetail
-    ? `${serverDetail} (${response.status})`
-    : base;
-
-  // Always log (helps in any environment with a console)
-  console.error(`[API ${response.status}] ${response.url}`, serverDetail || "(no detail)");
+  const logParts = [serverDetail || "(no detail)"];
+  if (errorCode) logParts.push(`[${errorCode}]`);
+  if (requestId) logParts.push(`[req:${requestId}]`);
+  console.error(`[API ${response.status}] ${response.url}`, logParts.join(" "));
 
   throw new Error(message);
 }
@@ -485,9 +485,19 @@ async function docx2pdf({ file }) {
 
 // ─── File conversion ──────────────────────────────────────────────
 
-// Eslatma: img2pdf va imgs2pdf endi backend'ga so'rov yubormaydi — ServicePage
-// to'g'ridan-to'g'ri Img2PdfPro (jsPDF) komponentini render qiladi, shuning
-// uchun bu yerda handler funksiyalar talab qilinmaydi.
+// img2pdf / imgs2pdf — CLIENT-SIDE via window.Img2PdfPro (jsPDF)
+// ServicePage checks `isImg2PdfPro` and renders Img2PdfPro directly,
+// bypassing SERVICE_HANDLERS entirely. These functions are backend
+// fallbacks only — not called in normal frontend operation.
+async function _img2pdfBackend({ file }) {
+  validateFile(file, ".jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif,.heic,.heif,.avif");
+  return apiFile("/api/img2pdf", buildFormData("file", file), "image.pdf", null, 30000);
+}
+
+async function _imgs2pdfBackend({ files }) {
+  validateFiles(files, ".jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif,.heic,.heif,.avif");
+  return apiFile("/api/imgs2pdf", buildFormData("files", files), "images.pdf", "X-Info", 60000);
+}
 
 async function xlsx2pdf({ file }) {
   validateFile(file, ".xlsx,.xls");
@@ -503,7 +513,14 @@ async function compresspptx({ file }) {
   );
 }
 
-async function imgcompress({ file }) {
+// ── Client-side services — backend fallbacks only ────────────────────────────
+// imgcompress, qr, stats, readtime, translit, deadline are CLIENT-SIDE-PRIMARY.
+// window.ImgCompressPro / QrPro / StatsPro / ReadtimePro / TranslitPro / DeadlinePro
+// are rendered directly by ServicePage — these _*Backend functions are never
+// called during normal frontend operation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function _imgcompressBackend({ file }) {
   validateFile(file, ".jpg,.jpeg,.png,.webp");
   const response = await fetchWithTimeout(
     `${BACKEND_URL}/api/imgcompress`,
@@ -581,23 +598,24 @@ async function ocr({ file }) {
   return { type: "text", content: text || "Matn topilmadi." };
 }
 
-// ─── Text & Math ──────────────────────────────────────────────────
-// ✅ FIX: All text inputs sanitized
+// ─── Text & Math (CLIENT-SIDE PRIMARY — backend fallbacks) ───────────────────
+// translit/readtime/deadline/stats are handled by window.*Pro components.
+// These _*Backend functions exist for optional server-side fallback only.
 
-async function translit({ text }) {
+async function _translitBackend({ text }) {
   return apiText("/api/translit", { text: sanitizeText(text) });
 }
 
-async function readtime({ text }) {
+async function _readtimeBackend({ text }) {
   if (!text?.trim()) throw new Error("Matn kiriting.");
   return apiText("/api/readtime", { text: sanitizeText(text) });
 }
 
-async function deadline({ text }) {
+async function _deadlineBackend({ text }) {
   return apiText("/api/deadline", { text: sanitizeText(text, 200) });
 }
 
-async function stats({ text }) {
+async function _statsBackend({ text }) {
   return apiText("/api/stats", { text: sanitizeText(text, 1000) });
 }
 
@@ -645,7 +663,7 @@ async function summarize({ text }) {
 
 // ─── Visual generators ────────────────────────────────────────────
 
-async function qr({ text }) {
+async function _qrBackend({ text }) {
   if (!text?.trim()) throw new Error("QR kod uchun matn yoki URL kiriting.");
   return apiImage("/api/qr", { text: sanitizeText(text, 2000) }, "qrcode.png");
 }
@@ -785,29 +803,23 @@ const SERVICE_HANDLERS = {
   pdflock,
   watermark,
   pdf2img,
-  // img2pdf, imgs2pdf → endi browser tomonida (Img2PdfPro / jsPDF)
+  // img2pdf and imgs2pdf are frontend-only (window.Img2PdfPro / jsPDF).
+  // ServicePage renders Img2PdfPro directly — these ids never reach SERVICE_HANDLERS.
   xlsx2pdf,
   pdf2docx,
   docx2pdf,
   docxedit,
   compresspdf,
   compresspptx,
-  // Image
-  imgcompress,
+  // Image — imgcompress is CLIENT-SIDE (window.ImgCompressPro)
   bgremove,
   photo3x4,
-  // Text
-  translit,
-  readtime,
-  deadline,
-  stats,
-  // API proxy
+  // Text — translit/readtime/deadline/stats are CLIENT-SIDE (*Pro components)
   translate,
   wiki,
   books,
   summarize,
-  // Generate
-  qr,
+  // Generate — qr is CLIENT-SIDE (window.QrPro); password is CLIENT-SIDE (window.PasswordPro)
   cert,
   schedule,
   cv,
