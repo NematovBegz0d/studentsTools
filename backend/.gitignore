@@ -1,7 +1,28 @@
 __pycache__/
 *.pyc
+*.pyo
 .env
 *.tmp
-# rembg model cache
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# rembg / birefnet model cache
 u2net.onnx
 u2net_human_seg.onnx
+*.onnx
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local DB
+*.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/

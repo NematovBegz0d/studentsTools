@@ -169,7 +169,11 @@ async def acquire_user_ml_slot(user_id: int) -> bool:
 
 async def release_user_ml_slot(user_id: int) -> None:
     async with _user_ml_lock:
-        _user_ml_slots[user_id] = max(0, _user_ml_slots.get(user_id, 0) - 1)
+        count = _user_ml_slots.get(user_id, 0) - 1
+        if count <= 0:
+            _user_ml_slots.pop(user_id, None)
+        else:
+            _user_ml_slots[user_id] = count
 
 
 # ─── Auth helpers ─────────────────────────────────────────────────────────────

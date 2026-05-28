@@ -26,16 +26,17 @@ if _USE_PG:
     async def _get_pool() -> "asyncpg.Pool":
         global _pool
         if _pool is None:
-            # Railway injects ssl=require; asyncpg needs ssl param
+            # Railway injects sslmode=require; asyncpg needs ssl= param instead
             dsn = DATABASE_URL
-            if "sslmode=require" in dsn:
+            needs_ssl = "sslmode=require" in dsn
+            if needs_ssl:
                 dsn = (dsn
                        .replace("?sslmode=require", "")
                        .replace("&sslmode=require", "")
                        .replace("sslmode=require", "")
                        .rstrip("?&"))
             _pool = await asyncpg.create_pool(
-                dsn, ssl="require" if "railway" in dsn.lower() else None,
+                dsn, ssl="require" if needs_ssl else None,
                 min_size=2, max_size=10, command_timeout=30,
             )
         return _pool
@@ -426,7 +427,10 @@ else:
         if user["plan_until"] is None:
             return True
         until = datetime.fromisoformat(user["plan_until"])
-        return until > datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(timezone.utc)
+        if until.tzinfo is None:
+            now = now.replace(tzinfo=None)
+        return until > now
 
     async def update_plan(user_id: int, plan: str, plan_until: Optional[datetime] = None):
         until_str = plan_until.isoformat() if plan_until else None
