@@ -39,22 +39,56 @@ async def send_file(
 ):
     if not BOT_TOKEN:
         raise HTTPException(status_code=503, detail="Bot sozlanmagan")
+
     user_id = _get_user_id(request)
     data = await file.read()
     check_size(data, "/api/send-file")
-    t0 = time.time()
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
-            data={"chat_id": user_id, "caption": f"📎 {filename}\n\n🤖 EduBot"},
-            files={"document": (filename, data, file.content_type or "application/octet-stream")},
-        )
-    result = r.json()
-    if not result.get("ok"):
-        raise HTTPException(status_code=500, detail=result.get("description", "Xatolik"))
-    logger.info(f"sendDocument: user={user_id} {filename} {time.time()-t0:.1f}s")
-    return {"ok": True}
 
+    t0 = time.time()
+    timeout = httpx.Timeout(connect=15.0, read=180.0, write=180.0, pool=15.0)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+                data={
+                    "chat_id": user_id,
+                    "caption": f"📎 {filename}\n\n🤖 EduBot",
+                },
+                files={
+                    "document": (
+                        filename,
+                        data,
+                        file.content_type or "application/octet-stream",
+                    )
+                },
+            )
+    except httpx.TimeoutException:
+        logger.error(f"sendDocument timeout: user={user_id} filename={filename}")
+        raise HTTPException(
+            status_code=504,
+            detail="Telegramga fayl yuborish vaqti tugadi. Faylni kichikroq qilib qayta urinib ko‘ring.",
+        )
+    except httpx.HTTPError as e:
+        logger.error(f"sendDocument network xato: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Telegram bilan aloqa xatosi. Keyinroq qayta urinib ko‘ring.",
+        )
+
+    try:
+        result = r.json()
+    except Exception:
+        logger.error(f"sendDocument noto‘g‘ri javob: status={r.status_code} text={r.text[:200]!r}")
+        raise HTTPException(status_code=502, detail="Telegram noto‘g‘ri javob qaytardi.")
+
+    if not result.get("ok"):
+        detail = result.get("description", "Telegram faylni qabul qilmadi")
+        logger.error(f"sendDocument Telegram xatosi: {detail}")
+        raise HTTPException(status_code=500, detail=detail)
+
+    logger.info(f"sendDocument: user={user_id} {filename} {time.time() - t0:.1f}s")
+    return {"ok": True}
 
 # ─── Translit ─────────────────────────────────────────────────────────────────
 

@@ -1116,34 +1116,73 @@ def _do_imgs2pdf(images_data: list) -> bytes:
 # optional server-assisted generation and testing contracts only.
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.post("/api/img2pdf")
-@limiter.limit("10/minute")
-async def img2pdf(request: Request, file: UploadFile = File(...)):
-    try:
-        data = await file.read()
-        check_size(data, "/api/img2pdf")
-        if not is_image_bytes(data):
-            raise HTTPException(status_code=422, detail="Rasm fayli emas. JPG, PNG, WebP yoki HEIC yuklang.")
-        loop = asyncio.get_running_loop()
-        try:
-            pdf_bytes = await asyncio.wait_for(
-                loop.run_in_executor(_io_pool, _do_imgs2pdf, [data]),
-                timeout=30.0,
-            )
-        except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail="Rasm PDF ga aylantirishda vaqt tugadi.")
-        logger.info(f"img2pdf: {len(data)//1024}KB → {len(pdf_bytes)//1024}KB PDF")
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=image.pdf"},
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"img2pdf xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"img2pdf: {type(e).__name__}: {str(e)[:160]}")
+def _do_imgs2pdf(images_data: list) -> bytes:
+    """Convert one or more images to a multi-page PDF using Pillow + pikepdf."""
+    import pikepdf
+    from PIL import Image, ImageOps
 
+    pdf = pikepdf.new()
+
+    for raw in images_data:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+
+        try:
+            img = ImageOps.exif_transpose(img)
+        except Exception:
+            pass
+
+        if img.mode in ("RGBA", "LA"):
+            bg = Image.new("RGB", img.size, "white")
+            alpha = img.getchannel("A")
+            bg.paste(img.convert("RGBA"), mask=alpha)
+            img = bg
+        elif img.mode == "P":
+            img = img.convert("RGBA")
+            bg = Image.new("RGB", img.size, "white")
+            bg.paste(img, mask=img.getchannel("A") if "A" in img.getbands() else None)
+            img = bg
+        elif img.mode == "L":
+            pass
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        mode = "L" if img.mode == "L" else "RGB"
+        iw, ih = img.size
+
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=92)
+        jpeg_bytes = buf.getvalue()
+
+        colorspace = pikepdf.Name("/DeviceGray" if mode == "L" else "/DeviceRGB")
+        img_obj = pikepdf.Stream(pdf, jpeg_bytes)
+        img_obj.stream_dict = pikepdf.Dictionary(
+            Type=pikepdf.Name("/XObject"),
+            Subtype=pikepdf.Name("/Image"),
+            Width=iw,
+            Height=ih,
+            ColorSpace=colorspace,
+            BitsPerComponent=8,
+            Filter=pikepdf.Name("/DCTDecode"),
+        )
+
+        page = pikepdf.Dictionary(
+            Type=pikepdf.Name("/Page"),
+            MediaBox=[0, 0, iw, ih],
+            Resources=pikepdf.Dictionary(
+                XObject=pikepdf.Dictionary(Im0=img_obj)
+            ),
+            Contents=pikepdf.Stream(
+                pdf,
+                f"q {iw} 0 0 {ih} 0 0 cm /Im0 Do Q".encode(),
+            ),
+        )
+        pdf.pages.append(pikepdf.Page(page))
+
+    out = io.BytesIO()
+    pdf.save(out, linearize=True)
+    pdf.close()
+    return out.getvalue()
 
 @router.post("/api/imgs2pdf")
 @limiter.limit("5/minute")
