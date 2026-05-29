@@ -13,6 +13,8 @@ from loguru import logger
 from shared import (
     limiter, _io_pool, _ml_pool,
     check_size, safe_header, is_image_bytes,
+    read_upload,
+    safe_url_fetcher,
     get_rembg_session,
     acquire_user_ml_slot, release_user_ml_slot, _get_user_id,
     FONT_REGULAR, FONT_BOLD,
@@ -425,8 +427,7 @@ async def photo3x4(
     if not await acquire_user_ml_slot(user_id):
         raise HTTPException(status_code=429, detail="Parallel ML so'rov rad etildi — oldingi so'rov tugashini kuting")
     try:
-        data = await file.read()
-        check_size(data, "/api/photo3x4")
+        data = await read_upload(file, "/api/photo3x4")
 
         if not is_image_bytes(data):
             raise HTTPException(status_code=422,
@@ -587,7 +588,9 @@ def _do_cv(
             education=education, experience=experience, languages=languages,
             **theme,
         )
-        return HTML(string=html_str).write_pdf()
+        # SSRF guard: block any external/file/http resources WeasyPrint might try
+        # to fetch (CV template only needs system fonts — data:/no URLs at all).
+        return HTML(string=html_str, url_fetcher=safe_url_fetcher).write_pdf()
     except ImportError as e:
         logger.warning(f"CV WeasyPrint/Jinja2 yo'q ({e}) — ReportLab fallback")
     except Exception as e:
@@ -751,6 +754,7 @@ def _do_cv_reportlab(
 @limiter.limit("10/minute")
 async def make_cv(request: Request):
     t0 = time.time()
+    user_id = _get_user_id(request)
     try:
         body = await request.json()
 
@@ -1064,9 +1068,9 @@ def _do_xlsx2pdf_reportlab(data: bytes) -> tuple:
 @limiter.limit("10/minute")
 async def xlsx_to_pdf(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/xlsx2pdf")
+        data = await read_upload(file, "/api/xlsx2pdf")
         if len(data) < 4 or data[:2] != b'PK':
             raise HTTPException(status_code=422,
                 detail="Bu fayl Excel (.xlsx) emas. .xlsx yoki .xls fayl yuklang.")
@@ -1165,9 +1169,9 @@ def _do_compresspptx(data: bytes) -> tuple:
 @router.post("/api/compresspptx")
 @limiter.limit("10/minute")
 async def compress_pptx(request: Request, file: UploadFile = File(...)):
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/compresspptx")
+        data = await read_upload(file, "/api/compresspptx")
         loop = asyncio.get_running_loop()
         try:
             out_bytes, info, saved = await asyncio.wait_for(
@@ -1310,9 +1314,9 @@ async def img_compress(
     output_format: str = Form("jpeg"),
     quality: int = Form(0),
 ):
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/imgcompress")
+        data = await read_upload(file, "/api/imgcompress")
         if len(data) < 4:
             raise HTTPException(status_code=422,
                 detail="Rasm fayli ochib bo'lmadi. JPG, PNG yoki WebP yuklang.")
@@ -1370,15 +1374,15 @@ async def bgremove(request: Request):
         bg_color = None
         if "multipart" in ct:
             form     = await request.form()
-            f        = form.get("file")
-            data     = await f.read()
+            data     = await read_upload(form.get("file"), "/api/bgremove")
             bg_color = (form.get("bg_color") or "").strip().lstrip("#") or None
         else:
             body     = await request.json()
             data     = base64.b64decode(body["data"])
+            if not data:
+                raise HTTPException(status_code=400, detail="Fayl bo'sh. Boshqa fayl tanlang.")
+            check_size(data, "/api/bgremove")
             bg_color = (body.get("bg_color") or "").strip().lstrip("#") or None
-
-        check_size(data, "/api/bgremove")
 
         session = get_rembg_session()
         loop    = asyncio.get_running_loop()
@@ -1607,14 +1611,15 @@ async def ocr(request: Request):
         if "multipart" in ct:
             form  = await request.form()
             f     = form.get("file")
-            fname = (f.filename or "").lower()
-            data  = await f.read()
+            fname = (f.filename or "").lower() if f is not None else ""
+            data  = await read_upload(f, "/api/ocr")
         else:
             body  = await request.json()
             data  = base64.b64decode(body["data"])
+            if not data:
+                raise HTTPException(status_code=400, detail="Fayl bo'sh. Boshqa fayl tanlang.")
+            check_size(data, "/api/ocr")
             fname = body.get("filename", "").lower()
-
-        check_size(data, "/api/ocr")
 
         is_pdf = fname.endswith('.pdf') or data[:4] == b'%PDF'
 

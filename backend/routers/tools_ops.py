@@ -18,9 +18,10 @@ from loguru import logger
 import cache as _cache
 from shared import (
     limiter, _io_pool,
-    check_size, safe_header,
+    safe_header,
     BOT_TOKEN, APP_URL,
-    MAX_FILE_BYTES,
+    read_upload, read_uploads,
+    safe_url_fetcher,
     FONT_REGULAR, FONT_BOLD,
     _get_user_id,
     tg_send,
@@ -41,8 +42,7 @@ async def send_file(
         raise HTTPException(status_code=503, detail="Bot sozlanmagan")
 
     user_id = _get_user_id(request)
-    data = await file.read()
-    check_size(data, "/api/send-file")
+    data = await read_upload(file, "/api/send-file")
 
     t0 = time.time()
     timeout = httpx.Timeout(connect=15.0, read=180.0, write=180.0, pool=15.0)
@@ -168,6 +168,7 @@ def _translit_rtl(text: str) -> str:
 @router.post("/api/translit")
 @limiter.limit("60/minute")
 async def translit(request: Request):
+    user_id = _get_user_id(request)
     body = await request.json()
     text = (body.get("text") or "").strip()
     if not text:
@@ -204,6 +205,7 @@ def _detect_lang_quick(text: str) -> str:
 @router.post("/api/readtime")
 @limiter.limit("60/minute")
 async def readtime(request: Request):
+    user_id = _get_user_id(request)
     body = await request.json()
     text = (body.get("text") or "").strip()
     lang = (body.get("lang") or "").lower().strip()[:2]
@@ -302,6 +304,7 @@ async def _claude_summarize(text: str, lang: str = "uz") -> str:
 @router.post("/api/summarize")
 @limiter.limit("10/minute")
 async def summarize(request: Request):
+    user_id = _get_user_id(request)
     body = await request.json()
     text = (body.get("text") or "").strip()
     lang = (body.get("lang") or "uz").lower()[:2]
@@ -333,6 +336,7 @@ async def summarize(request: Request):
 @router.post("/api/deadline")
 @limiter.limit("60/minute")
 async def deadline(request: Request):
+    user_id = _get_user_id(request)
     body = await request.json()
     text = (body.get("text") or body.get("date") or "").strip()
     if not text:
@@ -385,6 +389,7 @@ async def deadline(request: Request):
 @router.post("/api/stats")
 @limiter.limit("60/minute")
 async def stats(request: Request):
+    user_id = _get_user_id(request)
     body = await request.json()
     raw_text = body.get("text") or ""
     nums = [float(x) for x in re.findall(r'-?\d+(?:\.\d+)?', raw_text)]
@@ -491,6 +496,7 @@ def _do_qr(text: str, size: int = 400, ec_level: str = "M", fmt: str = "png") ->
 @router.post("/api/qr")
 @limiter.limit("30/minute")
 async def make_qr(request: Request):
+    user_id = _get_user_id(request)
     try:
         body     = await request.json()
         text     = (body.get("text") or "EduBot").strip() or "EduBot"
@@ -782,12 +788,15 @@ def _do_cert_pdf(name: str, course: str, issuer: str, theme: str,
 </div>
 </body></html>"""
 
-    return HTML(string=html).write_pdf()
+    # SSRF guard: cert HTML embeds QR as data: URI — block any other resource
+    # (external images, fonts, file://) the template (or future edits) may reference.
+    return HTML(string=html, url_fetcher=safe_url_fetcher).write_pdf()
 
 
 @router.post("/api/cert")
 @limiter.limit("20/minute")
 async def make_cert(request: Request):
+    cert_user_id = _get_user_id(request)
     try:
         body = await request.json()
         if body.get("text"):
@@ -813,10 +822,6 @@ async def make_cert(request: Request):
         issue_dt = datetime.now().strftime("%Y-%m-%d")
         try:
             import database as _db
-            try:
-                cert_user_id = _get_user_id(request)
-            except HTTPException:
-                cert_user_id = None
             await _db.save_cert(cert_id, name, course, issuer, theme, cert_user_id)
         except Exception as _e:
             logger.warning(f"cert DB save xato: {_e}")
@@ -1094,6 +1099,7 @@ def _do_schedule_ics(schedule: list, weeks: int = 16) -> bytes:
 @router.post("/api/schedule")
 @limiter.limit("20/minute")
 async def make_schedule(request: Request):
+    user_id = _get_user_id(request)
     try:
         body = await request.json()
         text = (body.get("text") or "").strip()
@@ -1199,6 +1205,7 @@ def _do_translate(query: str, lang: str) -> str:
 @router.post("/api/translate")
 @limiter.limit("20/minute")
 async def translate(request: Request):
+    user_id = _get_user_id(request)
     body = await request.json()
     raw  = (body.get("text") or "").strip()
     if not raw:
@@ -1375,6 +1382,7 @@ def _wiki_format_text(d: dict) -> str:
 @router.post("/api/wiki")
 @limiter.limit("20/minute")
 async def wiki(request: Request):
+    user_id   = _get_user_id(request)
     body      = await request.json()
     q         = (body.get("text") or "").strip()[:200]
     pref_lang = (body.get("lang") or "").strip().lower()[:5]
@@ -1455,6 +1463,7 @@ async def _books_lookup(q: str) -> str:
 @router.post("/api/books")
 @limiter.limit("20/minute")
 async def books(request: Request):
+    user_id = _get_user_id(request)
     body   = await request.json()
     q      = (body.get("text") or "").strip()[:200]
     if not q:
@@ -1474,6 +1483,7 @@ async def make_zip(
     files: List[UploadFile] = File(...),
     password: Optional[str] = Form(None),
 ):
+    user_id = _get_user_id(request)
     _ZIP_MAX_FILES = 100
     try:
         if password is not None and len(password) > 128:
@@ -1482,20 +1492,13 @@ async def make_zip(
             raise HTTPException(status_code=400,
                 detail=f"Maksimal {_ZIP_MAX_FILES} fayl ZIP ga qo'shilishi mumkin")
 
-        buf     = io.BytesIO()
-        total   = 0
-        count   = 0
-        entries = []
-
-        for f in files:
-            data   = await f.read()
-            check_size(data, "/api/zip")
-            total += len(data)
-            if total > MAX_FILE_BYTES * 3:
-                raise HTTPException(status_code=413, detail="Fayllar jami hajmi juda katta")
-            safe_name = os.path.basename(f.filename or "file") or "file"
-            entries.append((safe_name, data))
-            count += 1
+        buf      = io.BytesIO()
+        data_list = await read_uploads(files, "/api/zip")
+        entries  = [
+            (os.path.basename(f.filename or "file") or "file", data)
+            for f, data in zip(files, data_list)
+        ]
+        count    = len(entries)
 
         if password:
             import pyzipper
@@ -1570,9 +1573,9 @@ def _build_response_from_entries(entries: list) -> Response:
 @router.post("/api/unzip")
 @limiter.limit("20/minute")
 async def unzip_file(request: Request, file: UploadFile = File(...)):
+    user_id = _get_user_id(request)
     try:
-        data  = await file.read()
-        check_size(data, "/api/unzip")
+        data  = await read_upload(file, "/api/unzip")
         fname = (file.filename or "").lower()
 
         is_7z = fname.endswith(".7z") or data[:6] == b"7z\xbc\xaf'\x1c"

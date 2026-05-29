@@ -1,0 +1,10 @@
+# Test-only dependencies. NOT installed in the production Docker image
+# (only requirements.txt is COPYd in backend/Dockerfile).
+#
+# Local install:
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pytest tests/
+pytest>=7.4,<10.0
+# aiosqlite is also in requirements.txt; listed again so `pip install -r
+# requirements-dev.txt` alone is enough to exercise the track_usage tests.
+aiosqlite>=0.20

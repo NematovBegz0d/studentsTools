@@ -15,7 +15,12 @@ from fastapi.responses import Response, JSONResponse
 from loguru import logger
 from typing import Optional, List
 
-from shared import limiter, _io_pool, check_size, safe_header, MAX_FILE_BYTES
+from shared import (
+    limiter, _io_pool,
+    safe_header,
+    read_upload, read_uploads,
+    _get_user_id,
+)
 
 router = APIRouter()
 
@@ -49,18 +54,11 @@ def _do_mergepdf(data_list: list) -> tuple:
 @router.post("/api/mergepdf")
 @limiter.limit("10/minute")
 async def merge_pdf(request: Request, files: List[UploadFile] = File(...)):
+    user_id = _get_user_id(request)
     try:
         if len(files) > _MERGEPDF_MAX_FILES:
             raise HTTPException(status_code=400, detail=f"Maksimal {_MERGEPDF_MAX_FILES} fayl")
-        data_list = []
-        total = 0
-        for f in files:
-            data = await f.read()
-            check_size(data, "/api/mergepdf")
-            total += len(data)
-            if total > MAX_FILE_BYTES * 3:
-                raise HTTPException(status_code=413, detail="Fayllar jami hajmi juda katta")
-            data_list.append(data)
+        data_list = await read_uploads(files, "/api/mergepdf")
         loop = asyncio.get_running_loop()
         try:
             out_bytes, info, _ = await asyncio.wait_for(
@@ -147,9 +145,9 @@ async def split_pdf(
     file: UploadFile = File(...),
     pages: Optional[str] = Form(None),
 ):
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/splitpdf")
+        data = await read_upload(file, "/api/splitpdf")
         if data[:4] != b"%PDF" or b"%%EOF" not in data[-4096:]:
             raise HTTPException(status_code=422, detail="PDF fayl emas yoki fayl buzilgan.")
         import pikepdf as _pike_check
@@ -204,9 +202,9 @@ async def pdf_select_pages(
     pages: str = Form(...),
 ):
     """Extract a subset of pages into a new PDF. pages = '1,3,5-10,15'"""
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/pdfpages")
+        data = await read_upload(file, "/api/pdfpages")
         if data[:4] != b"%PDF":
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
         import pikepdf as _pike
@@ -319,9 +317,9 @@ def _do_pdftext(data: bytes) -> str:
 @limiter.limit("20/minute")
 async def pdf_text(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/pdftext")
+        data = await read_upload(file, "/api/pdftext")
         if data[:4] != b'%PDF':
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
         loop = asyncio.get_running_loop()
@@ -395,9 +393,9 @@ async def lock_pdf(
     allow_modify: bool = Form(False),
 ):
     t0 = time.time()
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/pdflock")
+        data = await read_upload(file, "/api/pdflock")
         if data[:4] != b'%PDF':
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
         raw_pwd   = password.strip()[:64]
@@ -524,9 +522,9 @@ async def watermark_pdf(
     repeat: bool = Form(True),
 ):
     t0 = time.time()
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/watermark")
+        data = await read_upload(file, "/api/watermark")
         if data[:4] != b'%PDF':
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
         opacity = max(0.05, min(0.9, opacity))
@@ -625,9 +623,9 @@ async def pdf_to_img(
     quality: int = Form(85),
 ):
     t0 = time.time()
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/pdf2img")
+        data = await read_upload(file, "/api/pdf2img")
 
         loop = asyncio.get_running_loop()
         try:
@@ -788,9 +786,9 @@ async def compress_pdf(
     level: str = Form("ebook"),
 ):
     t0 = time.time()
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/compresspdf")
+        data = await read_upload(file, "/api/compresspdf")
         if data[:4] != b'%PDF':
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
         if level not in _COMPRESSPDF_LEVELS:

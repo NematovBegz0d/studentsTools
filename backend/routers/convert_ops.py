@@ -12,7 +12,6 @@ import zipfile
 import threading
 import tempfile
 import time
-import uuid
 
 from fastapi import APIRouter, File, UploadFile, Form, Request, HTTPException
 from fastapi.responses import Response
@@ -20,7 +19,14 @@ from loguru import logger
 from typing import Optional, List
 from urllib.parse import quote as url_quote
 
-from shared import limiter, _io_pool, check_size, safe_header, is_image_bytes, MAX_FILE_BYTES, FONT_REGULAR, FONT_BOLD
+from shared import (
+    limiter, _io_pool,
+    safe_header, is_image_bytes,
+    read_upload, read_uploads,
+    safe_url_fetcher,
+    FONT_REGULAR, FONT_BOLD,
+    _get_user_id,
+)
 
 router = APIRouter()
 
@@ -288,12 +294,14 @@ def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
 @limiter.limit("10/minute")
 async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
-    uid = uuid.uuid4().hex
-    pdf_path = f"/tmp/edubot_{uid}.pdf"
-    docx_path = f"/tmp/edubot_{uid}.docx"
+    user_id = _get_user_id(request)
+    # Use OS temp dir (cross-platform; /tmp is Linux-only) with random subdir
+    # so concurrent requests can't collide and one finally cleans up everything.
+    tmpdir    = tempfile.mkdtemp(prefix="edubot_pdf2docx_")
+    pdf_path  = os.path.join(tmpdir, "input.pdf")
+    docx_path = os.path.join(tmpdir, "output.docx")
     try:
-        data = await file.read()
-        check_size(data, "/api/pdf2docx")
+        data = await read_upload(file, "/api/pdf2docx")
 
         from pypdf import PdfReader
         try:
@@ -367,12 +375,9 @@ async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=500,
             detail=f"pdf2docx: {type(e).__name__}: {str(e)[:160]}")
     finally:
-        for path in (pdf_path, docx_path):
-            try:
-                if os.path.exists(path):
-                    os.unlink(path)
-            except Exception:
-                pass
+        # Wipe the whole tempdir (handles partial writes / subprocess artifacts too)
+        import shutil as _shutil
+        _shutil.rmtree(tmpdir, ignore_errors=True)
 
 # ─── DOCX → PDF: helpers ──────────────────────────────────────────────────────
 
@@ -850,7 +855,9 @@ def _do_docx2pdf_mammoth(data: bytes) -> bytes:
         + html_body
         + "</body></html>"
     )
-    pdf_bytes = HTML(string=html).write_pdf()
+    # SSRF guard: a crafted DOCX can embed <img src="http://internal-host/">
+    # via mammoth → WeasyPrint. safe_url_fetcher rejects everything except data:.
+    pdf_bytes = HTML(string=html, url_fetcher=safe_url_fetcher).write_pdf()
     if not pdf_bytes or len(pdf_bytes) < 100:
         raise RuntimeError("weasyprint: bo'sh PDF natija")
     return pdf_bytes
@@ -881,9 +888,9 @@ def _do_docx2pdf_best(data: bytes, ext: str, fn_regular: str, fn_bold: str) -> t
 @limiter.limit("10/minute")
 async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
     t0 = time.time()
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/docx2pdf")
+        data = await read_upload(file, "/api/docx2pdf")
         fn, fn_bold = _rl_fonts()
 
         original_name = file.filename or "document"
@@ -1020,9 +1027,9 @@ async def docx_edit(
     case_sensitive: bool = Form(False),
 ):
     t0 = time.time()
+    user_id = _get_user_id(request)
     try:
-        data = await file.read()
-        check_size(data, "/api/docxedit")
+        data = await read_upload(file, "/api/docxedit")
 
         if not find:
             raise HTTPException(status_code=400, detail="'find' bo'sh bo'lmasligi kerak")
@@ -1064,48 +1071,6 @@ async def docx_edit(
 # ─── Images → PDF ─────────────────────────────────────────────────────────────
 
 _IMG2PDF_MAX_FILES = 20
-
-
-def _do_imgs2pdf(images_data: list) -> bytes:
-    """Convert one or more images to a multi-page PDF using Pillow + pikepdf."""
-    import pikepdf
-    from PIL import Image, ImageOps
-
-    pdf = pikepdf.new()
-    for raw in images_data:
-        img = Image.open(io.BytesIO(raw))
-        img = ImageOps.exif_transpose(img)
-        mode = "L" if img.mode == "L" else "RGB"
-        if img.mode != mode:
-            img = img.convert(mode)
-        iw, ih = img.size
-
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=92)
-        jpeg_bytes = buf.getvalue()
-
-        colorspace = pikepdf.Name("/DeviceGray" if mode == "L" else "/DeviceRGB")
-        img_obj = pikepdf.Stream(pdf, jpeg_bytes)
-        img_obj.stream_dict = pikepdf.Dictionary(
-            Type=pikepdf.Name("/XObject"),
-            Subtype=pikepdf.Name("/Image"),
-            Width=iw, Height=ih,
-            ColorSpace=colorspace,
-            BitsPerComponent=8,
-            Filter=pikepdf.Name("/DCTDecode"),
-        )
-        page = pikepdf.Dictionary(
-            Type=pikepdf.Name("/Page"),
-            MediaBox=[0, 0, iw, ih],
-            Resources=pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im0=img_obj)),
-            Contents=pikepdf.Stream(pdf, f"q {iw} 0 0 {ih} 0 0 cm /Im0 Do Q".encode()),
-        )
-        pdf.pages.append(pikepdf.Page(page))
-
-    out = io.BytesIO()
-    pdf.save(out, linearize=True)
-    pdf.close()
-    return out.getvalue()
 
 
 # ── Backend fallback ──────────────────────────────────────────────────────────
@@ -1187,19 +1152,14 @@ def _do_imgs2pdf(images_data: list) -> bytes:
 @router.post("/api/imgs2pdf")
 @limiter.limit("5/minute")
 async def imgs2pdf(request: Request, files: List[UploadFile] = File(...)):
+    user_id = _get_user_id(request)
     try:
         if len(files) > _IMG2PDF_MAX_FILES:
             raise HTTPException(status_code=400, detail=f"Maksimal {_IMG2PDF_MAX_FILES} ta rasm")
-        images = []
-        total = 0
-        for f in files:
-            data = await f.read()
-            total += len(data)
-            if total > MAX_FILE_BYTES * 3:
-                raise HTTPException(status_code=413, detail="Fayllar jami hajmi juda katta")
+        images = await read_uploads(files, "/api/imgs2pdf")
+        for f, data in zip(files, images):
             if not is_image_bytes(data):
                 raise HTTPException(status_code=422, detail=f"'{f.filename}' rasm fayli emas.")
-            images.append(data)
         loop = asyncio.get_running_loop()
         try:
             pdf_bytes = await asyncio.wait_for(

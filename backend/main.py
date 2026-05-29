@@ -25,6 +25,8 @@ from shared import (
     MAX_FILE_MB, _start_time,
     get_rembg_session, reset_rembg_session, is_rembg_ready,
     tg_send,
+    BodySizeLimitMiddleware, MAX_REQUEST_BYTES,
+    UsageTrackingMiddleware,
 )
 
 from routers import pdf_ops, convert_ops, media_ops, tools_ops, payment_router, user_router
@@ -232,7 +234,14 @@ app.add_middleware(
     ],
 )
 app.add_middleware(_RequestTracingMiddleware)
+# Usage tracking middleware: fires after a 2xx response. Reads request.state.user_id
+# set by `_get_user_id()` during handler execution; skipped for unknown paths.
+app.add_middleware(UsageTrackingMiddleware)
+# Body-size guard added LAST → Starlette wraps it OUTERMOST so the 413 fires
+# before any other middleware (incl. tracing) and before FastAPI buffers the body.
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 logger.info(f"CORS allowed origins: {_cors_origins}")
+logger.info(f"Body-size guard: max {MAX_REQUEST_BYTES // 1024 // 1024}MB per request")
 
 # ─── Routers ──────────────────────────────────────────────────────────────────
 
