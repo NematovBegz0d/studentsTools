@@ -267,14 +267,19 @@ def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
             ("pdf2docx",      lambda: _do_pdf2docx(pdf_path, docx_path)),
         ]
     else:
+        # Matn-PDF lar uchun tartib o'zgartirildi:
+        # pdf2docx paketi ro'yxatlar, jadvallar va matn formatlashni eng to'g'ri
+        # saqlaydi (foydalanuvchi xabar bergan "ro'yxatlar nuqta va bo'sh joylar bilan"
+        # muammosi LibreOffice writer_pdf_import filtri sababli edi). Endi pdf2docx
+        # birinchi sinaladi, LibreOffice ikkinchi (umumiy fallback), pymupdf oxirgi.
         chain = []
         if not _disabled("MARKER") and page_count <= MARKER_MAX_PAGES:
             chain.append(("marker", lambda: _do_pdf2docx_marker(pdf_path, docx_path)))
         if not _disabled("DOCLING"):
             chain.append(("docling", lambda: _do_pdf2docx_docling(pdf_path, docx_path)))
         chain.extend([
-            ("libreoffice",   lambda: _do_pdf2docx_libreoffice(pdf_path, docx_path)),
             ("pdf2docx",      lambda: _do_pdf2docx(pdf_path, docx_path)),
+            ("libreoffice",   lambda: _do_pdf2docx_libreoffice(pdf_path, docx_path)),
             ("pymupdf",       lambda: _do_pdf2docx_pymupdf(pdf_path, docx_path)),
         ])
 
@@ -966,11 +971,15 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
 
 # ─── DOCX Edit ────────────────────────────────────────────────────────────────
 
-def _do_docxedit(data: bytes, find: str, replace: str, case_sensitive: bool) -> tuple:
-    from docx import Document
+def _docxedit_apply_one(doc, find: str, replace: str, case_sensitive: bool) -> int:
+    """Loaded Document'ga BITTA find/replace juftligini qo'llaydi.
+
+    Avval `_do_docxedit` ichida edi, endi multi-pair (bir nechta almashtirish)
+    versiyasi shu yordamchini qayta-qayta chaqirishi mumkin bo'lishi uchun
+    ajratildi.
+    """
     import re as _re
 
-    doc = Document(io.BytesIO(data))
     count = 0
 
     def _replace_in_para(para):
@@ -1020,10 +1029,50 @@ def _do_docxedit(data: bytes, find: str, replace: str, case_sensitive: bool) -> 
             for cell in row.cells:
                 for para in cell.paragraphs:
                     _replace_in_para(para)
+    return count
 
+
+def _do_docxedit(data: bytes, find: str, replace: str, case_sensitive: bool) -> tuple:
+    """Orqaga moslik: bitta juftlik. Yangi kod `_do_docxedit_pairs` ishlatadi."""
+    from docx import Document
+    doc = Document(io.BytesIO(data))
+    count = _docxedit_apply(doc, find, replace, case_sensitive)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue(), count
+
+
+# Tashqi nom — eski test va kodlar qaytarib chaqirishi mumkin.
+_docxedit_apply = _docxedit_apply_one
+
+
+def _do_docxedit_pairs(data: bytes, pairs: list, case_sensitive: bool) -> tuple:
+    """Bir nechta find/replace juftligini bir hujjatga ketma-ket qo'llaydi.
+
+    pairs = [{"find": "...", "replace": "..."}, ...]
+    Bo'sh `find` bo'lgan juftliklar quvib o'tkaziladi.
+    Qaytaradi: (docx_bytes, jami_almashtirish_soni, per_pair_counts)
+    """
+    from docx import Document
+    doc = Document(io.BytesIO(data))
+    total = 0
+    per_pair = []
+    for pair in pairs:
+        find = (pair.get("find") or "").strip()
+        replace = pair.get("replace") or ""
+        if not find:
+            per_pair.append(0)
+            continue
+        n = _docxedit_apply_one(doc, find, replace, case_sensitive)
+        per_pair.append(n)
+        total += n
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue(), total, per_pair
+
+
+_DOCXEDIT_MAX_PAIRS = 50
+_DOCXEDIT_MAX_LEN = 500
 
 
 @router.post("/api/docxedit")
@@ -1031,50 +1080,118 @@ def _do_docxedit(data: bytes, find: str, replace: str, case_sensitive: bool) -> 
 async def docx_edit(
     request: Request,
     file: UploadFile = File(...),
-    find: str = Form(...),
-    replace: str = Form(...),
+    find: str = Form(""),
+    replace: str = Form(""),
     case_sensitive: bool = Form(False),
+    pairs: str = Form(""),
 ):
+    """Word matnini almashtirish.
+
+    Ikki rejim qo'llab-quvvatlanadi (orqaga moslik):
+      1) Bitta juftlik (eski API): `find` + `replace` form maydonlari.
+      2) Bir nechta juftlik (yangi): `pairs` JSON: [{"find": "...", "replace": "..."}].
+
+    `pairs` mavjud bo'lsa, u ustuvor (find/replace e'tiborga olinmaydi).
+    """
+    import json as _json
     t0 = time.time()
     user_id = _get_user_id(request)
     try:
         data = await read_upload(file, "/api/docxedit")
 
-        if not find:
-            raise HTTPException(status_code=400, detail="'find' bo'sh bo'lmasligi kerak")
-        if len(find) > 500:
-            raise HTTPException(status_code=400, detail="'find' 500 belgidan oshmasligi kerak")
-        if len(replace) > 500:
-            raise HTTPException(status_code=400, detail="'replace' 500 belgidan oshmasligi kerak")
+        # ── Pairs ro'yxatini tayyorlash ──
+        pairs_list: list = []
+        if pairs:
+            try:
+                parsed = _json.loads(pairs)
+            except _json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Almashtirish ro'yxati noto'g'ri formatda yuborildi.",
+                )
+            if not isinstance(parsed, list):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Almashtirish ro'yxati massiv (array) bo'lishi kerak.",
+                )
+            for p in parsed:
+                if not isinstance(p, dict):
+                    continue
+                f = (p.get("find") or "")
+                r = (p.get("replace") or "")
+                if not isinstance(f, str) or not isinstance(r, str):
+                    continue
+                f = f[:_DOCXEDIT_MAX_LEN]
+                r = r[:_DOCXEDIT_MAX_LEN]
+                if f.strip():
+                    pairs_list.append({"find": f, "replace": r})
+        elif find:
+            if len(find) > _DOCXEDIT_MAX_LEN:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Qidirilayotgan matn {_DOCXEDIT_MAX_LEN} belgidan oshmasligi kerak.",
+                )
+            if len(replace) > _DOCXEDIT_MAX_LEN:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Almashtiriluvchi matn {_DOCXEDIT_MAX_LEN} belgidan oshmasligi kerak.",
+                )
+            pairs_list = [{"find": find, "replace": replace}]
+
+        if not pairs_list:
+            raise HTTPException(
+                status_code=400,
+                detail="Hech qanday qidirish matni kiritilmagan. Kamida bitta juftlik bo'lishi kerak.",
+            )
+        if len(pairs_list) > _DOCXEDIT_MAX_PAIRS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bir vaqtda maksimal {_DOCXEDIT_MAX_PAIRS} ta almashtirish ruxsat etiladi.",
+            )
 
         loop = asyncio.get_running_loop()
-        fn = functools.partial(_do_docxedit, data, find, replace, case_sensitive)
-        out_bytes, count = await asyncio.wait_for(
+        fn = functools.partial(_do_docxedit_pairs, data, pairs_list, case_sensitive)
+        out_bytes, total_count, per_pair = await asyncio.wait_for(
             loop.run_in_executor(_io_pool, fn),
-            timeout=30.0,
+            timeout=45.0,
         )
 
         orig_name = os.path.splitext(file.filename or "document")[0]
         out_name = f"{orig_name}_edited.docx"
         enc_name = url_quote(out_name)
 
-        logger.info(f"docxedit: {count} almashtirish, {time.time()-t0:.1f}s")
+        if len(pairs_list) == 1:
+            info_text = f"{total_count} ta so'z almashtirildi"
+        else:
+            info_text = (
+                f"{len(pairs_list)} ta juftlik · jami {total_count} ta almashtirish"
+            )
+
+        logger.info(
+            f"docxedit: {len(pairs_list)} pair(s), total={total_count}, "
+            f"per_pair={per_pair}, {time.time()-t0:.1f}s"
+        )
         return Response(
             content=out_bytes,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{enc_name}",
-                "X-Info": safe_header(f"{count} ta so'z almashtirildi"),
+                "X-Info": safe_header(info_text),
             },
         )
     except HTTPException:
         raise
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Vaqt tugadi. Kichikroq fayl yuboring.")
+        raise HTTPException(
+            status_code=504,
+            detail="Almashtirish vaqti tugadi. Kichikroq fayl yoki kamroq juftlik tanlang.",
+        )
     except Exception as e:
         logger.error(f"docxedit xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500,
-            detail=f"docxedit: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(
+            status_code=500,
+            detail="Word almashtirishda kutilmagan xato. Iltimos, qayta urinib ko'ring.",
+        )
 
 
 # ─── Images → PDF ─────────────────────────────────────────────────────────────

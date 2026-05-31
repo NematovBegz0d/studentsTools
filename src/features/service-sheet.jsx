@@ -1276,11 +1276,11 @@ function CVForm({ data, onChange, accent }) {
 const SERVICE_HOW_TO = {
   pdf2docx:    ["PDF faylni yuklang", "Boshlash ni bosing — konvertatsiya 10-30 soniya oladi", "Tayyor DOCX faylni yuklab oling"],
   docx2pdf:    ["Word (.doc/.docx) faylni yuklang", "Boshlash ni bosing", "PDF faylni yuklab oling"],
-  docxedit:    ["DOCX faylni yuklang", "1-qator: qidiriladigan so'z  |  2-qator: yangi so'z", "Yangilangan DOCX faylni yuklab oling"],
+  docxedit:    ["DOCX faylni yuklang", "Qidirish va almashtirish juftliklarini kiriting (“+ Qo'shish” bilan ko'p qator)", "“Boshlash” ni bosing — yangilangan DOCX yuklanadi"],
   imgs2pdf:    ["Bir nechta rasm tanlang (tartib muhim)", "Boshlash ni bosing", "Ko'p sahifali PDF faylni yuklab oling"],
   xlsx2pdf:    ["Excel (.xlsx/.xls) faylni yuklang", "Boshlash ni bosing", "PDF jadvalni yuklab oling"],
   pdf2img:     ["PDF faylni yuklang", "Boshlash ni bosing", "1 sahifa → rasm, ko'p sahifa → ZIP arxivi"],
-  mergepdf:    ["Birlashtiriladigan PDF fayllarni tanlang (tartib muhim)", "Boshlash ni bosing", "Birlashtirilgan PDF yuklab oling"],
+  mergepdf:    ["PDF fayllarni yuklang (“+ Yana qo'shish” bilan ko'p marta qo'shsa bo'ladi)", "↑ ↓ tugmalari bilan tartibni o'zgartiring", "“Birlashtirish” ni bosing — yagona PDF yuklanadi"],
   pdfpages:    ["PDF faylni yuklang", "Sahifalar oralig'ini kiriting, masalan: 1-3,5,7", "Tanlangan sahifalar bilan yangi PDF yuklab oling"],
   pdftext:     ["PDF faylni yuklang", "Boshlash ni bosing", "Matn ekranda ko'rsatiladi — nusxalab oling"],
   ocr:         ["Rasm yoki skanerlangan PDF yuklang (o'zbek, rus, ingliz matni)", "Boshlash ni bosing — Tesseract OCR aniqlaydi", "Aniqlangan matnni nusxalab oling"],
@@ -1316,8 +1316,10 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
 
   const meta = isPremium ? t.p?.[service.id] : t.s?.[service.id];
   const howTo = SERVICE_HOW_TO[service.id] || [];
-  // Client-side services — har biri o'z ixtisoslashgan komponentini to'g'ridan-to'g'ri render qiladi,
-  // generik ServiceSheet ni chetlab o'tadi (backend chaqiruvi yo'q).
+  // Ixtisoslashgan komponentlar — har biri o'z UI'sini to'liq render qiladi va
+  // generik ServiceSheet'ni chetlab o'tadi. Ba'zilari client-side (jsPDF,
+  // browser crypto), boshqalari maxsus UI bilan backend'ga so'rov yuboradi
+  // (DocxEditPro, MergePdfPro).
   const _clientComps = {
     imgs2pdf:    window.Img2PdfPro,
     imgcompress: window.ImgCompressPro,
@@ -1327,9 +1329,11 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
     translit:    window.TranslitPro,
     deadline:    window.DeadlinePro,
     password:    window.PasswordPro,
+    docxedit:    window.DocxEditPro,
+    mergepdf:    window.MergePdfPro,
   };
   // isImg2PdfPro: endi barcha client-side xizmatlarni qamrab oladi (nom orqaga mos saqlanadi)
-  const isImg2PdfPro = !isPremium && service.id in _clientComps;
+  const isImg2PdfPro = !isPremium && service.id in _clientComps && !!_clientComps[service.id];
   const ClientComp   = isImg2PdfPro ? _clientComps[service.id] : null;
 
   return (

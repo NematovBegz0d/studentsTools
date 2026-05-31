@@ -28,6 +28,7 @@ const TERSER_OPTS = {
       "Photo3x4Options", "Img2PdfOptions", "CVForm",
       "Img2PdfPro", "ImgCompressPro", "QrPro", "StatsPro",
       "ReadTimePro", "TranslitPro", "DeadlinePro", "PasswordPro",
+      "DocxEditPro", "MergePdfPro",
     ],
   },
   format: { comments: false, ecma: 2018 },
