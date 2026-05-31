@@ -71,11 +71,11 @@ def check_system_tools() -> dict[str, bool]:
         "LibreOffice: OK" if lo else "LibreOffice not found — pdf2docx/docx2pdf use fallbacks"
     )
 
-    # Tesseract — OCR fallback (PaddleOCR is primary)
+    # Tesseract — OCR engine (/api/ocr)
     tess = _run_binary("tesseract", "--version")
     results["tesseract"] = tess
     (logger.info if tess else logger.warning)(
-        "Tesseract OCR: OK" if tess else "Tesseract not found — OCR uses PaddleOCR only"
+        "Tesseract OCR: OK" if tess else "Tesseract not found — /api/ocr will fail"
     )
 
     return results

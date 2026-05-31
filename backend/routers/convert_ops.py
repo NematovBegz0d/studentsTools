@@ -1,5 +1,6 @@
 # EduBot — Document conversion routes
-# pdf2docx (multi-engine: marker → docling → libreoffice → pdf2docx → pymupdf)
+# pdf2docx (multi-engine: libreoffice → pdf2docx → pymupdf;
+#           marker/docling auto-enabled if their packages are installed)
 # docx2pdf (libreoffice → mammoth+weasyprint → reportlab)
 # docxedit  (find-and-replace in .docx)
 
@@ -238,7 +239,15 @@ def _do_pdf2docx_docling(pdf_path: str, docx_path: str) -> None:
 
 def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
     def _disabled(name: str) -> bool:
-        return os.environ.get(f"{name}_DISABLED", "").lower() in ("1", "true", "yes")
+        if os.environ.get(f"{name}_DISABLED", "").lower() in ("1", "true", "yes"):
+            return True
+        pkg = {"MARKER": "marker", "DOCLING": "docling"}.get(name)
+        if pkg:
+            try:
+                __import__(pkg)
+            except ImportError:
+                return True
+        return False
 
     try:
         import fitz
