@@ -936,147 +936,6 @@ function Img2PdfOptions({ opts, onChange, accent }) {
   );
 }
 
-// ─── Photo3x4Options ──────────────────────────────────────────────
-function Photo3x4Options({ opts, onChange, accent }) {
-  const BG = [
-    { value: "white", label: "Oq",      color: "#ffffff", border: "#bbb" },
-    { value: "blue",  label: "Ko'k",    color: "#6495ed", border: "#6495ed" },
-    { value: "lightblue", label: "Och ko'k", color: "#deeeff", border: "#9cc7f2" },
-    { value: "gray",  label: "Kulrang", color: "#dce0e6", border: "#aeb5bf" },
-  ];
-  const ATTIRE = [
-    { value: "suit", label: "Kostyum", sub: "Rasmiy ko'rinish" },
-    { value: "natural", label: "Asl kiyim", sub: "Faqat crop/fon" },
-  ];
-  const FRAME = [
-    { value: "formal", label: "Yuz + yelka", sub: "Kostyum ko'rinadi" },
-    { value: "tight", label: "Yaqin", sub: "Yuz kattaroq" },
-  ];
-  const OUT = [
-    { value: true,  label: "A4 da 6 ta", sub: "Bosib chiqarish uchun" },
-    { value: false, label: "Bitta foto", sub: "3x4 sm rasm"           },
-  ];
-
-  return (
-    <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12 }}>
-      {/* Fon rangi */}
-      <div>
-        <div style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: 600,
-          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 7 }}>
-          Fon rangi
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {BG.map(({ value, label, color, border }) => {
-            const active = opts.bg === value;
-            return (
-              <button key={value} type="button"
-                onClick={() => onChange({ ...opts, bg: value })}
-                style={{
-                  flex: 1, padding: "9px 0", borderRadius: 12, cursor: "pointer",
-                  border: active ? `2px solid ${accent}` : `1.5px solid var(--border-medium)`,
-                  background: active ? `${accent}12` : "var(--bg-surface-1)",
-                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-                  font: "inherit", transition: "all 0.15s",
-                }}
-              >
-                <div style={{ width: 26, height: 26, borderRadius: 6,
-                  background: color, border: `1px solid ${border}90`,
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }} />
-                <span style={{ fontSize: 11, fontWeight: active ? 600 : 400,
-                  color: active ? "var(--text-primary)" : "var(--text-muted)" }}>
-                  {label}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div>
-        <div style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: 600,
-          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 7 }}>
-          Libos
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {ATTIRE.map(({ value, label, sub }) => {
-            const active = (opts.attire || "suit") === value;
-            return (
-              <button key={value} type="button"
-                onClick={() => onChange({ ...opts, attire: value })}
-                style={{
-                  flex: 1, padding: "9px 12px", borderRadius: 12, cursor: "pointer",
-                  border: active ? `2px solid ${accent}` : `1.5px solid var(--border-medium)`,
-                  background: active ? `${accent}12` : "var(--bg-surface-1)",
-                  textAlign: "left", font: "inherit", transition: "all 0.15s",
-                }}
-              >
-                <div style={{ fontSize: 12.5, fontWeight: 600,
-                  color: "var(--text-primary)" }}>{label}</div>
-                <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div>
-        <div style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: 600,
-          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 7 }}>
-          Kadr
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {FRAME.map(({ value, label, sub }) => {
-            const active = (opts.framing || "formal") === value;
-            return (
-              <button key={value} type="button"
-                onClick={() => onChange({ ...opts, framing: value })}
-                style={{
-                  flex: 1, padding: "9px 12px", borderRadius: 12, cursor: "pointer",
-                  border: active ? `2px solid ${accent}` : `1.5px solid var(--border-medium)`,
-                  background: active ? `${accent}12` : "var(--bg-surface-1)",
-                  textAlign: "left", font: "inherit", transition: "all 0.15s",
-                }}
-              >
-                <div style={{ fontSize: 12.5, fontWeight: 600,
-                  color: "var(--text-primary)" }}>{label}</div>
-                <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Chiqish turi */}
-      <div>
-        <div style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: 600,
-          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 7 }}>
-          Chiqish
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {OUT.map(({ value, label, sub }) => {
-            const active = opts.sheet === value;
-            return (
-              <button key={String(value)} type="button"
-                onClick={() => onChange({ ...opts, sheet: value })}
-                style={{
-                  flex: 1, padding: "9px 12px", borderRadius: 12, cursor: "pointer",
-                  border: active ? `2px solid ${accent}` : `1.5px solid var(--border-medium)`,
-                  background: active ? `${accent}12` : "var(--bg-surface-1)",
-                  textAlign: "left", font: "inherit", transition: "all 0.15s",
-                }}
-              >
-                <div style={{ fontSize: 12.5, fontWeight: 600,
-                  color: "var(--text-primary)" }}>{label}</div>
-                <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── LockedState ──────────────────────────────────────────────────
 function LockedState({ t, accent, onSubscribe, onClose }) {
   return (
@@ -1328,12 +1187,10 @@ const SERVICE_HOW_TO = {
   pdf2docx:    ["PDF faylni yuklang", "Boshlash ni bosing — konvertatsiya 10-30 soniya oladi", "Tayyor DOCX faylni yuklab oling"],
   docx2pdf:    ["Word (.doc/.docx) faylni yuklang", "Boshlash ni bosing", "PDF faylni yuklab oling"],
   docxedit:    ["DOCX faylni yuklang", "1-qator: qidiriladigan so'z  |  2-qator: yangi so'z", "Yangilangan DOCX faylni yuklab oling"],
-  img2pdf:     ["Rasm (JPG/PNG/WebP) yuklang", "Sahifa o'lchami va margin tanlang, Boshlash ni bosing", "PDF faylni yuklab oling"],
   imgs2pdf:    ["Bir nechta rasm tanlang (tartib muhim)", "Boshlash ni bosing", "Ko'p sahifali PDF faylni yuklab oling"],
   xlsx2pdf:    ["Excel (.xlsx/.xls) faylni yuklang", "Boshlash ni bosing", "PDF jadvalni yuklab oling"],
   pdf2img:     ["PDF faylni yuklang", "Boshlash ni bosing", "1 sahifa → rasm, ko'p sahifa → ZIP arxivi"],
   mergepdf:    ["Birlashtiriladigan PDF fayllarni tanlang (tartib muhim)", "Boshlash ni bosing", "Birlashtirilgan PDF yuklab oling"],
-  splitpdf:    ["PDF faylni yuklang", "Boshlash ni bosing — har sahifa alohida fayl bo'ladi", "ZIP arxivini yuklab oling"],
   pdfpages:    ["PDF faylni yuklang", "Sahifalar oralig'ini kiriting, masalan: 1-3,5,7", "Tanlangan sahifalar bilan yangi PDF yuklab oling"],
   pdftext:     ["PDF faylni yuklang", "Boshlash ni bosing", "Matn ekranda ko'rsatiladi — nusxalab oling"],
   ocr:         ["Rasm yoki skanerlangan PDF yuklang (o'zbek, rus, ingliz matni)", "Boshlash ni bosing — Tesseract OCR aniqlaydi", "Aniqlangan matnni nusxalab oling"],
@@ -1348,11 +1205,9 @@ const SERVICE_HOW_TO = {
   wiki:        ["Maqola nomini kiriting (masalan: Amir Temur)", "Boshlash ni bosing", "Wikipedia dan qisqacha ma'lumot oling"],
   readtime:    ["Matnni kiriting yoki joylashtiring", "Boshlash ni bosing", "O'qish uchun taxminiy vaqt ko'rsatiladi"],
   books:       ["Kitob nomi yoki muallif ismini kiriting", "Boshlash ni bosing", "Open Library dan kitob ma'lumotlari ko'rsatiladi"],
-  summarize:   ["Uzun matnni kiriting (kamida 200 belgi)", "Boshlash ni bosing", "AI 3-5 jumlada xulosalab beradi"],
   qr:          ["Matn, URL yoki telefon raqam kiriting", "Boshlash ni bosing", "QR kodini yuklab oling"],
   cert:        ["1-qator: Ism Familiya\n2-qator: Kurs yoki yutuq nomi", "Boshlash ni bosing", "Sertifikat rasmini yuklab oling"],
   bgremove:    ["Rasm (JPG/PNG) yuklang", "Boshlash ni bosing — AI fon olib tashlaydi", "Fonsiz rasmni (PNG) yuklab oling"],
-  photo3x4:    ["Yuz ko'rinadigan rasm (JPG/PNG) yuklang", "Fon, libos va kadr turini tanlang", "Yuz + yelka/kostyum ko'rinadigan 3x4 foto yuklab oling"],
   cv:          ["Ism, kasb, kontakt ma'lumotlarini kiriting", "Ish tajribasi, ta'lim, ko'nikmalar qo'shing", "Professional PDF CV ni yuklab oling"],
   schedule:    ["Dars jadvalini kiriting:\nDushanba: Matematika 8:00, Fizika 10:00", "Boshlash ni bosing", "Haftalik jadval rasmini yuklab oling"],
   deadline:    ["Sana kiriting: 31.12.2025 yoki 2025-12-31", "Boshlash ni bosing", "Qolgan vaqt va eslatma ko'rsatiladi"],
@@ -1374,7 +1229,6 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
   // Client-side services — har biri o'z ixtisoslashgan komponentini to'g'ridan-to'g'ri render qiladi,
   // generik ServiceSheet ni chetlab o'tadi (backend chaqiruvi yo'q).
   const _clientComps = {
-    img2pdf:     window.Img2PdfPro,
     imgs2pdf:    window.Img2PdfPro,
     imgcompress: window.ImgCompressPro,
     qr:          window.QrPro,
@@ -1446,7 +1300,7 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
       {/* Scrollable body */}
       <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
 
-        {/* How-to card — client-side img2pdf/imgs2pdf da ko'rsatilmaydi (alohida UI) */}
+        {/* How-to card — client-side imgs2pdf da ko'rsatilmaydi (alohida UI) */}
         {howTo.length > 0 && !isImg2PdfPro && (
           <div
             style={{
@@ -1522,7 +1376,6 @@ const TEXT_HINTS = {
   translate: "Tarjima qilinadigan matn\nen  ← (oxirgi qatorda til kodi: en, ru, tr, de, zh-CN, ja, ko...)",
   wiki: "Maqola nomi kiriting (uz, ru, en da)",
   books: "Kitob nomi yoki muallif",
-  summarize: "Xulosalash uchun uzun matn (kamida 200 belgi)",
   qr: "QR kod uchun matn yoki URL",
   cert: "1-qator: Ism Familiya\n2-qator: Kurs nomi",
   schedule: "Dushanba: Matematika 8:00, Fizika 10:00\nSeshanba: Ingliz tili 9:00, Kimyo 11:00",
@@ -1555,8 +1408,7 @@ function ServiceSheet({
   const _defaultOpts = (id) => {
     if (id === "cv") return { name: "", title: "", email: "", phone: "", location: "", summary: "",
       template: "modern", skills: [], languages: [], education: [], experience: [] };
-    if (id === "img2pdf" || id === "imgs2pdf") return { mode: "normal" };
-    if (id === "photo3x4") return { bg: "white", sheet: true, attire: "suit", framing: "formal" };
+    if (id === "imgs2pdf") return { mode: "normal" };
     return { bg: "white", sheet: true };
   };
 
@@ -1736,14 +1588,7 @@ function ServiceSheet({
               }}
             />
           )}
-          {service.id === "photo3x4" && (
-            <Photo3x4Options
-              opts={serviceOpts}
-              onChange={setServiceOpts}
-              accent={accent}
-            />
-          )}
-          {(service.id === "img2pdf" || service.id === "imgs2pdf") && (
+          {service.id === "imgs2pdf" && (
             <Img2PdfOptions
               opts={serviceOpts}
               onChange={setServiceOpts}
@@ -1859,7 +1704,6 @@ Object.assign(window, {
   ResultText,
   ResultWiki,
   ResultImage,
-  Photo3x4Options,
   Img2PdfOptions,
   CVForm,
 });

@@ -356,11 +356,6 @@ async function mergepdf({ files }) {
   return apiFile("/api/mergepdf", buildFormData("files", files), "merged.pdf");
 }
 
-async function splitpdf({ file }) {
-  validateFile(file, ".pdf");
-  return apiFile("/api/splitpdf", buildFormData("file", file), "pages.zip");
-}
-
 async function pdftext({ file }) {
   validateFile(file, ".pdf");
   const form = buildFormData("file", file);
@@ -485,20 +480,6 @@ async function docx2pdf({ file }) {
 
 // ─── File conversion ──────────────────────────────────────────────
 
-// img2pdf / imgs2pdf — CLIENT-SIDE via window.Img2PdfPro (jsPDF)
-// ServicePage checks `isImg2PdfPro` and renders Img2PdfPro directly,
-// bypassing SERVICE_HANDLERS entirely. These functions are backend
-// fallbacks only — not called in normal frontend operation.
-async function _img2pdfBackend({ file }) {
-  validateFile(file, ".jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif,.heic,.heif,.avif");
-  return apiFile("/api/img2pdf", buildFormData("file", file), "image.pdf", null, 30000);
-}
-
-async function _imgs2pdfBackend({ files }) {
-  validateFiles(files, ".jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif,.heic,.heif,.avif");
-  return apiFile("/api/imgs2pdf", buildFormData("files", files), "images.pdf", "X-Info", 60000);
-}
-
 async function xlsx2pdf({ file }) {
   validateFile(file, ".xlsx,.xls");
   return apiFile("/api/xlsx2pdf", buildFormData("file", file), "spreadsheet.pdf", "X-Info");
@@ -536,32 +517,6 @@ async function _imgcompressBackend({ file }) {
     blob,
     filename: "compressed.jpg",
     info: info || (saved ? `${saved}% kichiklashdi` : undefined),
-  };
-}
-
-// ─── AI (with mobile fallback) ────────────────────────────────────
-
-async function photo3x4({ file, opts = {} }) {
-  validateFile(file, ".jpg,.jpeg,.png,.webp,.heic,.heif");
-  const form = new FormData();
-  form.append("file", file);
-  form.append("bg", ["white", "blue", "lightblue", "gray"].includes(opts.bg) ? opts.bg : "white");
-  form.append("sheet", opts.sheet !== false ? "true" : "false");
-  form.append("attire", ["suit", "natural"].includes(opts.attire) ? opts.attire : "suit");
-  form.append("framing", ["formal", "tight"].includes(opts.framing) ? opts.framing : "formal");
-  const response = await fetchWithTimeout(
-    `${BACKEND_URL}/api/photo3x4`,
-    { method: "POST", headers: getAuthHeaders(), body: form },
-    60000,
-  );
-  await handleResponseError(response);
-  const blob = await response.blob();
-  const info = response.headers.get("X-Info");
-  return {
-    type: "file",
-    blob,
-    filename: opts.sheet !== false ? "photo3x4_sheet.jpg" : "photo3x4.jpg",
-    ...(info ? { info } : {}),
   };
 }
 
@@ -653,12 +608,6 @@ async function wiki({ text }) {
 async function books({ text }) {
   if (!text?.trim()) throw new Error("Kitob nomi yoki muallifni kiriting.");
   return apiText("/api/books", { text: sanitizeText(text, 200) });
-}
-
-async function summarize({ text }) {
-  if (!text?.trim()) throw new Error("Xulosalash uchun matn kiriting.");
-  if (text.length < 200) throw new Error("Matn juda qisqa (kamida 200 belgi).");
-  return apiText("/api/summarize", { text: sanitizeText(text, 10000) });
 }
 
 // ─── Visual generators ────────────────────────────────────────────
@@ -797,13 +746,12 @@ function premiumStub() {
 const SERVICE_HANDLERS = {
   // PDF
   mergepdf,
-  splitpdf,
   pdfpages,
   pdftext,
   pdflock,
   watermark,
   pdf2img,
-  // img2pdf and imgs2pdf are frontend-only (window.Img2PdfPro / jsPDF).
+  // imgs2pdf is frontend-only (window.Img2PdfPro / jsPDF).
   // ServicePage renders Img2PdfPro directly — these ids never reach SERVICE_HANDLERS.
   xlsx2pdf,
   pdf2docx,
@@ -813,12 +761,10 @@ const SERVICE_HANDLERS = {
   compresspptx,
   // Image — imgcompress is CLIENT-SIDE (window.ImgCompressPro)
   bgremove,
-  photo3x4,
   // Text — translit/readtime/deadline/stats are CLIENT-SIDE (*Pro components)
   translate,
   wiki,
   books,
-  summarize,
   // Generate — qr is CLIENT-SIDE (window.QrPro); password is CLIENT-SIDE (window.PasswordPro)
   cert,
   schedule,

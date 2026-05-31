@@ -71,7 +71,7 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 # ─── Thread pools ─────────────────────────────────────────────────────────────
 # _io_pool — PDF ops, file conversions, QR, cert, schedule, zip (fast CPU)
-# _ml_pool — bgremove (rembg ~700 MB), OCR (PaddleOCR), photo3x4 (MediaPipe)
+# _ml_pool — bgremove (rembg ~700 MB), OCR (Tesseract)
 # Kept separate so ML work cannot starve fast file-conversion requests.
 
 _IO_WORKERS = min((os.cpu_count() or 2), 4)
@@ -258,7 +258,6 @@ def safe_url_fetcher(url, timeout: int = 10, ssl_context=None):
 # place; matches the catalog IDs in src/data/data.js (FREE_SERVICES).
 _SERVICE_TITLES: dict = {
     "mergepdf":     "PDF birlashtirish",
-    "splitpdf":     "PDF ajratish",
     "pdfpages":     "PDF sahifa tanlash",
     "pdftext":      "PDF dan matn",
     "pdflock":      "PDF ga parol",
@@ -269,7 +268,6 @@ _SERVICE_TITLES: dict = {
     "docx2pdf":     "Word → PDF",
     "docxedit":     "Word matn almashtirish",
     "imgs2pdf":     "Rasmlar → PDF",
-    "photo3x4":     "3×4 Passport foto",
     "cv":           "CV / Rezyume",
     "xlsx2pdf":     "Excel → PDF",
     "compresspptx": "PPTX siqish",
@@ -279,7 +277,6 @@ _SERVICE_TITLES: dict = {
     "send-file":    "Faylni Telegramga yuborish",
     "translit":     "Lotin ↔ Kirill",
     "readtime":     "O'qish vaqti",
-    "summarize":    "AI Xulosalash",
     "deadline":     "Deadline eslatma",
     "stats":        "Statistika",
     "qr":           "QR kod",

@@ -1,5 +1,5 @@
 # EduBot — PDF manipulation routes
-# mergepdf, splitpdf, pdfpages, pdftext, pdflock, watermark, pdf2img, compresspdf
+# mergepdf, pdfpages, pdftext, pdflock, watermark, pdf2img, compresspdf
 
 import io
 import re
@@ -82,9 +82,7 @@ async def merge_pdf(request: Request, files: List[UploadFile] = File(...)):
         logger.error(f"mergepdf xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"mergepdf: {type(e).__name__}: {str(e)[:160]}")
 
-# ─── PDF: Split ───────────────────────────────────────────────────────────────
-
-_SPLITPDF_MAX_PAGES = 200
+# ─── PDF: Page range parser (shared by pdfpages) ──────────────────────────────
 
 
 def _parse_page_ranges(pages_str: str, total: int) -> list:
@@ -105,91 +103,6 @@ def _parse_page_ranges(pages_str: str, total: int) -> list:
         else:
             result.add(int(part) - 1)
     return sorted(x for x in result if 0 <= x < total)
-
-
-def _do_splitpdf(data: bytes, page_indices: list) -> tuple:
-    import pikepdf
-
-    if data[:4] != b"%PDF":
-        raise ValueError("PDF fayl emas")
-    try:
-        doc = pikepdf.open(io.BytesIO(data))
-    except pikepdf.PasswordError:
-        raise ValueError("PDF parol bilan himoyalangan")
-    n = len(doc.pages)
-    if n == 0:
-        doc.close()
-        raise ValueError("PDF sahifasiz")
-    if len(page_indices) > _SPLITPDF_MAX_PAGES:
-        doc.close()
-        raise ValueError(f"Maksimal {_SPLITPDF_MAX_PAGES} sahifa ajratish mumkin")
-
-    zf_buf = io.BytesIO()
-    with zipfile.ZipFile(zf_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        pad = len(str(max(page_indices) + 1))
-        for i in page_indices:
-            out = pikepdf.new()
-            out.pages.append(doc.pages[i])
-            pb = io.BytesIO()
-            out.save(pb, linearize=True)
-            out.close()
-            zf.writestr(f"page_{str(i + 1).zfill(pad)}.pdf", pb.getvalue())
-    doc.close()
-    return zf_buf.getvalue(), len(page_indices)
-
-
-@router.post("/api/splitpdf")
-@limiter.limit("10/minute")
-async def split_pdf(
-    request: Request,
-    file: UploadFile = File(...),
-    pages: Optional[str] = Form(None),
-):
-    user_id = _get_user_id(request)
-    try:
-        data = await read_upload(file, "/api/splitpdf")
-        if data[:4] != b"%PDF" or b"%%EOF" not in data[-4096:]:
-            raise HTTPException(status_code=422, detail="PDF fayl emas yoki fayl buzilgan.")
-        import pikepdf as _pike_check
-        try:
-            _pdf_check = _pike_check.open(io.BytesIO(data))
-        except _pike_check.PasswordError:
-            raise HTTPException(status_code=422, detail="PDF parol bilan himoyalangan.")
-        except Exception:
-            raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
-        total_n = len(_pdf_check.pages)
-        _pdf_check.close()
-        try:
-            indices = _parse_page_ranges(pages, total_n)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Sahifa oralig'i noto'g'ri. Format: 1-5,8,10-15")
-        if not indices:
-            raise HTTPException(status_code=400, detail="Sahifalar ro'yxati bo'sh")
-        loop = asyncio.get_running_loop()
-        try:
-            zip_bytes, count = await asyncio.wait_for(
-                loop.run_in_executor(_io_pool, _do_splitpdf, data, indices),
-                timeout=45.0,
-            )
-        except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail="PDF ajratish vaqti tugadi")
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        info = f"{count} sahifa → {count} fayl"
-        logger.info(f"splitpdf: {info}")
-        return Response(
-            content=zip_bytes,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": "attachment; filename=pages.zip",
-                "X-Info": safe_header(info),
-            },
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"splitpdf xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"splitpdf: {type(e).__name__}: {str(e)[:160]}")
 
 
 # ─── PDF: Page selection ──────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ function HomePage({ t, accent, cardStyle, onOpenService, onGoTo, user }) {
     { label: t.stats.users,   value: '12k+', fg: '#60a5fa' },
   ];
 
-  const quickIds = ['referat', 'amaliy', 'img2pdf', 'translate'];
+  const quickIds = ['referat', 'amaliy', 'imgs2pdf', 'translate'];
   const quickItems = quickIds.map(id => {
     const pIdx = PREMIUM_SERVICES.findIndex(p => p.id === id);
     if (pIdx >= 0) {
