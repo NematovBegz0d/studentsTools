@@ -86,7 +86,36 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
         content={
             "error_code": "RATE_LIMITED",
             "request_id": request_id,
-            "message": f"Rate limit exceeded: {exc.detail}",
+            "message": "So'rovlar soni cheklangan. Iltimos, biroz kuting va qayta urinib ko'ring.",
+            "processing_ms": ms,
+        },
+        headers={"X-Request-Id": request_id, "X-Processing-Ms": str(ms)},
+    )
+
+
+# 1-Bosqich: Kutilmagan ichki xatoliklar uchun foydalanuvchi-friendly handler.
+# Foydalanuvchiga texnik stack-trace yoki Python xato nomi ko'rsatilmaydi —
+# faqat tushunarli o'zbek matni va kuzatuv uchun `request_id` qaytariladi.
+# Texnik tafsilotlar log-ga yoziladi va Sentry-ga yuboriladi (sozlangan bo'lsa).
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", "")
+    t0 = getattr(request.state, "t0", time.perf_counter())
+    ms = int((time.perf_counter() - t0) * 1000)
+    logger.error(
+        f"Unhandled exception [{request_id}] "
+        f"{request.method} {request.url.path}: "
+        f"{type(exc).__name__}: {str(exc)[:240]}"
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error_code": "INTERNAL_ERROR",
+            "request_id": request_id,
+            "message": (
+                "Xizmatda vaqtinchalik xatolik yuz berdi. "
+                "Iltimos, qayta urinib ko'ring. Muammo davom etsa, "
+                f"yordam so'rashda ushbu kodni qo'shing: {request_id or 'unknown'}."
+            ),
             "processing_ms": ms,
         },
         headers={"X-Request-Id": request_id, "X-Processing-Ms": str(ms)},
@@ -153,6 +182,27 @@ async def lifespan(app: FastAPI):
         webhook_url = f"https://{domain}/webhook"
         try:
             async with httpx.AsyncClient(timeout=10) as client:
+                # 1) Avval BOT_TOKEN haqiqiy ekanligini tekshiramiz (getMe).
+                #    Bu — `/start` ishlamasligi sababini darrov ko'rsatadi.
+                try:
+                    me_r = await client.get(
+                        f"https://api.telegram.org/bot{BOT_TOKEN}/getMe"
+                    )
+                    me = me_r.json()
+                    if me.get("ok"):
+                        bot_info = me.get("result", {})
+                        logger.info(
+                            f"Bot OK: @{bot_info.get('username')} "
+                            f"(id={bot_info.get('id')})"
+                        )
+                    else:
+                        logger.error(
+                            f"BOT_TOKEN noto'g'ri yoki muddati o'tgan: {me}"
+                        )
+                except Exception as e:
+                    logger.error(f"getMe so'rovi muvaffaqiyatsiz: {e}")
+
+                # 2) Webhook ro'yxatdan o'tkazish
                 payload = {"url": webhook_url, "drop_pending_updates": True}
                 if WEBHOOK_SECRET:
                     payload["secret_token"] = WEBHOOK_SECRET
@@ -161,13 +211,44 @@ async def lifespan(app: FastAPI):
                     json=payload,
                 )
                 if r.json().get("ok"):
-                    logger.info(f"Webhook: {webhook_url} (secret_token: {'✓' if WEBHOOK_SECRET else 'NO'})")
+                    logger.info(
+                        f"Webhook ro'yxatdan o'tdi: {webhook_url} "
+                        f"(secret_token: {'YOQ' if WEBHOOK_SECRET else 'YOQ EMAS'})"
+                    )
                 else:
-                    logger.error(f"Webhook xatosi: {r.json()}")
+                    logger.error(f"setWebhook muvaffaqiyatsiz: {r.json()}")
+
+                # 3) Webhook holatini darhol tekshiramiz — Telegram serverida
+                #    nima ko'rinishini bilamiz (pending updates, oxirgi xato).
+                try:
+                    info_r = await client.get(
+                        f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+                    )
+                    info = info_r.json().get("result", {})
+                    pending = info.get("pending_update_count", 0)
+                    last_err = info.get("last_error_message")
+                    if last_err:
+                        logger.warning(
+                            f"Webhook oxirgi xato (Telegram tomonidan): "
+                            f"{last_err} (pending={pending})"
+                        )
+                    elif pending:
+                        logger.info(f"Webhook pending updates: {pending}")
+                except Exception as e:
+                    logger.debug(f"getWebhookInfo: {e}")
         except Exception as e:
             logger.error(f"Webhook ulanishda xato: {e}")
     else:
-        logger.warning("BOT_TOKEN yoki RAILWAY_PUBLIC_DOMAIN yo'q")
+        # Aniqroq diagnostik: qaysi env yo'qligini ko'rsatamiz.
+        missing = []
+        if not BOT_TOKEN:
+            missing.append("BOT_TOKEN")
+        if not domain:
+            missing.append("RAILWAY_PUBLIC_DOMAIN")
+        logger.warning(
+            f"Webhook ro'yxatdan o'tmadi — yo'q env: {', '.join(missing)}. "
+            "Railway Variables-ga qo'shing va deploy-ni qayta ishga tushiring."
+        )
 
     async def _preload_rembg():
         try:
@@ -194,6 +275,9 @@ app = FastAPI(title="EduBot Backend", version="2.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(HTTPException, _http_exception_handler)
 app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+# Catch-all: agar handler ichida HTTPException bilan o'ralmasdan exception otilsa,
+# foydalanuvchiga texnik detallarni emas, tushunarli o'zbek xabarini qaytaramiz.
+app.add_exception_handler(Exception, _unhandled_exception_handler)
 
 _default_origins = (
     "https://nematovbegz0d.github.io,"
@@ -295,19 +379,28 @@ def health_ready():
 @app.post("/webhook")
 async def webhook(request: Request):
     if not BOT_TOKEN:
+        logger.error("/webhook keldi, lekin BOT_TOKEN sozlanmagan — javob bermaymiz")
         return {"ok": False}
     if WEBHOOK_SECRET:
         got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
         if not secrets.compare_digest(got, WEBHOOK_SECRET):
-            logger.warning(f"Webhook secret mismatch from {get_remote_address(request)}")
+            logger.warning(
+                f"Webhook secret_token mos kelmadi (kelgan IP: "
+                f"{get_remote_address(request)}). Telegram-da setWebhook qaytadan "
+                "bajaring yoki WEBHOOK_SECRET env-ni tekshiring."
+            )
             raise HTTPException(status_code=403, detail="Forbidden")
     try:
         update = await request.json()
     except Exception:
+        logger.warning("/webhook: JSON parse xatosi")
         return {"ok": False}
 
     message = update.get("message") or update.get("edited_message")
     if not message:
+        # Update boshqa turdagi bo'lishi mumkin (callback_query, inline, va h.k.).
+        # Hozirgi bot faqat message-larga javob beradi — qolganini quvib o'tkazamiz.
+        logger.debug(f"/webhook: message yo'q, update turi: {list(update.keys())}")
         return {"ok": True}
 
     chat_id    = message.get("chat", {}).get("id")

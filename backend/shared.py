@@ -113,7 +113,14 @@ def check_size(data: bytes, endpoint: str = ""):
     """
     if len(data) > MAX_FILE_BYTES:
         mb = round(len(data) / 1024 / 1024, 1)
-        raise HTTPException(status_code=413, detail=f"Fayl {mb}MB. Maksimal: {MAX_FILE_MB}MB")
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Fayl hajmi {mb} MB — bu limitdan oshib ketadi. "
+                f"Maksimal ruxsat etilgan hajm: {MAX_FILE_MB} MB. "
+                "Iltimos, faylni siqing yoki kichikroq faylni yuklang."
+            ),
+        )
 
 
 # ─── Upload helpers ───────────────────────────────────────────────────────────
@@ -133,10 +140,16 @@ async def read_upload(
     - Larger than 20 MB   → HTTP 413 (matches existing check_size message)
     """
     if file is None:
-        raise HTTPException(status_code=400, detail="Fayl yuborilmadi")
+        raise HTTPException(
+            status_code=400,
+            detail="Fayl yuborilmadi. Iltimos, faylni tanlab qaytadan yuboring.",
+        )
     data = await file.read()
     if not allow_empty and not data:
-        raise HTTPException(status_code=400, detail="Fayl bo'sh. Boshqa fayl tanlang.")
+        raise HTTPException(
+            status_code=400,
+            detail="Tanlangan fayl bo'sh. Iltimos, boshqa fayl tanlang.",
+        )
     check_size(data, endpoint)
     return data
 
@@ -154,20 +167,36 @@ async def read_uploads(
     Returns a list of bytes in the same order as `files`.
     """
     if not files:
-        raise HTTPException(status_code=400, detail="Fayl(lar) yuborilmadi")
+        raise HTTPException(
+            status_code=400,
+            detail="Hech qanday fayl yuborilmadi. Iltimos, kamida bitta fayl tanlang.",
+        )
     limit = MAX_MULTI_FILE_BYTES if max_total_bytes is None else max_total_bytes
     result: list = []
     total = 0
     for f in files:
         if f is None:
-            raise HTTPException(status_code=400, detail="Bo'sh fayl uchradi")
+            raise HTTPException(
+                status_code=400,
+                detail="Bo'sh fayl uchradi. Iltimos, barcha fayllarni qaytadan tekshiring.",
+            )
         data = await f.read()
         if not allow_empty and not data:
-            raise HTTPException(status_code=400, detail="Bo'sh fayl uchradi. Hammasi to'la bo'lsin.")
+            raise HTTPException(
+                status_code=400,
+                detail="Yuklangan fayllar orasida bo'sh fayl bor. Iltimos, barchasi to'la bo'lsin.",
+            )
         check_size(data, endpoint)
         total += len(data)
         if total > limit:
-            raise HTTPException(status_code=413, detail="Fayllar jami hajmi juda katta")
+            limit_mb = round(limit / 1024 / 1024)
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Tanlangan fayllarning jami hajmi {limit_mb} MB dan oshib ketadi. "
+                    "Iltimos, kamroq yoki kichikroq fayllar tanlang."
+                ),
+            )
         result.append(data)
     return result
 
@@ -207,7 +236,11 @@ class BodySizeLimitMiddleware:
                         content={
                             "error_code":    "FILE_TOO_LARGE",
                             "request_id":    "",
-                            "message":       f"So'rov hajmi {mb}MB. Maksimal: {limit_mb}MB",
+                            "message": (
+                                f"So'rov hajmi {mb} MB — bu limitdan oshib ketadi. "
+                                f"Maksimal ruxsat etilgan hajm: {limit_mb} MB. "
+                                "Iltimos, kichikroq fayl yuklang yoki uni avval siqing."
+                            ),
                             "processing_ms": 0,
                         },
                     )
@@ -377,11 +410,53 @@ def safe_header(value) -> str:
     return "".join(cleaned).strip() or "ok"
 
 async def tg_send(chat_id: int, text: str, reply_markup: Optional[dict] = None):
+    """Telegramga xabar yuborish.
+
+    Diagnostik logging: avval kod xatolarni silently yutardi va `/start` ishlamasa
+    sababi log-larda ko'rinmasdi. Endi har bir muvaffaqiyatsizlik (BOT_TOKEN yo'q,
+    tarmoq xato, Telegram `ok:false` javob) WARN/ERROR sifatida yoziladi.
+    """
+    if not BOT_TOKEN:
+        logger.error("tg_send: BOT_TOKEN sozlanmagan — xabar yuborilmadi")
+        return
+    if not chat_id:
+        logger.warning("tg_send: chat_id bo'sh — xabar yuborilmadi")
+        return
+
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if reply_markup:
         payload["reply_markup"] = reply_markup
-    async with httpx.AsyncClient(timeout=10) as client:
-        await client.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                json=payload,
+            )
+    except httpx.TimeoutException:
+        logger.error(f"tg_send: Telegram javob bermadi (timeout) chat_id={chat_id}")
+        return
+    except httpx.HTTPError as e:
+        logger.error(f"tg_send: tarmoq xato chat_id={chat_id} {type(e).__name__}: {e}")
+        return
+
+    try:
+        data = r.json()
+    except Exception:
+        logger.error(
+            f"tg_send: Telegram noto'g'ri javob (HTTP {r.status_code}) "
+            f"chat_id={chat_id} body={r.text[:200]!r}"
+        )
+        return
+
+    if not data.get("ok"):
+        # Asosiy diagnostik joy: ko'p hollarda Telegram xato kodi va tavsifi
+        # bu yerda paydo bo'ladi (masalan: 401 — token noto'g'ri,
+        # 400 chat not found, 403 bot kicked).
+        logger.error(
+            f"tg_send: Telegram xato qaytardi chat_id={chat_id} "
+            f"code={data.get('error_code')} desc={data.get('description')!r}"
+        )
 
 def pil_fonts(sizes: list):
     from PIL import ImageFont
