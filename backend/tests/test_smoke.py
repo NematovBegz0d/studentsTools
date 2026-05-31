@@ -132,7 +132,9 @@ class TestUploadHelpers:
         with pytest.raises(HTTPException) as exc:
             asyncio.run(read_uploads(files, "/api/test"))
         assert exc.value.status_code == 413
-        assert "juda katta" in exc.value.detail
+        # 1-Bosqich: foydalanuvchi-friendly xato matni — limit MB raqami xabarda
+        # bo'lishi kifoya (xato turini aniqlash uchun stabil belgi).
+        assert "MB" in exc.value.detail
 
     def test_multi_empty_file_rejected(self):
         from shared import read_uploads

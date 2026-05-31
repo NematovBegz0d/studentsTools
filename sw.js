@@ -6,7 +6,7 @@
 // Cache name bumped on each release so old assets are purged.
 "use strict";
 
-const VERSION    = "v2";
+const VERSION    = "v3";
 const CACHE_NAME = `edubot-shell-${VERSION}`;
 
 // Pre-cached shell — what the app needs to render offline-first.

@@ -411,23 +411,19 @@ function ProfilePage({ t, accent, lang, setLang, theme, setTheme, currentPlan, o
   const planIconName = planConfig.iconName;
   const planColor = planConfig.color;
 
-  // ✅ NOTE: In production, usage data should come from API
+  // 1-Bosqich: AI so'rovlar qatori vaqtincha olib tashlangan (premium tayyor emas).
+  // Konvertatsiya va tarjima qatorlari placeholder sifatida qoldi —
+  // keyingi bosqichda haqiqiy `/api/admin/stats` orqali yangilanadi.
   const usage = [
     {
-      label: t.usage?.ai || "AI so'rovlar",
-      value: 1,
-      max: 3,
-      color: "#a78bfa",
-    },
-    {
       label: t.usage?.convert || "Konvertatsiya",
-      value: 7,
+      value: 0,
       max: 50,
       color: "#4ade80",
     },
     {
       label: t.usage?.translate || "Tarjima",
-      value: 12,
+      value: 0,
       max: 100,
       color: "#60a5fa",
     },
@@ -722,72 +718,8 @@ function ProfilePage({ t, accent, lang, setLang, theme, setTheme, currentPlan, o
         </div>
       </div>
 
-      {/* Upgrade banner */}
-      {currentPlan !== "premium" && (
-        <div style={{ padding: "0 18px 14px" }}>
-          <button
-            onClick={() => onGoTo("plans")}
-            className="press"
-            type="button"
-            aria-label="Premium tarifga o'tish"
-            style={{
-              width: "100%",
-              textAlign: "left",
-              position: "relative",
-              overflow: "hidden",
-              padding: 16,
-              borderRadius: 18,
-              background: "linear-gradient(120deg, #f59e0b 0%, #ef4444 100%)",
-              border: "none",
-              color: "#fff",
-              cursor: "pointer",
-              font: "inherit",
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              boxShadow: "0 10px 26px rgba(245,158,11,0.25)",
-            }}
-          >
-            <div
-              aria-hidden="true"
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 11,
-                background: "rgba(255,255,255,0.20)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Icon name="crown" size={20} color="#fff" strokeWidth={2} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>
-                {t.upgradeToPremium}
-              </div>
-              <div style={{ fontSize: 11.5, opacity: 0.9, marginTop: 1 }}>
-                {t.cheksizAI}
-              </div>
-            </div>
-            <svg
-              aria-hidden="true"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-            >
-              <path
-                d="M5 12h14M13 6l6 6-6 6"
-                stroke="#fff"
-                strokeWidth="2.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-        </div>
-      )}
+      {/* 1-Bosqich: "Premiumga o'tish" tugmasi vaqtincha o'chirilgan.
+          To'lov tizimi va premium xizmatlar tayyor bo'lganda qayta ko'rinadi. */}
 
       {/* Logout */}
       <div style={{ padding: "0 18px" }}>

@@ -269,9 +269,14 @@ function App() {
 
   const setLang = useCallback((v) => setTweak("lang", v), [setTweak]);
 
+  // 1-Bosqich: Premium va Plans tablari vaqtincha yopiq.
+  // Eski navigatsiya `plans`/`premium`-ga yo'naltirsa, `home`-ga aylantiramiz.
+  const ALLOWED_TABS = ["home", "free", "profile"];
+
   const setTab = useCallback((tabId) => {
+    const safe = ALLOWED_TABS.includes(tabId) ? tabId : "home";
     Haptic.select(); // ✅ NEW: haptic on tab switch
-    dispatch({ type: "SET_TAB", tab: tabId });
+    dispatch({ type: "SET_TAB", tab: safe });
   }, []);
 
   const openService = useCallback((service, isPremium) => {
@@ -365,23 +370,8 @@ function App() {
               onOpenService={openService}
             />
           )}
-          {tab === "premium" && (
-            <PremiumPage
-              t={str}
-              accent={accent}
-              isSubscribed={currentPlan !== "free"}
-              onOpenService={openService}
-              onGoTo={setTab}
-            />
-          )}
-          {tab === "plans" && (
-            <PlansPage
-              t={str}
-              accent={accent}
-              currentPlan={currentPlan}
-              onSubscribe={subscribe}
-            />
-          )}
+          {/* 1-Bosqich: Premium va Plans sahifalari vaqtincha o'chirilgan.
+              To'lov va premium xizmatlar tayyor bo'lganda qayta ulanadi. */}
           {tab === "profile" && (
             <ProfilePage
               t={str}

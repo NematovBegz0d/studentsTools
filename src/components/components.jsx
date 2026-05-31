@@ -201,11 +201,11 @@ const NAV_ICONS = {
 };
 
 function BottomNav({ tab, setTab, t, accent }) {
+  // 1-Bosqich: Premium va Plans tablari vaqtincha yashirilgan.
+  // Bepul xizmatlar mukammal ishlagandan keyin qayta yoqiladi.
   const tabs = [
     { id: "home", label: t.tabs.home },
     { id: "free", label: t.tabs.free },
-    { id: "premium", label: t.tabs.premium },
-    { id: "plans", label: t.tabs.plans },
     { id: "profile", label: t.tabs.profile },
   ];
 
@@ -233,7 +233,7 @@ function BottomNav({ tab, setTab, t, accent }) {
           WebkitBackdropFilter: "blur(28px) saturate(180%)",
           border: "0.5px solid var(--border-light)",
           display: "grid",
-          gridTemplateColumns: "repeat(5, 1fr)",
+          gridTemplateColumns: `repeat(${tabs.length}, 1fr)`,
           padding: "8px 6px",
         }}
       >

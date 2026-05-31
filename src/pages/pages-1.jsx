@@ -9,27 +9,24 @@ const { useState: u_S, useEffect: u_E, useMemo: u_M } = React;
 function HomePage({ t, accent, cardStyle, onOpenService, onGoTo, user }) {
   const fullName = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || t.studentRole;
   const firstName = user?.first_name || t.studentRole;
+  // 1-Bosqich: faqat bepul xizmatlar ko'rsatiladi. Premium soni "Tez kunda" deb qoldiriladi.
+  const freeCount = FREE_SERVICES.length;
   const stats = [
-    { label: t.stats.total,   value: '38',   fg: '#a78bfa' },
-    { label: t.stats.free,    value: '28',   fg: '#4ade80' },
-    { label: t.stats.premium, value: '10',   fg: '#fbbf24' },
-    { label: t.stats.users,   value: '12k+', fg: '#60a5fa' },
+    { label: t.stats.free,    value: String(freeCount), fg: '#4ade80' },
+    { label: t.stats.total,   value: String(freeCount), fg: '#a78bfa' },
+    { label: t.stats.users,   value: '12k+',            fg: '#60a5fa' },
   ];
 
-  const quickIds = ['referat', 'amaliy', 'imgs2pdf', 'translate'];
-  const quickItems = quickIds.map(id => {
-    const pIdx = PREMIUM_SERVICES.findIndex(p => p.id === id);
-    if (pIdx >= 0) {
-      const s = PREMIUM_SERVICES[pIdx];
-      return { ...s, isPremium: true, meta: t.p[id] };
-    }
-    const fIdx = FREE_SERVICES.findIndex(p => p.id === id);
-    const s = FREE_SERVICES[fIdx];
-    return { ...s, isPremium: false, meta: t.s[id] };
-  });
-
-  const aiUsed = 1;
-  const aiLimit = 3;
+  // Quick access — faqat bepul, har doim ishlaydigan xizmatlar.
+  const quickIds = ['imgs2pdf', 'translate', 'qr', 'pdftext'];
+  const quickItems = quickIds
+    .map(id => {
+      const fIdx = FREE_SERVICES.findIndex(p => p.id === id);
+      if (fIdx < 0) return null;
+      const s = FREE_SERVICES[fIdx];
+      return { ...s, isPremium: false, meta: t.s[id] };
+    })
+    .filter(Boolean);
 
   return (
     <div style={{ paddingBottom: 110 }}>
@@ -65,7 +62,7 @@ function HomePage({ t, accent, cardStyle, onOpenService, onGoTo, user }) {
       </div>
 
       {/* Stats grid */}
-      <div style={{ padding: '4px 18px 18px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+      <div style={{ padding: '4px 18px 18px', display: 'grid', gridTemplateColumns: `repeat(${stats.length}, 1fr)`, gap: 8 }}>
         {stats.map((s, i) => (
           <div key={i} style={{
             padding: '10px 8px',
@@ -83,43 +80,8 @@ function HomePage({ t, accent, cardStyle, onOpenService, onGoTo, user }) {
         ))}
       </div>
 
-      {/* Premium banner */}
-      <div style={{ padding: '0 18px 22px' }}>
-        <button
-          className="press"
-          onClick={() => onGoTo('plans')}
-          style={{
-            width: '100%', textAlign: 'left',
-            position: 'relative', overflow: 'hidden',
-            padding: '18px 18px', borderRadius: 22,
-            background: 'linear-gradient(120deg, #8b5cf6 0%, #6d28d9 45%, #3b82f6 100%)',
-            border: 'none', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 14,
-            font: 'inherit', color: '#fff',
-            boxShadow: '0 10px 30px rgba(139,92,246,0.30)',
-          }}
-        >
-          <div style={{ position: 'absolute', right: -30, top: -30, width: 140, height: 140, borderRadius: '50%', background: 'rgba(255,255,255,0.08)', pointerEvents: 'none' }} />
-          <div style={{ position: 'absolute', right: 30, bottom: -50, width: 80, height: 80, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }} />
-          <div style={{
-            width: 46, height: 46, borderRadius: 13,
-            background: 'rgba(255,255,255,0.18)', backdropFilter: 'blur(20px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0, position: 'relative',
-          }}>
-            <Icon name="sparkles" size={22} color="#fff" strokeWidth={1.8} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-            <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.2 }}>{t.bannerTitle}</div>
-            <div style={{ fontSize: 12, opacity: 0.85, marginTop: 3, textWrap: 'pretty' }}>{t.bannerSub}</div>
-          </div>
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: '50%', background: 'rgba(255,255,255,0.18)' }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-              <path d="M5 12h14M13 6l6 6-6 6" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-        </button>
-      </div>
+      {/* 1-Bosqich: Premium banner vaqtincha o'chirilgan.
+          To'lov tizimi va premium xizmatlar tayyor bo'lganda qaytariladi. */}
 
       {/* Quick access */}
       <div style={{ padding: '0 18px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -172,32 +134,8 @@ function HomePage({ t, accent, cardStyle, onOpenService, onGoTo, user }) {
         ))}
       </div>
 
-      {/* AI limit */}
-      <div style={{ padding: '0 18px 22px' }}>
-        <div style={{
-          padding: 16, borderRadius: 18,
-          background: 'var(--bg-surface-1)',
-          border: '0.5px solid var(--border-light)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
-            <div style={{
-              width: 32, height: 32, borderRadius: 9,
-              background: 'rgba(139,92,246,0.16)', border: '0.5px solid rgba(139,92,246,0.28)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-            }}>
-              <Icon name="cpu" size={16} color="#a78bfa" strokeWidth={1.8} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: 'var(--text-primary)', fontSize: 13.5, fontWeight: 600 }}>{t.aiLimitTitle}</div>
-              <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>{t.aiLimitSub}</div>
-            </div>
-            <div style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-              {aiUsed}<span style={{ color: 'var(--text-faint)' }}>/{aiLimit}</span>
-            </div>
-          </div>
-          <ProgressBar value={aiUsed} max={aiLimit} accent="#8b5cf6" height={6} />
-        </div>
-      </div>
+      {/* 1-Bosqich: AI limit widgeti vaqtincha o'chirilgan
+          (AI/premium xizmatlar tayyor bo'lganda qayta yoqiladi). */}
 
       {/* Recent activity */}
       <div style={{ padding: '0 18px 12px' }}>

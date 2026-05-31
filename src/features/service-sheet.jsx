@@ -846,6 +846,96 @@ function ResultImage({ t, accent, result, onAgain, onToast }) {
   );
 }
 
+// ─── ErrorState ───────────────────────────────────────────────────
+// 1-Bosqich: Xato holati uchun alohida, foydalanuvchi-friendly UI.
+// Muvaffaqiyatli natijadan (yashil ✓) aniq ajralib turadi va "Qayta urinish"
+// hamda "Yopish" tugmalarini taklif qiladi.
+function ErrorState({ t, accent, message, onAgain, onClose }) {
+  return (
+    <div
+      role="alert"
+      aria-live="assertive"
+      style={{
+        padding: "32px 8px 8px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 16,
+      }}
+    >
+      <div
+        aria-hidden="true"
+        style={{
+          width: 72,
+          height: 72,
+          borderRadius: "50%",
+          background: "rgba(239,68,68,0.14)",
+          border: "1px solid rgba(239,68,68,0.30)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M12 8v5M12 17h.01"
+            stroke="#ef4444"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+          />
+          <circle
+            cx="12"
+            cy="12"
+            r="9"
+            stroke="#ef4444"
+            strokeWidth="2"
+            fill="none"
+          />
+        </svg>
+      </div>
+      <div
+        style={{
+          color: "var(--text-primary)",
+          fontSize: 17,
+          fontWeight: 700,
+          textAlign: "center",
+        }}
+      >
+        Xatolik yuz berdi
+      </div>
+      <div
+        style={{
+          color: "var(--text-secondary)",
+          fontSize: 13.5,
+          lineHeight: 1.5,
+          textAlign: "center",
+          padding: "0 12px",
+          maxWidth: 420,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+        }}
+      >
+        {message}
+      </div>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          width: "100%",
+          marginTop: 8,
+        }}
+      >
+        <Button variant="secondary" full onClick={onClose}>
+          {t.sheetCancel || "Yopish"}
+        </Button>
+        <Button variant="primary" accent={accent} full onClick={onAgain}>
+          {t.sheetAgain || "Qayta urinish"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── SuccessRing ──────────────────────────────────────────────────
 function SuccessRing() {
   return (
@@ -1447,9 +1537,10 @@ function ServiceSheet({
     try {
       const handler = window.SERVICE_HANDLERS?.[service.id];
       if (!handler) {
+        // Bu xizmat hali ulanmagan — foydalanuvchini chalg'itmasdan ochiq aytamiz.
         setResult({
           type: "text",
-          content: "⚠️ Bu xizmat tez kunda qo'shiladi.",
+          content: "🚧 Bu xizmat tez kunda qo'shiladi.",
         });
         setStep("done");
         return;
@@ -1475,12 +1566,13 @@ function ServiceSheet({
       window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("success");
     } catch (err) {
       console.error("[ServiceSheet]", err.message);
-      // ✅ FIX: User-friendly error message (err.message already sanitized in handlers)
+      // 1-Bosqich: xato holatini muvaffaqiyatdan aniq ajratamiz.
+      // Endi xato `step === "error"` bilan ko'rsatiladi (yashil "✓" emas,
+      // qizil ikonkali alohida sahifa). Bu UX/A11Y uchun zarur.
       setResult({
-        type: "text",
-        content: `❌ ${err.message || "Kutilmagan xato. Qayta urinib ko'ring."}`,
+        message: err?.message || "Kutilmagan xato. Iltimos, qayta urinib ko'ring.",
       });
-      setStep("done");
+      setStep("error");
       window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred("error");
     }
   }, [service, inputData, acceptText, serviceOpts, extraText, needsExtraText]);
@@ -1635,6 +1727,16 @@ function ServiceSheet({
 
       {step === "processing" && <Processing t={t} accent={accent} />}
 
+      {step === "error" && (
+        <ErrorState
+          t={t}
+          accent={accent}
+          message={result?.message || "Kutilmagan xato. Qayta urinib ko'ring."}
+          onAgain={reset}
+          onClose={onClose}
+        />
+      )}
+
       {step === "done" && result && (
         <>
           {result.type === "file" && (
@@ -1700,6 +1802,7 @@ Object.assign(window, {
   Processing,
   LockedState,
   SuccessRing,
+  ErrorState,
   ResultFile,
   ResultText,
   ResultWiki,

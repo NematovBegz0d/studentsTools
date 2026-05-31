@@ -735,10 +735,19 @@ async function cv({ opts = {} }) {
   };
 }
 
-// ─── Premium stubs ────────────────────────────────────────────────
+// ─── Premium stubs (1-Bosqich) ────────────────────────────────────
+// To'lov va premium xizmatlar hozircha ishga tushirilmagan.
+// Foydalanuvchini "fake premium UI" bilan chalg'itmaslik uchun har bir stub
+// shunchaki tushunarli "Tez kunda" matnini qaytaradi.
 
 function premiumStub() {
-  return Promise.resolve({ type: "premium" });
+  return Promise.resolve({
+    type: "text",
+    content:
+      "🚧 Bu xizmat tez kunda qo'shiladi.\n\n" +
+      "Hozircha biz bepul xizmatlarni yanada barqaror va tez ishlaydigan qilishga e'tibor qaratamiz. " +
+      "Premium xizmatlar tayyor bo'lganda sizga albatta xabar beramiz.",
+  });
 }
 
 // ─── Export ───────────────────────────────────────────────────────

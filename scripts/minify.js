@@ -23,7 +23,7 @@ const TERSER_OPTS = {
       "SERVICE_HANDLERS", "BACKEND_URL",
       // Components attached to window
       "ServiceSheet", "ServicePage", "Dropzone", "TextInputBox",
-      "Processing", "LockedState", "SuccessRing",
+      "Processing", "LockedState", "SuccessRing", "ErrorState",
       "ResultFile", "ResultText", "ResultWiki", "ResultImage",
       "Photo3x4Options", "Img2PdfOptions", "CVForm",
       "Img2PdfPro", "ImgCompressPro", "QrPro", "StatsPro",
