@@ -616,92 +616,179 @@ function DocxEditPro({ t, accent, onToast }) {
   }
 
   // ─── DONE ─────────────────────────────────────────────────────────
+  // Layout: natija vertikal o'rtada, tugmalar pastda — mobil-friendly
+  // "success" sahifa ko'rinishi.
   if (step === "done" && result) {
     return (
       <div
         style={{
-          padding: "32px 16px 16px",
+          minHeight: "70vh",
+          padding: "20px 16px 24px",
           display: "flex",
           flexDirection: "column",
-          alignItems: "center",
-          gap: 14,
+          boxSizing: "border-box",
         }}
       >
+        {/* Natija — vertikal markazda */}
         <div
-          aria-hidden="true"
           style={{
-            width: 64,
-            height: 64,
-            borderRadius: "50%",
-            background: "rgba(34,197,94,0.15)",
+            flex: 1,
             display: "flex",
+            flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
+            gap: 16,
+            padding: "16px 8px",
           }}
         >
-          <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
-            <path d="M5 12l5 5L20 7" stroke="#22c55e" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <div
+            aria-hidden="true"
+            style={{
+              width: 88,
+              height: 88,
+              borderRadius: "50%",
+              background: "rgba(34,197,94,0.14)",
+              border: "1px solid rgba(34,197,94,0.30)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: "0 8px 28px rgba(34,197,94,0.18)",
+            }}
+          >
+            <svg width="42" height="42" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M5 12l5 5L20 7"
+                stroke="#22c55e"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+          <div
+            style={{
+              color: "var(--text-primary)",
+              fontSize: 22,
+              fontWeight: 700,
+              letterSpacing: -0.3,
+              marginTop: 2,
+            }}
+          >
+            Tayyor!
+          </div>
+          <div
+            style={{
+              color: "var(--text-secondary)",
+              fontSize: 13.5,
+              textAlign: "center",
+              lineHeight: 1.5,
+              maxWidth: 320,
+            }}
+          >
+            {result.info}
+          </div>
+          {/* Fayl ma'lumoti */}
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 14px",
+              borderRadius: 99,
+              background: "var(--bg-surface-1)",
+              border: "0.5px solid var(--border-subtle)",
+              color: "var(--text-muted)",
+              fontSize: 11.5,
+              fontWeight: 500,
+              marginTop: 4,
+            }}
+          >
+            <span aria-hidden="true">📄</span>
+            <span
+              style={{
+                maxWidth: 220,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {result.filename}
+            </span>
+            <span style={{ color: "var(--text-faint)" }}>
+              {Math.max(1, Math.round(result.blob.size / 1024))} KB
+            </span>
+          </div>
         </div>
-        <div style={{ color: "var(--text-primary)", fontSize: 16, fontWeight: 700 }}>
-          Tayyor!
-        </div>
-        <div style={{ color: "var(--text-muted)", fontSize: 12.5, textAlign: "center" }}>
-          {result.info}
-        </div>
-        <div style={{ display: "flex", gap: 10, width: "100%", marginTop: 4 }}>
+
+        {/* Tugmalar — pastda */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              type="button"
+              onClick={reset}
+              style={{
+                flex: 1,
+                padding: "13px 14px",
+                borderRadius: 14,
+                background: "var(--bg-surface-2)",
+                border: "0.5px solid var(--border-medium)",
+                color: "var(--text-primary)",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Yana ishlash
+            </button>
+            <button
+              type="button"
+              onClick={() => _deDownload(result.blob, result.filename)}
+              style={{
+                flex: 1,
+                padding: "13px 14px",
+                borderRadius: 14,
+                background: accent || DE_ACCENT,
+                border: "none",
+                color: "#fff",
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: "pointer",
+                boxShadow: `0 6px 18px ${(accent || DE_ACCENT) + "40"}`,
+              }}
+            >
+              Yuklab olish
+            </button>
+          </div>
           <button
             type="button"
-            onClick={reset}
+            onClick={() => _deSendToBot(result.blob, result.filename, onToast)}
             style={{
-              flex: 1,
-              padding: "11px 14px",
-              borderRadius: 12,
-              background: "var(--bg-surface-2)",
-              border: "0.5px solid var(--border-medium)",
-              color: "var(--text-primary)",
-              fontSize: 13.5,
+              width: "100%",
+              padding: "12px 14px",
+              borderRadius: 14,
+              background: "var(--bg-surface-1)",
+              border: "0.5px solid var(--border-light)",
+              color: "var(--text-secondary)",
+              fontSize: 13,
               fontWeight: 600,
               cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
             }}
           >
-            Yana ishlash
-          </button>
-          <button
-            type="button"
-            onClick={() => _deDownload(result.blob, result.filename)}
-            style={{
-              flex: 1,
-              padding: "11px 14px",
-              borderRadius: 12,
-              background: accent || DE_ACCENT,
-              border: "none",
-              color: "#fff",
-              fontSize: 13.5,
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            Yuklab olish
+            <span aria-hidden="true">✈️</span>
+            Telegram botga yuborish
           </button>
         </div>
-        <button
-          type="button"
-          onClick={() => _deSendToBot(result.blob, result.filename, onToast)}
-          style={{
-            width: "100%",
-            padding: "10px 14px",
-            borderRadius: 12,
-            background: "var(--bg-surface-1)",
-            border: "0.5px solid var(--border-light)",
-            color: "var(--text-secondary)",
-            fontSize: 12.5,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          Telegram botga yuborish
-        </button>
       </div>
     );
   }

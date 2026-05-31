@@ -1075,6 +1075,79 @@ _DOCXEDIT_MAX_PAIRS = 50
 _DOCXEDIT_MAX_LEN = 500
 
 
+def _legacy_doc_to_docx_via_libreoffice(data: bytes) -> bytes:
+    """Eski .doc (1997-2003 Office formati) → .docx aylantiradi.
+
+    python-docx faqat `.docx` (ZIP-based) ni o'qiydi. Foydalanuvchi `.doc`
+    yuborsa, avval LibreOffice bilan jimgina `.docx` ga aylantiramiz, keyin
+    almashtirish ishlatamiz.
+    """
+    import subprocess
+    import shutil as _sh
+    import tempfile as _tf
+    from pathlib import Path
+
+    soffice = _sh.which("soffice") or _sh.which("libreoffice")
+    if not soffice:
+        raise RuntimeError(
+            "LibreOffice mavjud emas — .doc faylini avval .docx ga "
+            "qo'lda saqlang yoki bizning Word→PDF xizmatidan foydalaning."
+        )
+
+    with _office_convert_sem:
+        with _tf.TemporaryDirectory() as tmpdir:
+            input_path = os.path.join(tmpdir, "input.doc")
+            with open(input_path, "wb") as f:
+                f.write(data)
+
+            profile_dir = _tf.mkdtemp(prefix="lo_doctodocx_")
+            try:
+                env = os.environ.copy()
+                env["HOME"] = profile_dir
+                env.setdefault("SAL_USE_VCLPLUGIN", "svp")
+                env.setdefault("LC_ALL", "C.UTF-8")
+                profile_uri = Path(profile_dir).resolve().as_uri()
+
+                cmd = [
+                    soffice, "--headless", "--invisible", "--nodefault",
+                    "--nologo", "--nofirststartwizard", "--norestore",
+                    f"-env:UserInstallation={profile_uri}",
+                    "--convert-to", "docx",
+                    "--outdir", tmpdir, input_path,
+                ]
+                try:
+                    result = subprocess.run(
+                        cmd, env=env, capture_output=True,
+                        timeout=_OFFICE_CONVERT_TIMEOUT,
+                    )
+                except subprocess.TimeoutExpired:
+                    raise RuntimeError(
+                        f"LibreOffice .doc→.docx timeout {_OFFICE_CONVERT_TIMEOUT}s"
+                    )
+
+                if result.returncode != 0:
+                    stderr = (result.stderr or b"").decode(errors="replace")[:300]
+                    raise RuntimeError(
+                        f"LibreOffice .doc→.docx muvaffaqiyatsiz: rc={result.returncode}: {stderr}"
+                    )
+
+                # LibreOffice yaratgan .docx ni topamiz (nom kichik harf bilan keladi)
+                docx_path = None
+                for name in os.listdir(tmpdir):
+                    if name.lower().endswith(".docx"):
+                        docx_path = os.path.join(tmpdir, name)
+                        break
+                if not docx_path or not os.path.exists(docx_path):
+                    raise RuntimeError("LibreOffice .docx natija chiqarmadi")
+                if os.path.getsize(docx_path) < 100:
+                    raise RuntimeError("LibreOffice .docx natija bo'sh")
+
+                with open(docx_path, "rb") as f:
+                    return f.read()
+            finally:
+                _sh.rmtree(profile_dir, ignore_errors=True)
+
+
 @router.post("/api/docxedit")
 @limiter.limit("15/minute")
 async def docx_edit(
@@ -1098,6 +1171,47 @@ async def docx_edit(
     user_id = _get_user_id(request)
     try:
         data = await read_upload(file, "/api/docxedit")
+
+        # ── Format aniqlash: .doc bo'lsa avval .docx ga aylantirish ──
+        original_was_legacy_doc = False
+        if _looks_like_docx(data):
+            pass  # .docx — to'g'ridan-to'g'ri ishlatamiz
+        elif _looks_like_legacy_doc(data):
+            # python-docx eski .doc formatini o'qiy olmaydi.
+            # LibreOffice orqali jimgina .docx ga aylantiramiz.
+            original_was_legacy_doc = True
+            try:
+                loop = asyncio.get_running_loop()
+                data = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        _io_pool, _legacy_doc_to_docx_via_libreoffice, data
+                    ),
+                    timeout=float(_OFFICE_CONVERT_TIMEOUT + 10),
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(
+                    status_code=408,
+                    detail=(
+                        "Eski .doc faylni .docx ga aylantirish vaqti tugadi. "
+                        "Iltimos, faylni avval Word'da .docx sifatida saqlang."
+                    ),
+                )
+            except RuntimeError as e:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Eski .doc faylni aylantirib bo'lmadi: {str(e)[:160]}. "
+                        "Iltimos, faylni Word'da .docx sifatida saqlang va qayta yuklang."
+                    ),
+                )
+        else:
+            raise HTTPException(
+                status_code=415,
+                detail=(
+                    "Faqat .doc yoki .docx fayllar qabul qilinadi. "
+                    "Yuklangan fayl Word hujjati emas."
+                ),
+            )
 
         # ── Pairs ro'yxatini tayyorlash ──
         pairs_list: list = []
@@ -1166,6 +1280,8 @@ async def docx_edit(
             info_text = (
                 f"{len(pairs_list)} ta juftlik · jami {total_count} ta almashtirish"
             )
+        if original_was_legacy_doc:
+            info_text = f"{info_text} · .doc → .docx"
 
         logger.info(
             f"docxedit: {len(pairs_list)} pair(s), total={total_count}, "
