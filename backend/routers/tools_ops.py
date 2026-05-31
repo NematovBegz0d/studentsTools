@@ -38,10 +38,11 @@ async def send_file(
     filename: str    = Form(...),
     file: UploadFile = File(...),
 ):
+    # Auth FIRST — BOT_TOKEN-missing should not be discoverable by anonymous
+    # callers (info disclosure). 401 takes precedence over 503.
+    user_id = _get_user_id(request)
     if not BOT_TOKEN:
         raise HTTPException(status_code=503, detail="Bot sozlanmagan")
-
-    user_id = _get_user_id(request)
     data = await read_upload(file, "/api/send-file")
 
     t0 = time.time()

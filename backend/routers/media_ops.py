@@ -1363,10 +1363,12 @@ async def img_compress(
 @router.post("/api/bgremove")
 @limiter.limit("5/minute")
 async def bgremove(request: Request):
+    # Auth FIRST — heavy `from rembg import remove` below would raise
+    # ModuleNotFoundError on dev machines without rembg, bypassing auth.
+    user_id = _get_user_id(request)
     import base64
     from rembg import remove
     t0 = time.time()
-    user_id = _get_user_id(request)
     if not await acquire_user_ml_slot(user_id):
         raise HTTPException(status_code=429, detail="Parallel ML so'rov rad etildi — oldingi so'rov tugashini kuting")
     try:

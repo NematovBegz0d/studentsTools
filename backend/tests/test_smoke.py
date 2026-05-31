@@ -254,11 +254,15 @@ class TestTrackUsage:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestAuthFallback:
-    def test_x_user_id_rejected_in_production(self):
-        """Without ENV=development + ALLOW_INSECURE_AUTH=true, X-User-Id must 401."""
-        from shared import _get_user_id, ALLOW_INSECURE_AUTH
-        # conftest leaves env clean — fallback must be off.
-        assert ALLOW_INSECURE_AUTH is False
+    def test_x_user_id_rejected_in_production(self, monkeypatch):
+        """Without ENV=development + ALLOW_INSECURE_AUTH=true, X-User-Id must 401.
+
+        Forces ALLOW_INSECURE_AUTH=False at the module level — needed because
+        test_endpoints.py flips the flag on for its own dev-auth scenarios.
+        """
+        import shared
+        from shared import _get_user_id
+        monkeypatch.setattr(shared, "ALLOW_INSECURE_AUTH", False)
 
         # Fake a request with only X-User-Id (no initData).
         class _Req:
