@@ -29,6 +29,33 @@ function _mpAuthHeaders() {
   return h;
 }
 
+function _mpExtractError(j, status) {
+  if (!j || typeof j !== "object") return `Server xatosi (${status})`;
+  const raw = j.message ?? j.detail ?? j.error ?? j;
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) {
+    const parts = raw
+      .map((e) => {
+        if (!e) return "";
+        if (typeof e === "string") return e;
+        if (typeof e === "object") {
+          const loc = Array.isArray(e.loc) ? e.loc.join(".") : "";
+          const msg = e.msg || e.message || "";
+          return [loc, msg].filter(Boolean).join(": ");
+        }
+        return String(e);
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+  if (typeof raw === "object") {
+    if (raw.msg) return raw.msg;
+    if (raw.message) return raw.message;
+    try { return JSON.stringify(raw).slice(0, 240); } catch (_) {}
+  }
+  return `Server xatosi (${status})`;
+}
+
 function _mpDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -391,7 +418,7 @@ function MergePdfPro({ t, accent, onToast }) {
         let msg = `Server xatosi (${resp.status})`;
         try {
           const j = await resp.json();
-          msg = j.message || j.detail || msg;
+          msg = _mpExtractError(j, resp.status);
         } catch (_) {}
         throw new Error(msg);
       }

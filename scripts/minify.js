@@ -22,7 +22,8 @@ const TERSER_OPTS = {
       "React", "ReactDOM", "Telegram",
       "SERVICE_HANDLERS", "BACKEND_URL",
       // Components attached to window
-      "ServiceSheet", "ServicePage", "Dropzone", "TextInputBox",
+      "ServiceSheet", "ServicePage", "ServiceErrorBoundary",
+      "Dropzone", "TextInputBox",
       "Processing", "LockedState", "SuccessRing", "ErrorState",
       "ResultFile", "ResultText", "ResultWiki", "ResultImage",
       "Photo3x4Options", "Img2PdfOptions", "CVForm",

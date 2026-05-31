@@ -1305,6 +1305,118 @@ const SERVICE_HOW_TO = {
   unzip:       ["ZIP faylni yuklang", "Boshlash ni bosing", "Fayl nomlari ro'yxati va yuklab olish imkoniyati"],
 };
 
+// ─── ServiceErrorBoundary ─────────────────────────────────────────
+// Sahifa darajasidagi error boundary. Bitta xizmat komponentida xato
+// bo'lsa, butun ilova yiqilmaydi — faqat shu sahifa "Xato" ni ko'rsatadi
+// va foydalanuvchi "Orqaga" tugmasi bilan boshqa xizmatga o'tishi mumkin.
+class ServiceErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, errorMsg: "" };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, errorMsg: (error && error.message) || String(error) };
+  }
+  componentDidCatch(error, info) {
+    console.error("[ServiceErrorBoundary]", error, info);
+  }
+  componentDidUpdate(prevProps) {
+    // Yangi service ochilganda bo'sh state'ga qaytarish — eski xato qolib ketmasin.
+    if (prevProps.serviceKey !== this.props.serviceKey && this.state.hasError) {
+      this.setState({ hasError: false, errorMsg: "" });
+    }
+  }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement(
+        "div",
+        {
+          role: "alert",
+          style: {
+            padding: "40px 24px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 14,
+            color: "var(--text-primary)",
+          },
+        },
+        [
+          React.createElement(
+            "div",
+            {
+              key: "ic",
+              "aria-hidden": "true",
+              style: {
+                width: 64,
+                height: 64,
+                borderRadius: "50%",
+                background: "rgba(239,68,68,0.14)",
+                border: "1px solid rgba(239,68,68,0.30)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 28,
+              },
+            },
+            "⚠️",
+          ),
+          React.createElement(
+            "div",
+            { key: "t", style: { fontSize: 16, fontWeight: 700 } },
+            "Xizmatda xato yuz berdi",
+          ),
+          React.createElement(
+            "div",
+            {
+              key: "m",
+              style: {
+                fontSize: 13,
+                color: "var(--text-secondary)",
+                textAlign: "center",
+                maxWidth: 360,
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              },
+            },
+            this.state.errorMsg || "Komponent yuklanmadi.",
+          ),
+          React.createElement(
+            "div",
+            {
+              key: "h",
+              style: { fontSize: 11.5, color: "var(--text-faint)", textAlign: "center" },
+            },
+            "Iltimos, boshqa xizmatga o'ting yoki ilovani qayta yuklang.",
+          ),
+          React.createElement(
+            "button",
+            {
+              key: "b",
+              type: "button",
+              onClick: () => this.props.onBack?.(),
+              style: {
+                marginTop: 6,
+                padding: "11px 22px",
+                borderRadius: 12,
+                background: "var(--accent, #8b5cf6)",
+                color: "#fff",
+                border: "none",
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: "pointer",
+              },
+            },
+            "← Orqaga",
+          ),
+        ],
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ─── ServicePage (full-screen page with slide-in animation) ───────
 function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPlans }) {
   const [mounted, setMounted] = useS(false);
@@ -1441,21 +1553,24 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
           <div style={{ height: "0.5px", background: "var(--border-subtle)", margin: "16px 0 0" }} />
         )}
 
-        {/* Client-side xizmatlar → ixtisoslashgan komponent; aks holda — standart ServiceSheet */}
-        {isImg2PdfPro ? (
-          <ClientComp t={t} accent={accent} onToast={onToast} />
-        ) : (
-          <ServiceSheet
-            service={service}
-            isPremium={isPremium}
-            t={t}
-            accent={accent}
-            embedded={true}
-            onClose={onBack}
-            onToast={onToast}
-            onGoToPlans={onGoToPlans}
-          />
-        )}
+        {/* Client-side xizmatlar → ixtisoslashgan komponent; aks holda — standart ServiceSheet.
+            Hammasi ServiceErrorBoundary ichida — bitta komponent xatosi butun App'ni yiqitmaydi. */}
+        <ServiceErrorBoundary serviceKey={service.id} onBack={onBack}>
+          {isImg2PdfPro ? (
+            <ClientComp t={t} accent={accent} onToast={onToast} />
+          ) : (
+            <ServiceSheet
+              service={service}
+              isPremium={isPremium}
+              t={t}
+              accent={accent}
+              embedded={true}
+              onClose={onBack}
+              onToast={onToast}
+              onGoToPlans={onGoToPlans}
+            />
+          )}
+        </ServiceErrorBoundary>
       </div>
     </div>
   );
@@ -1801,6 +1916,7 @@ function ServiceSheet({
 Object.assign(window, {
   ServiceSheet,
   ServicePage,
+  ServiceErrorBoundary,
   Dropzone,
   TextInputBox,
   Processing,

@@ -30,6 +30,36 @@ function _deAuthHeaders() {
   return h;
 }
 
+// Pydantic 422 detail Array, generic object, yoki oddiy string bo'lishi mumkin.
+// Hammasini foydalanuvchi-friendly bitta matnga aylantiramiz, "[object Object]"
+// kabi chiqishlarni oldini olamiz.
+function _deExtractError(j, status) {
+  if (!j || typeof j !== "object") return `Server xatosi (${status})`;
+  const raw = j.message ?? j.detail ?? j.error ?? j;
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) {
+    const parts = raw
+      .map((e) => {
+        if (!e) return "";
+        if (typeof e === "string") return e;
+        if (typeof e === "object") {
+          const loc = Array.isArray(e.loc) ? e.loc.join(".") : "";
+          const msg = e.msg || e.message || "";
+          return [loc, msg].filter(Boolean).join(": ");
+        }
+        return String(e);
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+  if (typeof raw === "object") {
+    if (raw.msg) return raw.msg;
+    if (raw.message) return raw.message;
+    try { return JSON.stringify(raw).slice(0, 240); } catch (_) {}
+  }
+  return `Server xatosi (${status})`;
+}
+
 function _deDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -427,6 +457,13 @@ function DocxEditPro({ t, accent, onToast }) {
       form.append("file", file);
       form.append("pairs", JSON.stringify(validPairs));
       form.append("case_sensitive", caseSensitive ? "true" : "false");
+      // Orqaga moslik: eski backend faqat find/replace qabul qiladi.
+      // Birinchi juftlikni shu yo'l bilan ham yuboramiz — eski backend ham,
+      // yangisi ham ishlasin. Yangi backend pairs'ni ustuvor sanaydi.
+      if (validPairs[0]) {
+        form.append("find", validPairs[0].find || "");
+        form.append("replace", validPairs[0].replace || "");
+      }
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 60000);
@@ -447,8 +484,15 @@ function DocxEditPro({ t, accent, onToast }) {
         let msg = `Server xatosi (${resp.status})`;
         try {
           const j = await resp.json();
-          msg = j.message || j.detail || msg;
+          msg = _deExtractError(j, resp.status);
         } catch (_) {}
+        // 422 (Pydantic validation) — backend hali eski versiyada bo'lsa,
+        // sodda tushuntirish beramiz.
+        if (resp.status === 422 && /find|replace/i.test(msg)) {
+          msg =
+            "Server hali eski versiyada. Iltimos, biroz keyin urinib ko'ring " +
+            "(backend yangilanmoqda).";
+        }
         throw new Error(msg);
       }
 
