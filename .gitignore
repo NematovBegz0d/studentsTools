@@ -21,10 +21,14 @@ htmlcov/
 
 # Backend runtime caches (downloaded model files)
 backend/__pycache__/
+backend/tests/__pycache__/
 backend/*.pyc
 backend/u2net.onnx
 backend/u2net_human_seg.onnx
 backend/.cache/
+big.bin
+tiny.pdf
+
 
 # Local SQLite (dev only)
 *.db
