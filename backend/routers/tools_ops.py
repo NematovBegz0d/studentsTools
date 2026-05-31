@@ -827,7 +827,7 @@ async def make_cert(request: Request):
         except Exception as _e:
             logger.warning(f"cert DB save xato: {_e}")
 
-        base_url   = os.environ.get("BACKEND_URL", "https://studentstools-backend.up.railway.app")
+        base_url   = os.environ.get("BACKEND_URL", "https://studenttools-production.up.railway.app")
         verify_url = f"{base_url}/api/cert/verify/{cert_id}"
 
         loop = asyncio.get_running_loop()

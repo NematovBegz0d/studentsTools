@@ -11,7 +11,7 @@
 
 "use strict";
 
-const BACKEND_URL = "https://studentstools-backend.up.railway.app";
+const BACKEND_URL = "https://studenttools-production.up.railway.app";
 
 // ─── File size limits ─────────────────────────────────────────────
 // ✅ NEW: Plan-based limits (enforced client-side first)
