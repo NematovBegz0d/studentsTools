@@ -460,6 +460,8 @@ async function copyToClipboard(text) {
 }
 
 // ─── ResultFile ───────────────────────────────────────────────────
+// Yangi "Tayyor" UI: natija vertikal markazda, 3 tugma pastda
+// (DocxEditPro/MergePdfPro bilan bir xil ko'rinish).
 function ResultFile({ t, accent, result, onAgain, onClose, onToast }) {
   const [sending, setSending] = useS(false);
 
@@ -474,80 +476,186 @@ function ResultFile({ t, accent, result, onAgain, onClose, onToast }) {
     onToast?.(t.sheetDownloaded || "Yuklandi ✓");
   }, [result, t, onToast]);
 
-  const fileSizeMB = result.blob?.size
-    ? (result.blob.size / 1024 / 1024).toFixed(2)
+  const fileSizeKB = result.blob?.size
+    ? Math.max(1, Math.round(result.blob.size / 1024))
     : null;
 
   return (
     <div
       style={{
+        minHeight: "70vh",
+        padding: "20px 0 24px",
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
-        gap: 14,
-        padding: "4px 0 4px",
+        boxSizing: "border-box",
       }}
     >
-      <SuccessRing />
-      <div style={{ textAlign: "center" }}>
+      {/* Natija — vertikal markazda */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 16,
+          padding: "16px 8px",
+        }}
+      >
         <div
+          aria-hidden="true"
           style={{
-            color: "var(--text-primary)",
-            fontSize: 17,
-            fontWeight: 700,
+            width: 88,
+            height: 88,
+            borderRadius: "50%",
+            background: "rgba(34,197,94,0.14)",
+            border: "1px solid rgba(34,197,94,0.30)",
+            boxShadow: "0 8px 28px rgba(34,197,94,0.18)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          {t.sheetDone || t.sheetReady}
+          <svg width="42" height="42" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M5 12l5 5L20 7"
+              stroke="#22c55e"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </div>
         <div
           style={{
-            color: "var(--text-muted)",
-            fontSize: 12.5,
-            marginTop: 4,
-            fontFamily: "monospace",
-            wordBreak: "break-all",
+            color: "var(--text-primary)",
+            fontSize: 22,
+            fontWeight: 700,
+            letterSpacing: -0.3,
           }}
         >
-          📎 {result.filename}
-          {fileSizeMB && <span> · {fileSizeMB} MB</span>}
+          {t.sheetDone || t.sheetReady || "Tayyor!"}
         </div>
         {result.info && (
           <div
             style={{
-              marginTop: 8,
-              color: "#4ade80",
-              fontSize: 12.5,
-              fontWeight: 600,
-              background: "rgba(34,197,94,0.12)",
-              padding: "6px 12px",
-              borderRadius: 8,
-              display: "inline-block",
+              color: "var(--text-secondary)",
+              fontSize: 13.5,
+              textAlign: "center",
+              lineHeight: 1.5,
+              maxWidth: 320,
             }}
           >
             {result.info}
           </div>
         )}
+        {/* Fayl chip */}
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 14px",
+            borderRadius: 99,
+            background: "var(--bg-surface-1)",
+            border: "0.5px solid var(--border-subtle)",
+            color: "var(--text-muted)",
+            fontSize: 11.5,
+            fontWeight: 500,
+            marginTop: 4,
+          }}
+        >
+          <span aria-hidden="true">📎</span>
+          <span
+            style={{
+              maxWidth: 220,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {result.filename}
+          </span>
+          {fileSizeKB && (
+            <span style={{ color: "var(--text-faint)" }}>{fileSizeKB} KB</span>
+          )}
+        </div>
       </div>
-      <div style={{ display: "flex", gap: 8, width: "100%", flexWrap: "wrap" }}>
-        <Button variant="secondary" onClick={onAgain} style={{ flex: 1 }}>
-          {t.sheetAgain}
-        </Button>
-        <Button
-          variant="secondary"
+
+      {/* Tugmalar — pastda */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            type="button"
+            onClick={onAgain}
+            style={{
+              flex: 1,
+              padding: "13px 14px",
+              borderRadius: 14,
+              background: "var(--bg-surface-2)",
+              border: "0.5px solid var(--border-medium)",
+              color: "var(--text-primary)",
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            {t.sheetAgain}
+          </button>
+          <button
+            type="button"
+            onClick={download}
+            style={{
+              flex: 1,
+              padding: "13px 14px",
+              borderRadius: 14,
+              background: accent || "#8b5cf6",
+              border: "none",
+              color: "#fff",
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: "pointer",
+              boxShadow: `0 6px 18px ${(accent || "#8b5cf6") + "40"}`,
+            }}
+          >
+            {t.sheetDownload}
+          </button>
+        </div>
+        <button
+          type="button"
           onClick={handleSendToBot}
           disabled={sending}
-          style={{ flex: 1 }}
+          style={{
+            width: "100%",
+            padding: "12px 14px",
+            borderRadius: 14,
+            background: "var(--bg-surface-1)",
+            border: "0.5px solid var(--border-light)",
+            color: "var(--text-secondary)",
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: sending ? "default" : "pointer",
+            opacity: sending ? 0.6 : 1,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+          }}
         >
-          {sending ? <Spinner size={16} color="var(--text-muted)" /> : "📨"}
-        </Button>
-        <Button
-          variant="primary"
-          accent={accent}
-          onClick={download}
-          style={{ flex: 1 }}
-        >
-          {t.sheetDownload}
-        </Button>
+          {sending ? (
+            <Spinner size={14} color="var(--text-muted)" />
+          ) : (
+            <span aria-hidden="true">✈️</span>
+          )}
+          Telegram botga yuborish
+        </button>
       </div>
     </div>
   );
@@ -569,15 +677,75 @@ function ResultText({ t, accent, result, onAgain, onClose, onToast }) {
   }, [result.content, t, onToast]);
 
   const charCount = result.content?.length ?? 0;
+  // Xato natijasini (handler'lardan kelgan "❌ ..." yoki "🚧 ..." matn)
+  // success ko'rinishida ko'rsatmaslik uchun tekshiramiz.
+  const isError = /^(\s)*(❌|⚠️|🚧)/.test(result.content || "");
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {/* Header */}
+    <div
+      style={{
+        minHeight: "70vh",
+        padding: "12px 0 24px",
+        display: "flex",
+        flexDirection: "column",
+        boxSizing: "border-box",
+      }}
+    >
+      {/* Yashil ✓ + "Tayyor" sarlavhasi (xato bo'lmasa) */}
+      {!isError && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 10,
+            marginBottom: 14,
+          }}
+        >
+          <div
+            aria-hidden="true"
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: "50%",
+              background: "rgba(34,197,94,0.14)",
+              border: "1px solid rgba(34,197,94,0.30)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: "0 6px 20px rgba(34,197,94,0.15)",
+            }}
+          >
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M5 12l5 5L20 7"
+                stroke="#22c55e"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+          <div
+            style={{
+              color: "var(--text-primary)",
+              fontSize: 18,
+              fontWeight: 700,
+              letterSpacing: -0.2,
+            }}
+          >
+            {t.sheetDone || t.sheetReady || "Tayyor!"}
+          </div>
+        </div>
+      )}
+
+      {/* Natija sarlavha + belgi soni */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
+          marginBottom: 8,
         }}
       >
         <div
@@ -596,13 +764,14 @@ function ResultText({ t, accent, result, onAgain, onClose, onToast }) {
         </div>
       </div>
 
-      {/* Content */}
+      {/* Matn natija — flex-grow */}
       <div
         role="textbox"
         aria-readonly="true"
         aria-multiline="true"
         aria-label="Natija matni"
         style={{
+          flex: 1,
           background: "var(--bg-surface-1)",
           border: "0.5px solid var(--border-subtle)",
           borderRadius: 14,
@@ -610,29 +779,61 @@ function ResultText({ t, accent, result, onAgain, onClose, onToast }) {
           color: "var(--text-primary)",
           fontSize: 13.5,
           lineHeight: 1.55,
-          maxHeight: 220,
+          minHeight: 140,
+          maxHeight: 360,
           overflowY: "auto",
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           userSelect: "text",
+          marginBottom: 14,
         }}
       >
         {result.content}
       </div>
 
-      {/* Actions */}
-      <div style={{ display: "flex", gap: 10 }}>
-        <Button variant="secondary" full onClick={onAgain}>
-          {t.sheetAgain}
-        </Button>
-        <Button
-          variant="primary"
-          accent={copied ? "#22c55e" : accent}
-          full
-          onClick={handleCopy}
+      {/* Tugmalar — pastda */}
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          flexShrink: 0,
+        }}
+      >
+        <button
+          type="button"
+          onClick={onAgain}
+          style={{
+            flex: 1,
+            padding: "13px 14px",
+            borderRadius: 14,
+            background: "var(--bg-surface-2)",
+            border: "0.5px solid var(--border-medium)",
+            color: "var(--text-primary)",
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
         >
-          {copied ? "✓ " + (t.sheetCopied || "Nusxalandi") : t.sheetCopy}
-        </Button>
+          {t.sheetAgain}
+        </button>
+        <button
+          type="button"
+          onClick={handleCopy}
+          style={{
+            flex: 1,
+            padding: "13px 14px",
+            borderRadius: 14,
+            background: copied ? "#22c55e" : (accent || "#8b5cf6"),
+            border: "none",
+            color: "#fff",
+            fontSize: 14,
+            fontWeight: 700,
+            cursor: "pointer",
+            boxShadow: `0 6px 18px ${(copied ? "#22c55e" : (accent || "#8b5cf6")) + "40"}`,
+          }}
+        >
+          {copied ? "✓ " + (t.sheetCopied || "Nusxalandi") : "📋 " + t.sheetCopy}
+        </button>
       </div>
     </div>
   );
@@ -1420,14 +1621,23 @@ class ServiceErrorBoundary extends React.Component {
 // ─── ServicePage (full-screen page with slide-in animation) ───────
 function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPlans }) {
   const [mounted, setMounted] = useS(false);
+  // ServiceSheet o'z step holatini bizga aytadi — "Qanday ishlaydi" ni
+  // faqat input bosqichida ko'rsatish uchun.
+  const [sheetStep, setSheetStep] = useS("input");
 
   useE(() => {
     const id = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(id);
   }, []);
 
+  // Yangi xizmat ochilganda step'ni tiklash
+  useE(() => {
+    setSheetStep("input");
+  }, [service?.id]);
+
   const meta = isPremium ? t.p?.[service.id] : t.s?.[service.id];
   const howTo = SERVICE_HOW_TO[service.id] || [];
+  const showHowTo = sheetStep === "input"; // input bo'lmasa yashirin
   // Ixtisoslashgan komponentlar — har biri o'z UI'sini to'liq render qiladi va
   // generik ServiceSheet'ni chetlab o'tadi. Ba'zilari client-side (jsPDF,
   // browser crypto), boshqalari maxsus UI bilan backend'ga so'rov yuboradi
@@ -1443,6 +1653,8 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
     password:    window.PasswordPro,
     docxedit:    window.DocxEditPro,
     mergepdf:    window.MergePdfPro,
+    age:         window.AgeCalculatorPro,
+    math:        window.MathPro,
   };
   // isImg2PdfPro: endi barcha client-side xizmatlarni qamrab oladi (nom orqaga mos saqlanadi)
   const isImg2PdfPro = !isPremium && service.id in _clientComps && !!_clientComps[service.id];
@@ -1506,8 +1718,9 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
       {/* Scrollable body */}
       <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
 
-        {/* How-to card — client-side imgs2pdf da ko'rsatilmaydi (alohida UI) */}
-        {howTo.length > 0 && !isImg2PdfPro && (
+        {/* How-to card — faqat input bosqichida ko'rinadi.
+            Client-side Pro komponentlarda umuman ko'rinmaydi (ularning o'z UI'si bor). */}
+        {howTo.length > 0 && !isImg2PdfPro && showHowTo && (
           <div
             style={{
               margin: "16px 16px 0",
@@ -1548,8 +1761,8 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
           </div>
         )}
 
-        {/* Divider */}
-        {!isImg2PdfPro && (
+        {/* Divider — faqat howTo ko'rsatilganda */}
+        {!isImg2PdfPro && showHowTo && howTo.length > 0 && (
           <div style={{ height: "0.5px", background: "var(--border-subtle)", margin: "16px 0 0" }} />
         )}
 
@@ -1568,6 +1781,7 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
               onClose={onBack}
               onToast={onToast}
               onGoToPlans={onGoToPlans}
+              onStepChange={setSheetStep}
             />
           )}
         </ServiceErrorBoundary>
@@ -1608,8 +1822,13 @@ function ServiceSheet({
   onToast,
   onGoToPlans,
   embedded = false,
+  onStepChange,
 }) {
   const [step, setStep] = useS(isPremium ? "locked" : "input");
+  // Step o'zgarganda parent ServicePage'ga xabar beramiz (howTo yashirish uchun)
+  useE(() => {
+    onStepChange?.(step);
+  }, [step, onStepChange]);
   const [inputData, setInputData] = useS(null);
   const [hasInput, setHasInput] = useS(false);
   const [result, setResult] = useS(null);

@@ -20,8 +20,10 @@ const FREE_SERVICES = [
   { id: 'watermark', cat: 'pdf',  icon: '💧', new: false, ai: false, accept: '.pdf' },
   { id: 'imgcompress', cat: 'file', icon: '🗜️', new: false, ai: false, accept: '.jpg,.png' },
   { id: 'translit', cat: 'text',   icon: '🔤', new: false, ai: false, input: 'text' },
-  // Matematika (1)
+  // Matematika
   { id: 'stats',    cat: 'math',   icon: '📐', new: true,  ai: false, input: 'text' },
+  { id: 'math',     cat: 'math',   icon: '🧮', new: true,  ai: false, input: 'form' },
+  { id: 'age',      cat: 'plan',   icon: '🎂', new: true,  ai: false, input: 'form' },
   // Matn va Ma'lumot (5)
   { id: 'translate', cat: 'text',  icon: '🌐', new: false, ai: false, input: 'text' },
   { id: 'wiki',      cat: 'text',  icon: '📖', new: false, ai: false, input: 'text' },
@@ -173,6 +175,8 @@ const I18N = {
       imgcompress: { name: 'Rasm siqish',         desc: 'Rasm hajmini kichraytirish' },
       translit:    { name: 'Lotin ↔ Kirill',      desc: 'O\'zbek matnini transliteratsiya' },
       stats:       { name: 'Statistika',          desc: 'O\'rta, mediana, dispersiya' },
+      math:        { name: 'Matematika',          desc: 'Geometriya, trigonometriya, algebra' },
+      age:         { name: 'Yosh va sana',        desc: 'Yoshingizni hisoblash, kelajak sanasigacha qolgan vaqt' },
       translate:   { name: 'Tarjima (Google)',    desc: '100+ tilga avtomatik tarjima' },
       wiki:        { name: 'Wikipedia',           desc: 'Maqola izlash va o\'qish' },
       readtime:    { name: 'O\'qish vaqti',       desc: 'Matnni o\'qish uchun vaqt' },

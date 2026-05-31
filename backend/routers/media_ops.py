@@ -669,10 +669,24 @@ async def xlsx_to_pdf(request: Request, file: UploadFile = File(...)):
 
 # ─── PPTX Compress ────────────────────────────────────────────────────────────
 
-_PPTX_MAX_DIM = 1920
+_PPTX_MAX_DIM = 1280  # 1920 -> 1280 (aggressiv kichraytirish — taqdimot uchun yetarli)
+_PPTX_MIN_DIM = 800   # juda kichraytirib yubormaslik uchun
 
 
 def _do_compresspptx(data: bytes) -> tuple:
+    """PPTX ichidagi rasmlarni kuchli siqish.
+
+    Avvalgi versiyada ko'p hollarda 0% siqish chiqardi, chunki:
+      - Quality threshold (65-82) juda yuqori edi
+      - PNG ni hech qachon JPEG'ga aylantirmasdi (alfa kanal bo'lmasa ham)
+      - 2 MB dan kichik rasmlar 82% quality bilan kichraymasdi
+
+    Yangi yondashuv:
+      - Max o'lcham 1280px (1920 emas) — slayd uchun yetarli
+      - JPEG quality 60 (default) — ko'rinish farqi minimal, hajm sezilarli
+      - Shaffof bo'lmagan PNG larni JPEG ga aylantiramiz (kuchli siqish)
+      - Shaffof PNG larni pngquant kabi optimize qilamiz
+    """
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE
     from pptx.oxml.ns import qn
@@ -680,6 +694,7 @@ def _do_compresspptx(data: bytes) -> tuple:
 
     orig_size  = len(data)
     compressed = 0
+    skipped_small = 0
 
     prs = Presentation(io.BytesIO(data))
     for slide in prs.slides:
@@ -688,30 +703,58 @@ def _do_compresspptx(data: bytes) -> tuple:
                 continue
             try:
                 img_blob = shape.image.blob
-                img_ext  = shape.image.ext.lower()
+                img_ext  = (shape.image.ext or "").lower()
+                # Juda kichik rasmlarni qoldiramiz (ikonkalar)
+                if len(img_blob) < 8 * 1024:
+                    skipped_small += 1
+                    continue
+
                 with Image.open(io.BytesIO(img_blob)) as img:
-                    if max(img.width, img.height) > _PPTX_MAX_DIM:
-                        ratio   = _PPTX_MAX_DIM / max(img.width, img.height)
-                        resized = img.resize(
-                            (int(img.width * ratio), int(img.height * ratio)),
-                            Image.LANCZOS,
-                        )
+                    # Shaffof PNG mi?
+                    has_alpha = img.mode in ("RGBA", "LA") or (
+                        img.mode == "P" and "transparency" in img.info
+                    )
+
+                    # O'lchamni kichraytiramiz — 1280px gacha
+                    w, h = img.size
+                    if max(w, h) > _PPTX_MAX_DIM:
+                        ratio = _PPTX_MAX_DIM / max(w, h)
+                        new_w = max(_PPTX_MIN_DIM, int(w * ratio))
+                        new_h = max(_PPTX_MIN_DIM, int(h * ratio))
+                        resized = img.resize((new_w, new_h), Image.LANCZOS)
                     else:
-                        resized = img
+                        resized = img.copy()
+
+                    # Quality strategiyasi — kichikroq rasm uchun kamroq quality
                     if len(img_blob) > 2 * 1024 * 1024:
-                        quality = 65
+                        quality = 55
                     elif len(img_blob) > 512 * 1024:
-                        quality = 72
+                        quality = 60
                     else:
-                        quality = 82
+                        quality = 65
+
                     buf = io.BytesIO()
-                    if resized.mode == "RGBA" or img_ext in ("png", "gif"):
-                        resized.save(buf, format="PNG", optimize=True)
+                    if has_alpha:
+                        # Shaffof PNG — RGBA saqlaymiz, optimize qilamiz
+                        if resized.mode != "RGBA":
+                            resized = resized.convert("RGBA")
+                        resized.save(buf, format="PNG", optimize=True, compress_level=9)
                     else:
-                        resized.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True)
+                        # Shaffof emas — har holda JPEG'ga aylantiramiz
+                        # (PNG bo'lsa ham — kuchli siqish)
+                        if resized.mode != "RGB":
+                            resized = resized.convert("RGB")
+                        resized.save(buf, format="JPEG", quality=quality,
+                                    optimize=True, progressive=True)
                     candidate = buf.getvalue()
+
                     if resized is not img:
-                        resized.close()
+                        try:
+                            resized.close()
+                        except Exception:
+                            pass
+
+                # Faqat hajm kamaygan bo'lsa o'zgartiramiz
                 if len(candidate) < len(img_blob):
                     blip  = shape.element.blipFill.blip
                     rId   = blip.get(qn("r:embed"))
@@ -728,7 +771,11 @@ def _do_compresspptx(data: bytes) -> tuple:
     if len(out_bytes) >= orig_size:
         out_bytes = data
     saved = max(0, round((1 - len(out_bytes) / orig_size) * 100))
-    info  = f"{compressed} ta rasm siqildi, {saved}% kichiklashdi"
+    if compressed == 0 and skipped_small > 0:
+        info = (f"{skipped_small} ta rasm juda kichik edi (ikonkalar), "
+                "siqilmadi. PPTX hajmi shu sababli kamaymadi.")
+    else:
+        info = f"{compressed} ta rasm siqildi · {saved}% kichraydi"
     return out_bytes, info, saved
 
 
@@ -1005,12 +1052,23 @@ async def bgremove(request: Request):
 # ─── OCR ──────────────────────────────────────────────────────────────────────
 
 def _preprocess_for_ocr(img):
+    """OCR oldidan rasm preprocessing — yaxshi natija uchun zarur.
+
+    Bosqichlar:
+      1) EXIF orientation tuzatish
+      2) Kulrang ranga aylantirish
+      3) Optimal o'lcham (1800-4000px)
+      4) Avtomatik kontrast + qo'shimcha kontrast
+      5) Adaptiv threshold (Otsu) — ko'p hollarda hal qiluvchi
+      6) Sharpness filter — chiziqlar aniq bo'lishi uchun
+    """
     from PIL import Image, ImageFilter, ImageEnhance, ImageOps
 
     img  = ImageOps.exif_transpose(img)
     gray = img.convert('L')
     w, h = gray.size
 
+    # 1) Optimal o'lcham — Tesseract eng yaxshi 1800-2500px da ishlaydi
     MIN_EDGE = 1800
     if max(w, h) < MIN_EDGE:
         scale = MIN_EDGE / max(w, h)
@@ -1022,8 +1080,52 @@ def _preprocess_for_ocr(img):
         scale = MAX_EDGE / max(w, h)
         gray  = gray.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
 
-    gray = ImageOps.autocontrast(gray, cutoff=2)
-    gray = ImageEnhance.Contrast(gray).enhance(1.4)
+    # 2) Avtomatik kontrast (kvantil cutoff fon shovqinini olib tashlaydi)
+    gray = ImageOps.autocontrast(gray, cutoff=1)
+
+    # 3) Qo'shimcha kontrast — matn-fon farqini kuchaytirish
+    gray = ImageEnhance.Contrast(gray).enhance(1.6)
+
+    # 4) Yorug'lik balansi (sharbati past joylarni ko'taradi)
+    gray = ImageEnhance.Brightness(gray).enhance(1.05)
+
+    # 5) Otsu-style adaptiv threshold orqali aniqroq matn olamiz.
+    # Pillow'da to'g'ridan-to'g'ri Otsu yo'q, lekin numpy bilan tezkor
+    # implementatsiya — pixel histogram orqali optimal kesish nuqtasi.
+    try:
+        import numpy as np
+        arr = np.asarray(gray)
+        hist, _ = np.histogram(arr, bins=256, range=(0, 256))
+        total = arr.size
+        if total > 0:
+            sum_total = float((np.arange(256) * hist).sum())
+            sum_back = 0.0
+            w_back = 0
+            max_var = 0.0
+            threshold = 127
+            for i in range(256):
+                w_back += int(hist[i])
+                if w_back == 0:
+                    continue
+                w_fore = total - w_back
+                if w_fore == 0:
+                    break
+                sum_back += i * int(hist[i])
+                mean_back = sum_back / w_back
+                mean_fore = (sum_total - sum_back) / w_fore
+                between = w_back * w_fore * (mean_back - mean_fore) ** 2
+                if between > max_var:
+                    max_var = between
+                    threshold = i
+            # Yumshoq binarization — pure black/white emas, lekin matn aniqligi oshadi
+            soft_arr = np.where(arr < threshold - 10, 0,
+                       np.where(arr > threshold + 10, 255,
+                                ((arr - (threshold - 10)) * 12.75).clip(0, 255))).astype(np.uint8)
+            gray = Image.fromarray(soft_arr, mode='L')
+    except Exception:
+        pass  # Numpy yo'q yoki xato — preprocessing'siz davom etamiz
+
+    # 6) Aniqroq chiziqlar uchun sharpness
     gray = gray.filter(ImageFilter.SHARPEN)
     return gray
 

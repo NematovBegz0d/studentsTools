@@ -5,20 +5,20 @@
 "use strict";
 
 const {
-  useState:    _deS,
-  useRef:      _deR,
+  useState: _deS,
+  useRef: _deR,
   useCallback: _deC,
-  useEffect:   _deE,
+  useEffect: _deE,
 } = React;
 
-const DE_ACCENT       = "#8b5cf6";
-const DE_ACCENT_SOFT  = "rgba(139,92,246,0.12)";
-const DE_ACCENT_BD    = "rgba(139,92,246,0.32)";
-const DE_RED          = "#f87171";
-const DE_MAX_FILE_MB  = 10;
-const DE_MAX_FILE     = DE_MAX_FILE_MB * 1024 * 1024;
-const DE_MAX_PAIRS    = 50;
-const DE_MAX_LEN      = 500;
+const DE_ACCENT = "#8b5cf6";
+const DE_ACCENT_SOFT = "rgba(139,92,246,0.12)";
+const DE_ACCENT_BD = "rgba(139,92,246,0.32)";
+const DE_RED = "#f87171";
+const DE_MAX_FILE_MB = 10;
+const DE_MAX_FILE = DE_MAX_FILE_MB * 1024 * 1024;
+const DE_MAX_PAIRS = 50;
+const DE_MAX_LEN = 500;
 
 function _deAuthHeaders() {
   const tg = window.Telegram?.WebApp;
@@ -55,7 +55,9 @@ function _deExtractError(j, status) {
   if (typeof raw === "object") {
     if (raw.msg) return raw.msg;
     if (raw.message) return raw.message;
-    try { return JSON.stringify(raw).slice(0, 240); } catch (_) {}
+    try {
+      return JSON.stringify(raw).slice(0, 240);
+    } catch (_) {}
   }
   return `Server xatosi (${status})`;
 }
@@ -102,7 +104,9 @@ function _DocxDropzone({ file, onPick, onClear }) {
   const validate = (f) => {
     const ext = (f.name.split(".").pop() || "").toLowerCase();
     if (!["doc", "docx"].includes(ext)) {
-      setErr(`Faqat .doc yoki .docx fayllar qabul qilinadi. Tanlangan: .${ext}`);
+      setErr(
+        `Faqat .doc yoki .docx fayllar qabul qilinadi. Tanlangan: .${ext}`,
+      );
       return false;
     }
     if (f.size === 0) {
@@ -110,7 +114,9 @@ function _DocxDropzone({ file, onPick, onClear }) {
       return false;
     }
     if (f.size > DE_MAX_FILE) {
-      setErr(`Fayl ${(f.size / 1024 / 1024).toFixed(1)} MB. Maksimum ${DE_MAX_FILE_MB} MB.`);
+      setErr(
+        `Fayl ${(f.size / 1024 / 1024).toFixed(1)} MB. Maksimum ${DE_MAX_FILE_MB} MB.`,
+      );
       return false;
     }
     setErr(null);
@@ -165,7 +171,9 @@ function _DocxDropzone({ file, onPick, onClear }) {
           >
             {file.name}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
+          <div
+            style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}
+          >
             {(file.size / 1024).toFixed(0)} KB · tayyor
           </div>
         </div>
@@ -202,7 +210,10 @@ function _DocxDropzone({ file, onPick, onClear }) {
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => {
           e.preventDefault();
@@ -219,7 +230,11 @@ function _DocxDropzone({ file, onPick, onClear }) {
               ? DE_ACCENT_SOFT
               : "var(--bg-surface-1)",
           border: `1.5px dashed ${
-            err ? "rgba(248,113,113,0.4)" : dragOver ? DE_ACCENT : "var(--border-medium)"
+            err
+              ? "rgba(248,113,113,0.4)"
+              : dragOver
+                ? DE_ACCENT
+                : "var(--border-medium)"
           }`,
           borderRadius: 18,
           cursor: "pointer",
@@ -272,7 +287,14 @@ function _DocxDropzone({ file, onPick, onClear }) {
           .DOC · .DOCX · Maks {DE_MAX_FILE_MB} MB
         </div>
         {err && (
-          <div style={{ fontSize: 11.5, color: DE_RED, marginTop: 4, textAlign: "center" }}>
+          <div
+            style={{
+              fontSize: 11.5,
+              color: DE_RED,
+              marginTop: 4,
+              textAlign: "center",
+            }}
+          >
             {err}
           </div>
         )}
@@ -317,7 +339,15 @@ function _PairRow({ idx, pair, onChange, onRemove, canRemove }) {
       </div>
 
       {/* chap ustun: qidirish */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+        }}
+      >
         <label
           style={{
             fontSize: 10,
@@ -329,7 +359,8 @@ function _PairRow({ idx, pair, onChange, onRemove, canRemove }) {
         >
           Qidirish
         </label>
-        <textarea
+        <input
+          type="text"
           value={pair.find}
           onChange={(e) => onChange(idx, "find", e.target.value)}
           placeholder="Word'da turgan matn"
@@ -353,7 +384,15 @@ function _PairRow({ idx, pair, onChange, onRemove, canRemove }) {
       </div>
 
       {/* o'ng ustun: almashtirish */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+        }}
+      >
         <label
           style={{
             fontSize: 10,
@@ -424,15 +463,21 @@ function DocxEditPro({ t, accent, onToast }) {
   const [errorMsg, setErrorMsg] = _deS(null);
 
   const updatePair = _deC((i, field, val) => {
-    setPairs((prev) => prev.map((p, j) => (j === i ? { ...p, [field]: val } : p)));
+    setPairs((prev) =>
+      prev.map((p, j) => (j === i ? { ...p, [field]: val } : p)),
+    );
   }, []);
 
   const addPair = _deC(() => {
-    setPairs((prev) => (prev.length < DE_MAX_PAIRS ? [...prev, { find: "", replace: "" }] : prev));
+    setPairs((prev) =>
+      prev.length < DE_MAX_PAIRS ? [...prev, { find: "", replace: "" }] : prev,
+    );
   }, []);
 
   const removePair = _deC((i) => {
-    setPairs((prev) => (prev.length > 1 ? prev.filter((_, j) => j !== i) : prev));
+    setPairs((prev) =>
+      prev.length > 1 ? prev.filter((_, j) => j !== i) : prev,
+    );
   }, []);
 
   const reset = _deC(() => {
@@ -497,7 +542,9 @@ function DocxEditPro({ t, accent, onToast }) {
       }
 
       const blob = await resp.blob();
-      const info = resp.headers.get("X-Info") || `${validPairs.length} ta juftlik qo'llandi`;
+      const info =
+        resp.headers.get("X-Info") ||
+        `${validPairs.length} ta juftlik qo'llandi`;
       const orig = (file.name || "document").replace(/\.[^.]+$/, "");
       setResult({ blob, filename: `${orig}_edited.docx`, info });
       setStep("done");
@@ -518,10 +565,18 @@ function DocxEditPro({ t, accent, onToast }) {
     return (
       <div style={{ padding: "40px 20px", textAlign: "center" }}>
         <div className="spinner" style={{ margin: "0 auto 18px" }} />
-        <div style={{ color: "var(--text-primary)", fontSize: 15, fontWeight: 600 }}>
+        <div
+          style={{
+            color: "var(--text-primary)",
+            fontSize: 15,
+            fontWeight: 600,
+          }}
+        >
           Word fayl ishlanmoqda
         </div>
-        <div style={{ color: "var(--text-muted)", fontSize: 12.5, marginTop: 4 }}>
+        <div
+          style={{ color: "var(--text-muted)", fontSize: 12.5, marginTop: 4 }}
+        >
           {validPairs.length} ta juftlik qo'llanmoqda…
         </div>
       </div>
@@ -556,11 +611,29 @@ function DocxEditPro({ t, accent, onToast }) {
           }}
         >
           <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
-            <path d="M12 8v5M12 17h.01" stroke="#ef4444" strokeWidth="2.4" strokeLinecap="round" />
-            <circle cx="12" cy="12" r="9" stroke="#ef4444" strokeWidth="2" fill="none" />
+            <path
+              d="M12 8v5M12 17h.01"
+              stroke="#ef4444"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+            />
+            <circle
+              cx="12"
+              cy="12"
+              r="9"
+              stroke="#ef4444"
+              strokeWidth="2"
+              fill="none"
+            />
           </svg>
         </div>
-        <div style={{ color: "var(--text-primary)", fontSize: 16, fontWeight: 700 }}>
+        <div
+          style={{
+            color: "var(--text-primary)",
+            fontSize: 16,
+            fontWeight: 700,
+          }}
+        >
           Xatolik yuz berdi
         </div>
         <div
@@ -795,9 +868,20 @@ function DocxEditPro({ t, accent, onToast }) {
 
   // ─── INPUT ────────────────────────────────────────────────────────
   return (
-    <div style={{ padding: "8px 16px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+    <div
+      style={{
+        padding: "8px 16px 24px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+      }}
+    >
       {/* Fayl yuklash */}
-      <_DocxDropzone file={file} onPick={setFile} onClear={() => setFile(null)} />
+      <_DocxDropzone
+        file={file}
+        onPick={setFile}
+        onClear={() => setFile(null)}
+      />
 
       {/* Almashtirish ro'yxati */}
       <div
@@ -830,9 +914,13 @@ function DocxEditPro({ t, accent, onToast }) {
             gap: 5,
             padding: "5px 11px",
             borderRadius: 99,
-            background: pairs.length >= DE_MAX_PAIRS ? "var(--bg-surface-1)" : DE_ACCENT_SOFT,
+            background:
+              pairs.length >= DE_MAX_PAIRS
+                ? "var(--bg-surface-1)"
+                : DE_ACCENT_SOFT,
             border: `0.5px solid ${pairs.length >= DE_MAX_PAIRS ? "var(--border-subtle)" : DE_ACCENT_BD}`,
-            color: pairs.length >= DE_MAX_PAIRS ? "var(--text-faint)" : DE_ACCENT,
+            color:
+              pairs.length >= DE_MAX_PAIRS ? "var(--text-faint)" : DE_ACCENT,
             cursor: pairs.length >= DE_MAX_PAIRS ? "default" : "pointer",
             fontSize: 12,
             fontWeight: 700,
@@ -906,7 +994,7 @@ function DocxEditPro({ t, accent, onToast }) {
             flex: 1,
             padding: "12px 14px",
             borderRadius: 12,
-            background: canStart ? (accent || DE_ACCENT) : "var(--bg-surface-2)",
+            background: canStart ? accent || DE_ACCENT : "var(--bg-surface-2)",
             border: "none",
             color: canStart ? "#fff" : "var(--text-faint)",
             fontSize: 14,
@@ -920,12 +1008,24 @@ function DocxEditPro({ t, accent, onToast }) {
       </div>
 
       {!file && (
-        <div style={{ fontSize: 11.5, color: "var(--text-faint)", textAlign: "center" }}>
+        <div
+          style={{
+            fontSize: 11.5,
+            color: "var(--text-faint)",
+            textAlign: "center",
+          }}
+        >
           Avval Word faylni yuklang
         </div>
       )}
       {file && validPairs.length === 0 && (
-        <div style={{ fontSize: 11.5, color: "var(--text-faint)", textAlign: "center" }}>
+        <div
+          style={{
+            fontSize: 11.5,
+            color: "var(--text-faint)",
+            textAlign: "center",
+          }}
+        >
           Kamida bitta "Qidirish" matni kiriting
         </div>
       )}

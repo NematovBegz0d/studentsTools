@@ -6,7 +6,7 @@
 // Cache name bumped on each release so old assets are purged.
 "use strict";
 
-const VERSION    = "v6";
+const VERSION    = "v7";
 const CACHE_NAME = `edubot-shell-${VERSION}`;
 
 // Pre-cached shell — what the app needs to render offline-first.
@@ -22,6 +22,8 @@ const PRECACHE_URLS = [
   "./dist/features/service-sheet.js",
   "./dist/features/docxedit-pro.js",
   "./dist/features/mergepdf-pro.js",
+  "./dist/features/age-pro.js",
+  "./dist/features/math-pro.js",
   "./dist/pages/pages-1.js",
   "./dist/pages/pages-2.js",
   "./dist/services/handlers.js",
