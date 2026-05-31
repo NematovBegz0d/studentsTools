@@ -34,6 +34,11 @@ const ICON_PATHS = {
   'compresspdf':  (<><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 8h6 M9 12h6 M9 16h4"/><path d="M17 19l2 2 2-2 M19 21v-5"/></>),
   'compresspptx': (<><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8 M12 17v4"/><path d="M17 14l2 2 2-2 M19 16v-5"/></>),
 
+  // Math hub — kalkulyator/teskari uchburchak (geometriya ramz)
+  'math':    (<><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h4 M9 5v4 M14 7h4 M7 14l4 4 M11 14l-4 4 M14 15h4 M14 18h4"/></>),
+  // Age — torch/birthday cake (sham)
+  'age':     (<><path d="M5 11h14v9H5z M5 11l1-3h12l1 3 M9 8V5l1-1V2 M12 8V5l1-1V2 M15 8V5l1-1V2"/></>),
+
   // ── Services: Premium ─────────────────────────────────────
   'referat':    (<><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8 M8 12h8 M8 16h5"/></>),
   'amaliy':     (<><path d="M9 3v6L4 19a2 2 0 0 0 2 3h12a2 2 0 0 0 2-3L15 9V3 M8 3h8 M7 14h10"/></>),

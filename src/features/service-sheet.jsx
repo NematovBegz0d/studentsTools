@@ -1492,6 +1492,8 @@ const SERVICE_HOW_TO = {
   imgcompress: ["JPG yoki PNG rasmni yuklang", "Boshlash ni bosing", "Siqilgan rasmni yuklab oling"],
   translit:    ["O'zbek matni kiriting (lotin yoki kirill)", "Boshlash ni bosing", "Boshqa yozuvdagi matnni nusxalab oling"],
   stats:       ["Raqamlarni bo'sh joy bilan ajratib kiriting: 4 7 2 9 1 5", "Boshlash ni bosing", "O'rtacha, mediana, dispersiya va boshqa ko'rsatkichlar chiqadi"],
+  math:        ["Kategoriyani tanlang: Geometriya, Trigonometriya, Algebra", "Kerakli xizmatni bosing", "Qiymatlarni kiriting — natija avtomatik hisoblanadi"],
+  age:         ["Yosh hisoblash yoki kelajak sanasi rejimini tanlang", "Sanani DD.MM.YYYY shaklida kiriting (06.05.2001)", "Yil, oy, kun, soat, daqiqa — real-time yangilanadi"],
   translate:   ["Matnni kiriting", "Oxirgi qatorda til kodini yozing: en  ru  tr  de  ja  ko", "Tarjima natijasini nusxalab oling"],
   wiki:        ["Maqola nomini kiriting (masalan: Amir Temur)", "Boshlash ni bosing", "Wikipedia dan qisqacha ma'lumot oling"],
   readtime:    ["Matnni kiriting yoki joylashtiring", "Boshlash ni bosing", "O'qish uchun taxminiy vaqt ko'rsatiladi"],
