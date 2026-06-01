@@ -387,15 +387,102 @@ function _DocxDropzone({ file, onPick, onClear }) {
   );
 }
 
+// ─── Matn maydoni (fokus holatli textarea) ──────────────────────────
+// Ham "qidirish", ham "almashtirish" uchun ishlatiladi. Fokusda accent
+// ramka + yumshoq halqa (glow) chiqadi, pastda belgi hisoblagichi ko'rinadi.
+function _DeField({ value, onChange, placeholder, label, dot, accentColor }) {
+  const [focused, setFocused] = _deS(false);
+  const ac = accentColor || DE_ACCENT;
+  const near = value.length > DE_MAX_LEN * 0.8;
+  return (
+    <div
+      style={{
+        flex: 1,
+        minWidth: 0,
+        display: "flex",
+        flexDirection: "column",
+        gap: 5,
+      }}
+    >
+      <label
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+          color: focused ? ac : "var(--text-muted)",
+          transition: "color 0.15s",
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: dot,
+            opacity: value.trim() ? 1 : 0.4,
+            transition: "opacity 0.15s",
+          }}
+        />
+        {label}
+      </label>
+      <textarea
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        maxLength={DE_MAX_LEN}
+        rows={2}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={{
+          width: "100%",
+          padding: "9px 11px",
+          background: focused ? "var(--bg-surface-1)" : "var(--bg-surface-2)",
+          border: `1px solid ${focused ? ac : "var(--border-medium)"}`,
+          borderRadius: 10,
+          color: "var(--text-primary)",
+          fontSize: 13,
+          fontFamily: "inherit",
+          lineHeight: 1.45,
+          outline: "none",
+          resize: "vertical",
+          minHeight: 42,
+          boxSizing: "border-box",
+          boxShadow: focused ? `0 0 0 3px ${ac}22` : "none",
+          transition: "border-color 0.15s, box-shadow 0.15s, background 0.15s",
+        }}
+      />
+      <div
+        style={{
+          fontSize: 9.5,
+          textAlign: "right",
+          color: near ? DE_RED : "var(--text-faint)",
+          fontVariantNumeric: "tabular-nums",
+          height: 12,
+          opacity: focused || near ? 1 : 0,
+          transition: "opacity 0.15s",
+        }}
+      >
+        {value.length}/{DE_MAX_LEN}
+      </div>
+    </div>
+  );
+}
+
 // ─── Pair Row (chap | o'ng) ─────────────────────────────────────────
-function _PairRow({ idx, pair, onChange, onRemove, canRemove }) {
+function _PairRow({ idx, pair, onChange, onRemove, canRemove, accentColor }) {
   const _hasContent = !!pair.find?.trim();
+  const ac = accentColor || DE_ACCENT;
   return (
     <div
       style={{
         display: "flex",
         alignItems: "stretch",
-        gap: 10,
+        gap: 8,
         padding: "12px 12px",
         background: _hasContent
           ? `linear-gradient(135deg, ${DE_ACCENT_SOFT}, var(--bg-surface-1) 60%)`
@@ -413,20 +500,20 @@ function _PairRow({ idx, pair, onChange, onRemove, canRemove }) {
           height: 26,
           borderRadius: 8,
           background: _hasContent
-            ? `linear-gradient(135deg, ${DE_ACCENT}, ${DE_ACCENT}cc)`
-            : `linear-gradient(135deg, ${DE_ACCENT}33, ${DE_ACCENT}11)`,
-          color: _hasContent ? "#fff" : DE_ACCENT,
+            ? `linear-gradient(135deg, ${ac}, ${ac}cc)`
+            : `linear-gradient(135deg, ${ac}33, ${ac}11)`,
+          color: _hasContent ? "#fff" : ac,
           fontSize: 11.5,
           fontWeight: 800,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           alignSelf: "flex-start",
-          marginTop: 4,
+          marginTop: 22,
           fontVariantNumeric: "tabular-nums",
           boxShadow: _hasContent
-            ? `0 4px 12px ${DE_ACCENT}45`
-            : `0 2px 8px ${DE_ACCENT}20`,
+            ? `0 4px 12px ${ac}45`
+            : `0 2px 8px ${ac}20`,
           transition: "all 0.18s",
         }}
       >
@@ -434,92 +521,48 @@ function _PairRow({ idx, pair, onChange, onRemove, canRemove }) {
       </div>
 
       {/* chap ustun: qidirish */}
+      <_DeField
+        label="Qidirish"
+        dot={DE_RED}
+        accentColor={ac}
+        value={pair.find}
+        onChange={(e) => onChange(idx, "find", e.target.value)}
+        placeholder="Word'da turgan matn"
+      />
+
+      {/* o'rtadagi strelka */}
       <div
+        aria-hidden="true"
         style={{
-          flex: 1,
-          minWidth: 0,
           display: "flex",
-          flexDirection: "column",
-          gap: 4,
+          alignItems: "center",
+          justifyContent: "center",
+          marginTop: 18,
+          color: _hasContent ? ac : "var(--text-faint)",
+          flexShrink: 0,
+          transition: "color 0.18s",
         }}
       >
-        <label
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: 0.5,
-            textTransform: "uppercase",
-            color: "var(--text-muted)",
-          }}
-        >
-          Qidirish
-        </label>
-        <input
-          type="text"
-          value={pair.find}
-          onChange={(e) => onChange(idx, "find", e.target.value)}
-          placeholder="Word'da turgan matn"
-          maxLength={DE_MAX_LEN}
-          rows={2}
-          style={{
-            width: "100%",
-            padding: "8px 10px",
-            background: "var(--bg-surface-2)",
-            border: "1px solid var(--border-medium)",
-            borderRadius: 10,
-            color: "var(--text-primary)",
-            fontSize: 13,
-            fontFamily: "inherit",
-            outline: "none",
-            resize: "vertical",
-            minHeight: 38,
-            boxSizing: "border-box",
-          }}
-        />
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M4 12h15m0 0l-5.5-5.5M19 12l-5.5 5.5"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </div>
 
       {/* o'ng ustun: almashtirish */}
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-        }}
-      >
-        <label
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: 0.5,
-            textTransform: "uppercase",
-            color: "var(--text-muted)",
-          }}
-        >
-          Almashtirish
-        </label>
-        <input
-          value={pair.replace}
-          onChange={(e) => onChange(idx, "replace", e.target.value)}
-          placeholder="Yangi matn"
-          maxLength={DE_MAX_LEN}
-          rows={2}
-          style={{
-            width: "100%",
-            padding: "8px 10px",
-            background: "var(--bg-surface-2)",
-            border: "1px solid var(--border-medium)",
-            borderRadius: 10,
-            color: "var(--text-primary)",
-            fontSize: 13,
-            fontFamily: "inherit",
-            outline: "none",
-            minHeight: 38,
-            boxSizing: "border-box",
-          }}
-        />
-      </div>
+      <_DeField
+        label="Almashtirish"
+        dot="#22c55e"
+        accentColor={ac}
+        value={pair.replace}
+        onChange={(e) => onChange(idx, "replace", e.target.value)}
+        placeholder="Yangi matn (bo'sh = o'chirish)"
+      />
 
       {/* o'chirish tugmasi */}
       <button
@@ -536,9 +579,10 @@ function _PairRow({ idx, pair, onChange, onRemove, canRemove }) {
           color: canRemove ? DE_RED : "var(--text-faint)",
           cursor: canRemove ? "pointer" : "default",
           alignSelf: "flex-start",
-          marginTop: 4,
+          marginTop: 22,
           fontSize: 14,
           flexShrink: 0,
+          transition: "all 0.15s",
         }}
       >
         ×
@@ -1033,6 +1077,7 @@ function DocxEditPro({ t, accent, onToast }) {
             onChange={updatePair}
             onRemove={removePair}
             canRemove={pairs.length > 1}
+            accentColor={accent || DE_ACCENT}
           />
         ))}
       </div>
