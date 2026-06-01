@@ -330,7 +330,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=[
         "X-Info", "X-Page-Count", "X-Saved-Percent", "X-Warning",
-        "X-Password-B64",
+        "X-Password-B64", "X-Password-Set",
         "X-Cert-Id", "X-Verify-Url",
         "X-Request-Id", "X-Processing-Ms",
         "Content-Disposition",

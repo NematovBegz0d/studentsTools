@@ -408,13 +408,19 @@ async def make_cv(request: Request):
             ),
             timeout=30.0,
         )
-        fname = f"cv_{name.replace(' ', '_')[:30]}.pdf"
+        # User-supplied `name` may be Cyrillic/emoji — a raw non-Latin-1 header
+        # value raises UnicodeEncodeError in the ASGI layer. Build an ASCII
+        # fallback + an RFC 5987 filename* so the original name still shows.
+        from urllib.parse import quote as _q
+        base = re.sub(r'[^A-Za-z0-9._-]', '_', name.replace(' ', '_'))[:30].strip('_') or "resume"
+        utf8_name = _q(f"cv_{name.strip()[:30]}.pdf".strip())
+        cd = f"attachment; filename=\"cv_{base}.pdf\"; filename*=UTF-8''{utf8_name}"
         logger.info(f"cv: {name!r} {template} {len(pdf_bytes)//1024}KB {time.time()-t0:.1f}s")
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f'attachment; filename="{fname}"',
+                "Content-Disposition": cd,
                 "X-Info": safe_header(f"{template} · {len(experience)} tajriba · {len(education)} ta'lim"),
             },
         )
@@ -427,10 +433,32 @@ async def make_cv(request: Request):
 
 # ─── Excel → PDF ──────────────────────────────────────────────────────────────
 
+def _run_soffice_group(args: list, timeout: int = 60):
+    """Run headless LibreOffice in its own process group; SIGKILL the whole
+    group on timeout so detached soffice.bin children don't orphan and leak RAM."""
+    import subprocess, signal
+    proc = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return proc.returncode, out, err
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            proc.kill()
+        try:
+            proc.communicate(timeout=5)
+        except Exception:
+            pass
+        raise
+
+
 def _do_xlsx2pdf(data: bytes) -> tuple:
     import subprocess
     import tempfile
-    import os
     import shutil
 
     lo_path = shutil.which("libreoffice") or shutil.which("soffice")
@@ -441,18 +469,18 @@ def _do_xlsx2pdf(data: bytes) -> tuple:
             try:
                 with open(xlsx_path, "wb") as f:
                     f.write(data)
-                result = subprocess.run(
+                rc, _out, _err = _run_soffice_group(
                     [lo_path, "--headless", "--nologo", "--nofirststartwizard",
                      "--convert-to", "pdf", "--outdir", tmpdir, xlsx_path],
-                    capture_output=True, timeout=60,
+                    timeout=60,
                 )
-                if result.returncode == 0 and os.path.exists(pdf_path):
+                if rc == 0 and os.path.exists(pdf_path):
                     with open(pdf_path, "rb") as f:
                         pdf_bytes = f.read()
                     return pdf_bytes, "✅ LibreOffice · formatlar saqlandi"
                 logger.warning(
-                    f"xlsx2pdf LibreOffice rc={result.returncode}: "
-                    f"{result.stderr[:200].decode('utf-8', errors='ignore')}"
+                    f"xlsx2pdf LibreOffice rc={rc}: "
+                    f"{(_err or b'')[:200].decode('utf-8', errors='ignore')}"
                 )
             except subprocess.TimeoutExpired:
                 logger.warning("xlsx2pdf LibreOffice timeout > 60s — ReportLab fallback")
@@ -900,9 +928,28 @@ def _do_imgcompress(data: bytes, output_format: str = "jpeg", user_quality: int 
 
     from PIL import Image, ImageOps
 
-    img      = Image.open(io.BytesIO(data))
-    _orig_fmt = (img.format or "jpeg").lower()
-    img      = ImageOps.exif_transpose(img)
+    src_img   = Image.open(io.BytesIO(data))
+    _orig_fmt = (src_img.format or "jpeg").lower()
+
+    # Animated GIF: flattening to JPEG/PNG/WEBP would silently drop every frame
+    # but the first. Re-save as an optimised animated GIF (keeps all frames).
+    if getattr(src_img, "is_animated", False) and getattr(src_img, "n_frames", 1) > 1:
+        try:
+            gout = io.BytesIO()
+            src_img.save(gout, format="GIF", save_all=True, optimize=True)
+            gif_bytes = gout.getvalue()
+        except Exception:
+            gif_bytes = data
+        finally:
+            src_img.close()
+        if len(gif_bytes) < orig_size:
+            saved = max(0, round((1 - len(gif_bytes) / orig_size) * 100))
+            return gif_bytes, f"Animatsion GIF optimallashtirildi, saved {saved}%", saved, "image/gif", "gif"
+        return data, "Animatsion GIF (o'zgartirishsiz, kichraytirib bo'lmadi)", 0, "image/gif", "gif"
+
+    img = ImageOps.exif_transpose(src_img)
+    if img is not src_img:
+        src_img.close()
 
     w, h  = img.width, img.height
     ratio = min(1.0, _IMGCOMPRESS_MAX_DIM / max(w, h))
@@ -947,6 +994,7 @@ def _do_imgcompress(data: bytes, output_format: str = "jpeg", user_quality: int 
 
     saved = max(0, round((1 - len(out_bytes) / orig_size) * 100))
     info  = f"{w}×{h} → {img.width}×{img.height}, {output_format}, saved {saved}%"
+    img.close()
     return out_bytes, info, saved, media_type, ext
 
 
@@ -1110,7 +1158,10 @@ async def bgremove(request: Request):
                 bg.convert("RGB").save(out_buf, format="JPEG", quality=95, optimize=True)
                 result_png = out_buf.getvalue()
                 media_type, fname = "image/jpeg", "no-bg.jpg"
-            except Exception:
+            except Exception as _bg_err:
+                # Recolor failed — log it (don't silently hand back a transparent
+                # PNG when the user asked for a solid background) and fall back.
+                logger.warning(f"bgremove recolor xato: {type(_bg_err).__name__}: {_bg_err}")
                 media_type, fname = "image/png", "no-bg.png"
         else:
             media_type, fname = "image/png", "no-bg.png"
@@ -1231,8 +1282,15 @@ def _clean_ocr_text(text: str) -> str:
 _paddle_ocr_cache: dict = {}
 _paddle_ocr_lock = threading.Lock()
 
+# PaddleOCR caches BOTH an "en" and a "cyrillic" model in-process (hundreds of MB
+# combined) — that OOMs Railway's basic tier. OFF by default; Tesseract handles
+# OCR. Enable on a larger instance with PADDLE_OCR=1.
+_PADDLE_ENABLED = os.environ.get("PADDLE_OCR", "").strip().lower() in ("1", "true", "yes")
+
 
 def _get_paddle_ocr(lang: str = "en"):
+    if not _PADDLE_ENABLED:
+        return None
     if lang in _paddle_ocr_cache:
         return _paddle_ocr_cache[lang]
     with _paddle_ocr_lock:
