@@ -106,6 +106,12 @@ _LTR_MAP = {
     "u": "у", "x": "х", "y": "й", "z": "з",
     "'": "ъ", "ʻ": "ъ", "ʼ": "ъ", "’": "ъ",
 }
+# Curly apostrophe (U+2019) variants — phone keyboards and copy-paste often
+# produce ’ instead of ' or ʻ. Without these, "o’zbek" would become
+# "оъзбек" instead of "ўзбек".
+_LTR_MAP["o’"] = "ў"
+_LTR_MAP["g’"] = "ғ"
+
 _LTR_MULTI = [k for k in _LTR_MAP if len(k) == 2]
 
 _RTL_MAP = {
@@ -305,7 +311,9 @@ async def stats(request: Request):
     user_id = _get_user_id(request)
     body = await request.json()
     raw_text = body.get("text") or ""
-    nums = [float(x) for x in re.findall(r'-?\d+(?:\.\d+)?', raw_text)]
+    # Lookbehind keeps a hyphen from being read as a minus sign mid-token, so
+    # "2020-2021" parses as [2020, 2021] (a range) — not [2020, -2021].
+    nums = [float(x) for x in re.findall(r'(?<![\d.])-?\d+(?:\.\d+)?', raw_text)]
     if not nums:
         words = re.findall(r"\b\w+\b", raw_text, flags=re.UNICODE)
         chars = len(raw_text)
@@ -335,8 +343,13 @@ async def stats(request: Request):
     iqr = q3 - q1
 
     freq = Counter(nums)
-    top_val, top_cnt = freq.most_common(1)[0]
-    mode_str = f"{top_val:g} ({top_cnt} marta)" if top_cnt > 1 else "—"
+    top_cnt = freq.most_common(1)[0][1]
+    if top_cnt > 1:
+        modes = sorted(v for v, c in freq.items() if c == top_cnt)
+        shown = ", ".join(f"{m:g}" for m in modes[:5]) + ("…" if len(modes) > 5 else "")
+        mode_str = f"{shown} ({top_cnt} marta)"
+    else:
+        mode_str = "—"
 
     extra = ""
     try:
@@ -1032,7 +1045,10 @@ async def make_schedule(request: Request):
                     raise HTTPException(status_code=400,
                         detail="Jadval tushunarsiz. Format: Dushanba: Matematika 8:00")
                 loop      = asyncio.get_running_loop()
-                ics_bytes = await loop.run_in_executor(_io_pool, _do_schedule_ics, schedule)
+                ics_bytes = await asyncio.wait_for(
+                    loop.run_in_executor(_io_pool, _do_schedule_ics, schedule),
+                    timeout=20.0,
+                )
                 return Response(
                     content=ics_bytes,
                     media_type="text/calendar; charset=utf-8",
@@ -1044,7 +1060,14 @@ async def make_schedule(request: Request):
                 logger.warning(f"schedule ics xato: {e} — PNG fallback")
 
         loop   = asyncio.get_running_loop()
-        result = await loop.run_in_executor(_io_pool, _do_schedule, text)
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(_io_pool, _do_schedule, text),
+                timeout=25.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408,
+                detail="Jadval yaratish vaqti tugadi. Kichikroq jadval kiriting.")
         return Response(
             content=result,
             media_type="image/png",
@@ -1072,39 +1095,61 @@ _LANG_ALIASES = {
 
 def _do_translate(query: str, lang: str) -> str:
     try:
+        import socket
         from deep_translator import GoogleTranslator
-        result = GoogleTranslator(source="auto", target=lang).translate(query)
+        # deep-translator exposes no timeout and can hang the worker thread on a
+        # slow network. Bound it with a socket-level default timeout (restored
+        # after). Other network ops use explicit httpx timeouts, so unaffected.
+        _old_to = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(8)
+        try:
+            result = GoogleTranslator(source="auto", target=lang).translate(query)
+        finally:
+            socket.setdefaulttimeout(_old_to)
         if result and result.strip():
             return result.strip()
     except Exception as google_err:
         logger.warning(f"translate google xato: {google_err}")
 
-    try:
-        import argostranslate.translate as _at
-        installed = _at.get_installed_languages()
-        lang_map  = {l.code: l for l in installed}
-        for src_code in ("en", "ru", "uz"):
-            if src_code == lang:
-                continue
-            if src_code in lang_map and lang in lang_map:
-                translation = lang_map[src_code].get_translation(lang_map[lang])
-                if translation:
-                    result = translation.translate(query)
-                    if result and result.strip():
-                        return result.strip()
-    except Exception as argo_err:
-        logger.debug(f"argostranslate xato: {argo_err}")
+    # argostranslate (offline NMT) is heavy on RAM and rarely has models
+    # installed on Railway's basic tier — opt-in only via ARGOS_TRANSLATE=1.
+    if os.environ.get("ARGOS_TRANSLATE", "").strip().lower() in ("1", "true", "yes"):
+        try:
+            import argostranslate.translate as _at
+            installed = _at.get_installed_languages()
+            lang_map  = {l.code: l for l in installed}
+            for src_code in ("en", "ru", "uz"):
+                if src_code == lang:
+                    continue
+                if src_code in lang_map and lang in lang_map:
+                    translation = lang_map[src_code].get_translation(lang_map[lang])
+                    if translation:
+                        result = translation.translate(query)
+                        if result and result.strip():
+                            return result.strip()
+        except Exception as argo_err:
+            logger.debug(f"argostranslate xato: {argo_err}")
 
     chunk  = query[:500]
     suffix = "\n⚠️ Faqat 500 belgi tarjima qilindi (MyMemory chegarasi)" if len(query) > 500 else ""
-    for src in ("uz", "ru", "en"):
+    # Order the candidate source languages by a quick detection so the most
+    # likely langpair is tried first (better accuracy + fewer wasted requests).
+    detected = _detect_lang_quick(chunk)
+    src_order = ["ru", "uz", "en"] if detected == "ru" else ["uz", "en", "ru"]
+    # Cumulative deadline so the 3-source fallback can't exceed the outer 20s
+    # budget and leak a busy worker thread on a slow network.
+    deadline = time.monotonic() + 12.0
+    for src in src_order:
         if src == lang:
             continue
+        remaining = deadline - time.monotonic()
+        if remaining <= 1.0:
+            break
         try:
             r   = httpx.get(
                 "https://api.mymemory.translated.net/get",
                 params={"q": chunk, "langpair": f"{src}|{lang}"},
-                timeout=10,
+                timeout=min(6.0, remaining),
             )
             d   = r.json()
             txt = (d.get("responseData") or {}).get("translatedText", "")
@@ -1301,7 +1346,12 @@ async def wiki(request: Request):
     pref_lang = (body.get("lang") or "").strip().lower()[:5]
     if not q:
         return JSONResponse({"result": "❌ Qidiruv so'zini kiriting"})
-    data = await _wiki_lookup(q, pref_lang)
+    # _wiki_lookup fans out many sequential requests across up to 3 languages;
+    # bound the whole thing so a slow network can't hang the request for minutes.
+    try:
+        data = await asyncio.wait_for(_wiki_lookup(q, pref_lang), timeout=18.0)
+    except asyncio.TimeoutError:
+        return JSONResponse({"result": "❌ Wikipedia javob bermadi (vaqt tugadi). Keyinroq urinib ko'ring."})
     if not data:
         return JSONResponse({"result": "❌ Wikipedia'da topilmadi. Boshqa so'z bilan qidiring."})
     return JSONResponse({
@@ -1333,6 +1383,15 @@ async def _books_lookup(q: str) -> str:
                         "fields": "title,author_name,first_publish_year"},
             )
             gb_r, ol_r = await asyncio.gather(gb_task, ol_task, return_exceptions=True)
+
+        # Distinguish "no results" from "both upstreams unreachable" so the user
+        # isn't told "not found" when it's really a network problem.
+        if isinstance(gb_r, Exception):
+            logger.warning(f"books: Google Books xato: {type(gb_r).__name__}: {gb_r}")
+        if isinstance(ol_r, Exception):
+            logger.warning(f"books: OpenLibrary xato: {type(ol_r).__name__}: {ol_r}")
+        if isinstance(gb_r, Exception) and isinstance(ol_r, Exception):
+            raise RuntimeError("books upstreams unreachable")
 
         lines = []
         seen  = set()
@@ -1369,7 +1428,10 @@ async def _books_lookup(q: str) -> str:
         if not lines:
             return ""
         return "📚 Natijalar:\n\n" + "\n\n".join(lines[:8])
-    except Exception:
+    except RuntimeError:
+        raise  # network failure — surfaced to the handler, not cached
+    except Exception as e:
+        logger.warning(f"books lookup kutilmagan xato: {type(e).__name__}: {e}")
         return ""
 
 
@@ -1381,7 +1443,10 @@ async def books(request: Request):
     q      = (body.get("text") or "").strip()[:200]
     if not q:
         return JSONResponse({"result": "❌ Kitob nomi yoki muallifni kiriting"})
-    result = await _books_lookup(q)
+    try:
+        result = await _books_lookup(q)
+    except Exception:
+        return JSONResponse({"result": "❌ Kitob xizmati hozir javob bermayapti (tarmoq xatosi). Keyinroq urinib ko'ring."})
     if not result:
         return JSONResponse({"result": "📚 Kitob topilmadi"})
     return JSONResponse({"result": result})
@@ -1453,10 +1518,16 @@ def _build_response_from_entries(entries: list) -> Response:
     if len(entries) == 1:
         name, content = entries[0]
         safe = os.path.basename(name) or "file"
+        # RFC 5987: percent-encoding is only valid inside filename*=UTF-8''…
+        # A bare `filename=%D0%..` is shown literally by browsers. Provide both
+        # an ASCII fallback and the UTF-8 form for non-Latin (Cyrillic) names.
+        ascii_fallback = re.sub(r'[^A-Za-z0-9._-]', '_', safe) or "file"
+        cd = (f"attachment; filename=\"{ascii_fallback}\"; "
+              f"filename*=UTF-8''{url_quote(safe)}")
         return Response(
             content=content,
             media_type="application/octet-stream",
-            headers={"Content-Disposition": f"attachment; filename={url_quote(safe)}"},
+            headers={"Content-Disposition": cd},
         )
     out = io.BytesIO()
     name_counts: dict = {}
@@ -1502,6 +1573,19 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
                     if len(names) > _UNZIP_MAX_FILES:
                         raise HTTPException(status_code=400,
                             detail=f"7z ichida {len(names)} fayl — maksimal {_UNZIP_MAX_FILES}")
+                    # 7z achieves extreme ratios — guard the uncompressed size and
+                    # the compression ratio BEFORE readall() loads everything to RAM.
+                    try:
+                        total_uncomp = sum(
+                            getattr(fi, "uncompressed", 0) or 0 for fi in sz.list()
+                        )
+                    except Exception:
+                        total_uncomp = 0
+                    if total_uncomp > _UNZIP_MAX_UNCOMP_MB * 1024 * 1024:
+                        raise HTTPException(status_code=400,
+                            detail=f"Siqilmagan hajm {total_uncomp // (1024*1024)} MB — maksimal {_UNZIP_MAX_UNCOMP_MB} MB")
+                    if len(data) > 0 and total_uncomp / len(data) > _UNZIP_MAX_RATIO:
+                        raise HTTPException(status_code=400, detail="7z bomb aniqlandi — fayl xavfsiz emas")
                     all_data_dict = sz.readall() or {}
                 entries = [
                     (os.path.basename(n) or "file", buf.read())
@@ -1522,24 +1606,26 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
         )
         if is_tar:
             try:
-                tf      = _tarfile.open(fileobj=io.BytesIO(data))
-                members = [m for m in tf.getmembers() if m.isfile()]
-                if not members:
-                    raise HTTPException(status_code=400, detail="TAR ichida fayl yo'q")
-                if len(members) > _UNZIP_MAX_FILES:
-                    raise HTTPException(status_code=400,
-                        detail=f"TAR ichida {len(members)} fayl — maksimal {_UNZIP_MAX_FILES}")
-                total_uncomp = sum(m.size for m in members)
-                if total_uncomp > _UNZIP_MAX_UNCOMP_MB * 1024 * 1024:
-                    raise HTTPException(status_code=400,
-                        detail=f"Siqilmagan hajm {total_uncomp // (1024*1024)} MB — maksimal {_UNZIP_MAX_UNCOMP_MB} MB")
-                entries = []
-                for m in members:
-                    f_obj = tf.extractfile(m)
-                    if f_obj:
-                        safe = os.path.basename(m.name) or "file"
-                        entries.append((safe, f_obj.read()))
-                tf.close()
+                tf = _tarfile.open(fileobj=io.BytesIO(data))
+                try:
+                    members = [m for m in tf.getmembers() if m.isfile()]
+                    if not members:
+                        raise HTTPException(status_code=400, detail="TAR ichida fayl yo'q")
+                    if len(members) > _UNZIP_MAX_FILES:
+                        raise HTTPException(status_code=400,
+                            detail=f"TAR ichida {len(members)} fayl — maksimal {_UNZIP_MAX_FILES}")
+                    total_uncomp = sum(m.size for m in members)
+                    if total_uncomp > _UNZIP_MAX_UNCOMP_MB * 1024 * 1024:
+                        raise HTTPException(status_code=400,
+                            detail=f"Siqilmagan hajm {total_uncomp // (1024*1024)} MB — maksimal {_UNZIP_MAX_UNCOMP_MB} MB")
+                    entries = []
+                    for m in members:
+                        f_obj = tf.extractfile(m)
+                        if f_obj:
+                            safe = os.path.basename(m.name) or "file"
+                            entries.append((safe, f_obj.read()))
+                finally:
+                    tf.close()
                 return _build_response_from_entries(entries)
             except HTTPException:
                 raise

@@ -133,6 +133,18 @@ try:
 except ImportError:
     pass
 
+# ─── Decompression-bomb guard (global PIL cap) ────────────────────────────────
+# Pillow's default MAX_IMAGE_PIXELS (~178 Mpx) only *warns*; a single 20 MB upload
+# can decode to multiple GB of RGBA and OOM-kill a low-RAM Railway worker. Setting
+# a hard cap here makes every Image.open() across all routers raise a catchable
+# DecompressionBombError instead of silently exhausting memory.
+try:
+    from PIL import Image as _PILImage
+    _MAX_MPX = int(os.environ.get("MAX_IMAGE_MPX", "40"))
+    _PILImage.MAX_IMAGE_PIXELS = max(4, _MAX_MPX) * 1_000_000
+except Exception:
+    pass
+
 # ─── Sentry (optional) ────────────────────────────────────────────────────────
 _SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
 if _SENTRY_DSN:
@@ -213,7 +225,7 @@ async def lifespan(app: FastAPI):
                 if r.json().get("ok"):
                     logger.info(
                         f"Webhook ro'yxatdan o'tdi: {webhook_url} "
-                        f"(secret_token: {'YOQ' if WEBHOOK_SECRET else 'YOQ EMAS'})"
+                        f"(secret_token: {'sozlangan' if WEBHOOK_SECRET else 'sozlanmagan'})"
                     )
                 else:
                     logger.error(f"setWebhook muvaffaqiyatsiz: {r.json()}")
@@ -263,7 +275,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"rembg preload muvaffaqiyatsiz — birinchi so'rovda yuklanadi: {e}")
 
-    asyncio.create_task(_preload_rembg())
+    # Preload is OPT-IN. On Railway's basic tier, eagerly loading the ~170MB rembg
+    # model (+ onnxruntime arena) at boot can OOM the container before it serves a
+    # single request. By default we lazy-load on the first /api/bgremove call.
+    # Set REMBG_PRELOAD=1 on a larger instance to warm the model at startup.
+    if os.environ.get("REMBG_PRELOAD", "").strip().lower() in ("1", "true", "yes"):
+        asyncio.create_task(_preload_rembg())
+    else:
+        logger.info("rembg preload o'chiq (REMBG_PRELOAD=1 bilan yoqing) — birinchi so'rovda yuklanadi")
 
     yield
     logger.info("EduBot Backend to'xtatilmoqda...")
@@ -311,7 +330,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=[
         "X-Info", "X-Page-Count", "X-Saved-Percent", "X-Warning",
-        "X-Password-B64",
+        "X-Password-B64", "X-Password-Set",
         "X-Cert-Id", "X-Verify-Url",
         "X-Request-Id", "X-Processing-Ms",
         "Content-Disposition",

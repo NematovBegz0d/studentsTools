@@ -71,11 +71,20 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 # ─── Thread pools ─────────────────────────────────────────────────────────────
 # _io_pool — PDF ops, file conversions, QR, cert, schedule, zip (fast CPU)
-# _ml_pool — bgremove (rembg ~700 MB), OCR (Tesseract)
+# _ml_pool — bgremove (rembg ~170 MB), OCR (Tesseract)
 # Kept separate so ML work cannot starve fast file-conversion requests.
+#
+# Worker counts are env-configurable so the app fits Railway's basic (low-RAM)
+# tier. ML defaults to 1 — two concurrent rembg/OCR jobs each hold a model +
+# a large decoded image + onnxruntime arena, which OOMs a 512MB-1GB instance.
+def _env_int(name: str, default: int, lo: int, hi: int) -> int:
+    try:
+        return max(lo, min(hi, int(os.environ.get(name, "").strip() or default)))
+    except (ValueError, TypeError):
+        return default
 
-_IO_WORKERS = min((os.cpu_count() or 2), 4)
-_ML_WORKERS = 2
+_IO_WORKERS = _env_int("IO_WORKERS", min((os.cpu_count() or 2), 4), 1, 8)
+_ML_WORKERS = _env_int("ML_WORKERS", 1, 1, 4)
 
 _io_pool = ThreadPoolExecutor(max_workers=_IO_WORKERS, thread_name_prefix="io")
 _ml_pool = ThreadPoolExecutor(max_workers=_ML_WORKERS, thread_name_prefix="ml")
@@ -480,21 +489,27 @@ _rembg_lock    = threading.Lock()
 def get_rembg_session():
     """rembg session olish (lazy + thread-safe).
 
-    Default model — `isnet-general-use` (~170MB, yuqori sifat).
-    Eski default `birefnet-general` Railway konteynerida muvaffaqiyatsiz
-    bo'ldi (RAM yetishmasligi yoki dependency muammosi). isnet — sifati
-    yuqori, CNN-based, juda ishonchli.
+    Default model — `u2netp` (~5MB, eng kichik).
 
-    Modellar (sifat → tezlik):
-      isnet-general-use   — YUQORI sifat, CNN-based (default)
-      birefnet-general    — eng yaxshi, lekin og'ir (200MB+)
-      u2net               — klassik, o'rta sifat (~170MB)
-      u2netp              — tez (5MB), past sifat
+    SABAB: Katta modellar (birefnet ~200MB, isnet ~170MB, u2net ~170MB)
+    Railway free/hobby tier'idagi 512MB RAM chegarasidan oshib ketadi:
+        Python base:   ~200MB
+        isnet/u2net:   ~250-300MB RAM (modelni yuklab)
+        Rasm ishlov:   ~50-100MB
+        ----------------------------
+        Jami:          ~600MB → OOM (Killed by kernel)
 
-    Boshqa model kerak bo'lsa, Railway Variables → REMBG_MODEL=...
+    u2netp — 5MB disk, ~50MB RAM. Sifati a'lo emas, lekin yaxshi.
+    Oddiy portret, predmet, ko'plab keys uchun yetarli.
 
-    Har bir modelni alohida try/except bilan o'rab oldik — biri xato bo'lsa,
-    keyingisi sinaladi va aniq log yoziladi.
+    Modellar (sifat → tezlik → RAM):
+      u2netp              — tez (5MB / ~50MB RAM) ← default (Railway safe)
+      isnet-general-use   — yuqori (~170MB / ~300MB RAM) — paid plan kerak
+      u2net               — klassik (~170MB / ~250MB RAM) — paid plan kerak
+      birefnet-general    — eng yaxshi (200MB+ / ~500MB+ RAM) — paid plan
+
+    Yaxshiroq sifat kerak bo'lsa va RAM chegarasi 1GB+ bo'lsa:
+      Railway Variables → REMBG_MODEL=isnet-general-use
     """
     global _rembg_session
     if _rembg_session is None:
@@ -511,12 +526,14 @@ def get_rembg_session():
 
                 from rembg import new_session
                 env_model = os.environ.get("REMBG_MODEL", "").strip()
-                # Sinash tartibi: env model → isnet → u2net → u2netp
+                # Sinash tartibi: env model → u2netp (Railway safe)
+                # → isnet/u2net (agar RAM yetsa)
                 chain = []
                 if env_model:
                     chain.append(env_model)
-                # default chain
-                for m in ("isnet-general-use", "u2net", "u2netp"):
+                # u2netp birinchi: kichkina, har doim ishlaydi.
+                # Boshqalari fallback (lekin RAM yetmasa Killed bo'ladi)
+                for m in ("u2netp", "isnet-general-use", "u2net"):
                     if m not in chain:
                         chain.append(m)
 

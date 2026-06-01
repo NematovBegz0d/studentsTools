@@ -38,7 +38,14 @@ ENV SAL_USE_VCLPLUGIN=svp \
     U2NET_HOME=/tmp/u2net \
     REMBG_HOME=/tmp/rembg \
     XDG_CACHE_HOME=/tmp/.cache \
-    HF_HOME=/tmp/huggingface
+    HF_HOME=/tmp/huggingface \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 \
+    ONNXRUNTIME_NUM_THREADS=1 \
+    VECLIB_MAXIMUM_THREADS=1 \
+    ML_WORKERS=1
 
 RUN groupadd -r -g 1000 appgroup && useradd -r -u 1000 -g appgroup appuser
 

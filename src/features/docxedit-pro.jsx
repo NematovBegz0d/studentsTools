@@ -333,10 +333,24 @@ function _DocxDropzone({ file, onPick, onClear }) {
             />
           </svg>
         </div>
-        <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.2, position: "relative" }}>
+        <div
+          style={{
+            fontSize: 15,
+            fontWeight: 700,
+            letterSpacing: -0.2,
+            position: "relative",
+          }}
+        >
           {err ? "Boshqa fayl tanlang" : "Word faylni shu yerga tashlang"}
         </div>
-        <div style={{ fontSize: 12.5, color: "var(--text-muted)", fontWeight: 500, position: "relative" }}>
+        <div
+          style={{
+            fontSize: 12.5,
+            color: "var(--text-muted)",
+            fontWeight: 500,
+            position: "relative",
+          }}
+        >
           yoki bosib tanlang
         </div>
         <div
@@ -485,10 +499,10 @@ function _PairRow({ idx, pair, onChange, onRemove, canRemove }) {
         >
           Almashtirish
         </label>
-        <textarea
+        <input
           value={pair.replace}
           onChange={(e) => onChange(idx, "replace", e.target.value)}
-          placeholder="Yangi matn (bo'sh = o'chirish)"
+          placeholder="Yangi matn"
           maxLength={DE_MAX_LEN}
           rows={2}
           style={{
@@ -501,7 +515,6 @@ function _PairRow({ idx, pair, onChange, onRemove, canRemove }) {
             fontSize: 13,
             fontFamily: "inherit",
             outline: "none",
-            resize: "vertical",
             minHeight: 38,
             boxSizing: "border-box",
           }}

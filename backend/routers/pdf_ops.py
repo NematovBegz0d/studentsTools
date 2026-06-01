@@ -27,28 +27,46 @@ router = APIRouter()
 # ─── PDF: Merge ───────────────────────────────────────────────────────────────
 
 _MERGEPDF_MAX_FILES = 30
+_MERGEPDF_MAX_PAGES = 500
 
 
 def _do_mergepdf(data_list: list) -> tuple:
     import pikepdf
 
     out_pdf = pikepdf.new()
+    # Keep every source open until AFTER out_pdf.save() — pikepdf resolves the
+    # extended pages lazily, so closing a source early can corrupt the output.
+    # Also guarantees no QPDF handle leaks if a later file is invalid.
+    sources: list = []
     page_count = 0
-    for data in data_list:
-        if data[:4] != b"%PDF":
-            raise ValueError("Faqat PDF fayllar qabul qilinadi")
-        try:
-            src = pikepdf.open(io.BytesIO(data))
-        except pikepdf.PasswordError:
-            raise ValueError("Himoyalangan PDF birlashtirish uchun ochib bo'lmadi")
-        out_pdf.pages.extend(src.pages)
-        page_count += len(src.pages)
-        src.close()
-    buf = io.BytesIO()
-    out_pdf.save(buf, linearize=True)
-    out_pdf.close()
-    info = f"{len(data_list)} fayl, {page_count} sahifa"
-    return buf.getvalue(), info, page_count
+    try:
+        for data in data_list:
+            if data[:4] != b"%PDF":
+                raise ValueError("Faqat PDF fayllar qabul qilinadi")
+            try:
+                src = pikepdf.open(io.BytesIO(data))
+            except pikepdf.PasswordError:
+                raise ValueError("Himoyalangan PDF birlashtirish uchun ochib bo'lmadi")
+            sources.append(src)
+            page_count += len(src.pages)
+            # Bound the merged size — a huge combined PDF builds entirely in RAM.
+            if page_count > _MERGEPDF_MAX_PAGES:
+                raise ValueError(
+                    f"Jami sahifa soni {_MERGEPDF_MAX_PAGES} dan oshib ketdi. "
+                    "Kamroq yoki kichikroq PDF tanlang."
+                )
+            out_pdf.pages.extend(src.pages)
+        buf = io.BytesIO()
+        out_pdf.save(buf, linearize=True)
+        info = f"{len(data_list)} fayl, {page_count} sahifa"
+        return buf.getvalue(), info, page_count
+    finally:
+        out_pdf.close()
+        for src in sources:
+            try:
+                src.close()
+            except Exception:
+                pass
 
 
 @router.post("/api/mergepdf")
@@ -78,6 +96,8 @@ async def merge_pdf(request: Request, files: List[UploadFile] = File(...)):
         )
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"mergepdf xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"mergepdf: {type(e).__name__}: {str(e)[:160]}")
@@ -97,11 +117,16 @@ def _parse_page_ranges(pages_str: str, total: int) -> list:
         if "-" in part:
             a, b = part.split("-", 1)
             start, end = int(a), int(b)
+            if start < 1 or end < 1:
+                raise ValueError(f"Sahifa raqami 1 dan boshlanadi: {a}-{b}")
             if start > end:
                 raise ValueError(f"Noto'g'ri diapazon: {a}-{b} (bosh > oxir)")
             result.update(range(start - 1, end))
         else:
-            result.add(int(part) - 1)
+            num = int(part)
+            if num < 1:
+                raise ValueError(f"Sahifa raqami 1 dan boshlanadi: {part}")
+            result.add(num - 1)
     return sorted(x for x in result if 0 <= x < total)
 
 
@@ -139,12 +164,15 @@ async def pdf_select_pages(
         def _extract():
             src = _pike.open(io.BytesIO(data))
             out = _pike.new()
-            for i in indices:
-                out.pages.append(src.pages[i])
-            buf = io.BytesIO()
-            out.save(buf, linearize=True)
-            src.close()
-            return buf.getvalue()
+            try:
+                for i in indices:
+                    out.pages.append(src.pages[i])
+                buf = io.BytesIO()
+                out.save(buf, linearize=True)
+                return buf.getvalue()
+            finally:
+                out.close()
+                src.close()
 
         loop = asyncio.get_running_loop()
         try:
@@ -200,9 +228,12 @@ def _do_pdftext(data: bytes) -> str:
     if not result:
         try:
             import pdfplumber
+            # extract_tables() is CPU/RAM heavy — cap the fallback well below the
+            # fitz page budget so a scanned/complex PDF can't pin a worker.
+            fallback_n = min(render_n, 15)
             pb_parts = []
             with pdfplumber.open(io.BytesIO(data)) as pdf:
-                for i, page in enumerate(pdf.pages[:render_n]):
+                for i, page in enumerate(pdf.pages[:fallback_n]):
                     text = page.extract_text() or ""
                     tables = page.extract_tables() or []
                     for table in tables:
@@ -248,6 +279,8 @@ async def pdf_text(request: Request, file: UploadFile = File(...)):
         return JSONResponse({"result": result, "text": result})
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"pdftext xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"pdftext: {type(e).__name__}: {str(e)[:160]}")
@@ -262,29 +295,29 @@ def _do_pdflock(data: bytes, user_pwd: str, owner_pwd: str,
         doc = pikepdf.open(io.BytesIO(data))
     except pikepdf.PasswordError:
         raise ValueError("PDF allaqachon parol bilan himoyalangan.")
-    n = len(doc.pages)
-    if n == 0:
-        doc.close()
-        raise ValueError("PDF bo'sh (0 sahifa).")
-    if n > 200:
-        doc.close()
-        raise ValueError(f"PDF {n} sahifa. Maksimal 200 sahifa qabul qilinadi.")
+    try:
+        n = len(doc.pages)
+        if n == 0:
+            raise ValueError("PDF bo'sh (0 sahifa).")
+        if n > 200:
+            raise ValueError(f"PDF {n} sahifa. Maksimal 200 sahifa qabul qilinadi.")
 
-    enc = pikepdf.Encryption(
-        owner=owner_pwd,
-        user=user_pwd,
-        aes=True,
-        allow=pikepdf.Permissions(
-            print_lowres=allow_print,
-            print_highres=allow_print,
-            extract=allow_copy,
-            modify_other=allow_modify,
-            modify_annotation=allow_modify,
-        ),
-    )
-    buf = io.BytesIO()
-    doc.save(buf, encryption=enc, linearize=True)
-    doc.close()
+        enc = pikepdf.Encryption(
+            owner=owner_pwd,
+            user=user_pwd,
+            aes=True,
+            allow=pikepdf.Permissions(
+                print_lowres=allow_print,
+                print_highres=allow_print,
+                extract=allow_copy,
+                modify_other=allow_modify,
+                modify_annotation=allow_modify,
+            ),
+        )
+        buf = io.BytesIO()
+        doc.save(buf, encryption=enc, linearize=True)
+    finally:
+        doc.close()
 
     perms = []
     if allow_print:  perms.append("chop")
@@ -314,7 +347,6 @@ async def lock_pdf(
         raw_pwd   = password.strip()[:64]
         user_pwd  = raw_pwd if raw_pwd else ""
         owner_pwd = secrets.token_urlsafe(16)
-        display_pwd = raw_pwd if raw_pwd else "no-password-required"
         loop = asyncio.get_running_loop()
         try:
             out_bytes, info = await asyncio.wait_for(
@@ -329,19 +361,26 @@ async def lock_pdf(
             raise HTTPException(status_code=408,
                 detail="Parol qo'yish 45 soniyadan oshdi. Kichikroq fayl tanlang.")
         logger.info(f"pdflock: {len(data)//1024}KB, {info}, {time.time()-t0:.1f}s")
-        import base64 as _b64
-        pwd_b64 = _b64.b64encode(display_pwd.encode("utf-8")).decode("ascii")
+        # X-Password-Set tells the client whether an open-password was applied.
+        # X-Password-B64 is only present (and meaningful) when one actually was —
+        # no more "no-password-required" sentinel that a client could misread.
+        headers = {
+            "Content-Disposition": "attachment; filename=locked.pdf",
+            "X-Password-Set": "1" if user_pwd else "0",
+            "X-Info": safe_header(info),
+        }
+        if user_pwd:
+            import base64 as _b64
+            headers["X-Password-B64"] = _b64.b64encode(user_pwd.encode("utf-8")).decode("ascii")
         return Response(
             content=out_bytes,
             media_type="application/pdf",
-            headers={
-                "Content-Disposition": "attachment; filename=locked.pdf",
-                "X-Password-B64": pwd_b64,
-                "X-Info": safe_header(info),
-            },
+            headers=headers,
         )
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"pdflock xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"pdflock: {type(e).__name__}: {str(e)[:160]}")
@@ -369,11 +408,16 @@ def _get_wm_font() -> str:
     return _wm_font_cached
 
 
-def _make_wm_page(pw: float, ph: float, text: str,
-                   opacity: float = 0.22, angle: int = 42, repeat: bool = True):
+def _make_wm_bytes(pw: float, ph: float, text: str,
+                   opacity: float = 0.22, angle: int = 42, repeat: bool = True) -> bytes:
+    """Render a single-page watermark PDF and return its raw bytes.
+
+    Returning bytes (not a live pypdf page) lets the caller build a FRESH
+    overlay page per target page — pypdf's `merge_page` can mutate the overlay's
+    content streams in place, so reusing one object across pages corrupts later
+    watermarks. Bytes are cached per page-size; the page object is not."""
     from reportlab.pdfgen import canvas as rl_canvas
     from reportlab.lib.colors import Color
-    from pypdf import PdfReader as _PR
 
     font_size = max(20, min(56, int(pw * 0.07)))
     spacing = max(pw, ph) * 0.38
@@ -390,7 +434,7 @@ def _make_wm_page(pw: float, ph: float, text: str,
         c.drawCentredString(0, offset, text)
     c.restoreState()
     c.save()
-    return _PR(io.BytesIO(wm_buf.getvalue())).pages[0]
+    return wm_buf.getvalue()
 
 def _do_watermark(data: bytes, wm_text: str,
                   opacity: float = 0.22, angle: int = 42, repeat: bool = True) -> tuple:
@@ -407,15 +451,17 @@ def _do_watermark(data: bytes, wm_text: str,
 
     text = wm_text.strip()[:60] or "EduBot"
     writer = PdfWriter()
-    wm_cache: dict = {}
+    wm_bytes_cache: dict = {}   # page-size → watermark PDF bytes (canvas built once)
 
     for page in reader.pages:
         pw = float(page.mediabox.width)
         ph = float(page.mediabox.height)
         key = (round(pw), round(ph))
-        if key not in wm_cache:
-            wm_cache[key] = _make_wm_page(pw, ph, text, opacity, angle, repeat)
-        page.merge_page(wm_cache[key])
+        if key not in wm_bytes_cache:
+            wm_bytes_cache[key] = _make_wm_bytes(pw, ph, text, opacity, angle, repeat)
+        # Fresh overlay page object per merge — prevents content-stream reuse bugs.
+        wm_page = PdfReader(io.BytesIO(wm_bytes_cache[key])).pages[0]
+        page.merge_page(wm_page)
         writer.add_page(page)
 
     out = io.BytesIO()
@@ -465,6 +511,8 @@ async def watermark_pdf(
         )
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"watermark xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"watermark: {type(e).__name__}: {str(e)[:160]}")
@@ -483,8 +531,18 @@ def _do_pdf2img(data: bytes, dpi: int = 150, fmt: str = "png", quality: int = 85
     fmt     = fmt if fmt in _PDF2IMG_VALID_FMT else "png"
     quality = max(50, min(95, quality))
     zoom    = dpi / 72
-    mat     = fitz.Matrix(zoom, zoom)
     ext     = "jpg" if fmt == "jpeg" else fmt
+
+    # Clamp the per-page render so a huge MediaBox (e.g. A0 at 300 DPI ≈ 415 MB
+    # for one RGB pixmap) cannot OOM the worker on a low-RAM instance.
+    _MAX_PAGE_PX = 5000
+
+    def _page_matrix(page):
+        longest = max(page.rect.width, page.rect.height) or 1
+        z = zoom
+        if longest * z > _MAX_PAGE_PX:
+            z = _MAX_PAGE_PX / longest
+        return fitz.Matrix(z, z)
 
     doc = fitz.open(stream=data, filetype="pdf")
     if doc.is_encrypted:
@@ -499,7 +557,7 @@ def _do_pdf2img(data: bytes, dpi: int = 150, fmt: str = "png", quality: int = 85
     truncated = total_pages > _PDF2IMG_MAX_PAGES
 
     if render_n == 1:
-        pix       = doc[0].get_pixmap(matrix=mat, alpha=False)
+        pix       = doc[0].get_pixmap(matrix=_page_matrix(doc[0]), alpha=False)
         img_bytes = pix.tobytes(fmt, jpg_quality=quality) if fmt != "png" else pix.tobytes("png")
         doc.close()
         media = f"image/{fmt}"
@@ -512,7 +570,7 @@ def _do_pdf2img(data: bytes, dpi: int = 150, fmt: str = "png", quality: int = 85
     zip_mode = zipfile.ZIP_STORED if fmt == "png" else zipfile.ZIP_DEFLATED
     with zipfile.ZipFile(zf_buf, "w", zip_mode) as zf:
         for i in range(render_n):
-            pix       = doc[i].get_pixmap(matrix=mat, alpha=False)
+            pix       = doc[i].get_pixmap(matrix=_page_matrix(doc[i]), alpha=False)
             img_bytes = pix.tobytes(fmt, jpg_quality=quality) if fmt != "png" else pix.tobytes("png")
             total_size += len(img_bytes)
             zf.writestr(f"page_{str(i + 1).zfill(padding)}.{ext}", img_bytes)
@@ -539,6 +597,9 @@ async def pdf_to_img(
     user_id = _get_user_id(request)
     try:
         data = await read_upload(file, "/api/pdf2img")
+        if data[:4] != b'%PDF':
+            raise HTTPException(status_code=422,
+                detail="Bu PDF fayl emas. Iltimos, haqiqiy PDF yuklang.")
 
         loop = asyncio.get_running_loop()
         try:
@@ -564,6 +625,9 @@ async def pdf_to_img(
         )
     except HTTPException:
         raise
+    except ValueError as e:
+        # _do_pdf2img raises ValueError for user-fixable cases (encrypted/empty PDF).
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"pdf2img xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"pdf2img: {type(e).__name__}: {str(e)[:160]}")
@@ -595,12 +659,16 @@ def _do_compresspdf(data: bytes, level: str = "ebook") -> tuple:
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as fin:
             fin.write(data)
             fin_path = fin.name
-        fout_path = fin_path.replace(".pdf", "_gs_out.pdf")
+        # Build the output path explicitly — str.replace(".pdf", ...) would
+        # rewrite every ".pdf" in the path, not just the suffix.
+        fout_path = fin_path[:-4] + "_gs_out.pdf"
+        # gs subprocess timeout kept below the handler's 60s wait_for budget so
+        # the executor thread isn't still running gs after the client gets 408.
         proc = subprocess.run(
             ["gs", "-dBATCH", "-dNOPAUSE", "-dQUIET", "-sDEVICE=pdfwrite",
              f"-dPDFSETTINGS={gs_level}", "-dCompatibilityLevel=1.6",
              f"-sOutputFile={fout_path}", fin_path],
-            timeout=60, capture_output=True,
+            timeout=45, capture_output=True,
         )
         if proc.returncode == 0 and _os.path.exists(fout_path):
             with open(fout_path, "rb") as _gs_f:
@@ -616,8 +684,17 @@ def _do_compresspdf(data: bytes, level: str = "ebook") -> tuple:
                         f"{n_gs} sahifa • {orig_size // 1024} KB → {len(gs_bytes) // 1024} KB"
                         f" • {saved}% tejaldi (Ghostscript {level})",
                         saved)
-    except Exception:
-        pass
+        else:
+            # gs not installed / failed — log the reason instead of silently
+            # swallowing it, then fall back to the PyMuPDF path below.
+            err = (proc.stderr or b"")[:200].decode("utf-8", "replace")
+            logger.warning(f"compresspdf gs fallback (rc={proc.returncode}): {err}")
+    except FileNotFoundError:
+        logger.warning("compresspdf: 'gs' (Ghostscript) topilmadi — fitz fallback")
+    except subprocess.TimeoutExpired:
+        logger.warning("compresspdf: gs 45s timeout — fitz fallback")
+    except Exception as _gs_e:
+        logger.warning(f"compresspdf gs xato: {type(_gs_e).__name__}: {_gs_e}")
     finally:
         for _p in (fin_path, fout_path):
             if _p and _os.path.exists(_p):
@@ -625,25 +702,24 @@ def _do_compresspdf(data: bytes, level: str = "ebook") -> tuple:
                 except Exception: pass
 
     doc = fitz.open(stream=data, filetype="pdf")
-    n = doc.page_count
-
-    if n == 0:
-        doc.close()
-        raise ValueError("PDF bo'sh (0 sahifa).")
-    if n > 100:
-        doc.close()
-        raise ValueError(f"PDF {n} sahifa. Maksimal 100 sahifa qabul qilinadi.")
-
-    sample_chars = sum(len(doc[i].get_text()) for i in range(min(3, n)))
-    is_text_pdf = sample_chars > 150
-
     try:
-        doc.scrub()
-    except Exception:
-        pass
-    buf_a = io.BytesIO()
-    doc.save(buf_a, garbage=4, deflate=True, clean=True)
-    doc.close()
+        n = doc.page_count
+        if n == 0:
+            raise ValueError("PDF bo'sh (0 sahifa).")
+        if n > 100:
+            raise ValueError(f"PDF {n} sahifa. Maksimal 100 sahifa qabul qilinadi.")
+
+        sample_chars = sum(len(doc[i].get_text()) for i in range(min(3, n)))
+        is_text_pdf = sample_chars > 150
+
+        try:
+            doc.scrub()
+        except Exception:
+            pass
+        buf_a = io.BytesIO()
+        doc.save(buf_a, garbage=4, deflate=True, clean=True)
+    finally:
+        doc.close()
     result_a = buf_a.getvalue()
 
     result_b = None
@@ -659,20 +735,25 @@ def _do_compresspdf(data: bytes, level: str = "ebook") -> tuple:
             else:
                 quality, dpi = 72, 130
         zoom = dpi / 72
-        mat  = fitz.Matrix(zoom, zoom)
+        _MAX_PAGE_PX = 4000   # clamp huge MediaBox pages so a pixmap can't OOM
 
         doc2    = fitz.open(stream=data, filetype="pdf")
         out_doc = fitz.open()
-        for page in doc2:
-            pix       = page.get_pixmap(matrix=mat, alpha=False)
-            img_bytes = pix.tobytes("jpeg", jpg_quality=quality)
-            del pix
-            new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
-            new_page.insert_image(new_page.rect, stream=img_bytes)
-        doc2.close()
-        buf_b    = io.BytesIO()
-        out_doc.save(buf_b, garbage=4, deflate=True)
-        result_b = buf_b.getvalue()
+        try:
+            for page in doc2:
+                longest = max(page.rect.width, page.rect.height) or 1
+                z = zoom if longest * zoom <= _MAX_PAGE_PX else _MAX_PAGE_PX / longest
+                pix       = page.get_pixmap(matrix=fitz.Matrix(z, z), alpha=False)
+                img_bytes = pix.tobytes("jpeg", jpg_quality=quality)
+                del pix
+                new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
+                new_page.insert_image(new_page.rect, stream=img_bytes)
+            buf_b    = io.BytesIO()
+            out_doc.save(buf_b, garbage=4, deflate=True)
+            result_b = buf_b.getvalue()
+        finally:
+            doc2.close()
+            out_doc.close()
 
     if result_b is not None and len(result_b) < len(result_a):
         out = result_b
@@ -728,6 +809,8 @@ async def compress_pdf(
         )
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"compresspdf xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,

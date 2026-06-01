@@ -31,6 +31,36 @@ from shared import (
 
 router = APIRouter()
 
+
+def _run_soffice(args: list, env: dict, timeout: int = 60):
+    """Run a headless LibreOffice command in its OWN process group.
+
+    `soffice` forks detached `soffice.bin`/`oosplash` children; a plain
+    subprocess timeout kills only the parent, leaving orphans that hold the
+    temp profile open and leak RAM. Starting a new session lets us SIGKILL the
+    whole group on timeout. Raises subprocess.TimeoutExpired on timeout.
+    """
+    import subprocess, signal
+    proc = subprocess.Popen(
+        args, env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return proc.returncode, out, err
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            proc.kill()
+        try:
+            proc.communicate(timeout=5)
+        except Exception:
+            pass
+        raise
+
+
 # ─── PDF → DOCX: helpers (ml-chain: marker → docling → libreoffice → pdf2docx → pymupdf) ──
 
 def _do_pdf2docx(pdf_path: str, docx_path: str) -> None:
@@ -72,23 +102,28 @@ def _do_pdf2docx_marker(pdf_path: str, docx_path: str) -> None:
 
 
 def _do_pdf2docx_libreoffice(pdf_path: str, docx_path: str) -> None:
-    import subprocess, shutil
+    import shutil
+    if shutil.which("libreoffice") is None and shutil.which("soffice") is None:
+        raise RuntimeError("LibreOffice o'rnatilmagan")
     outdir = os.path.dirname(docx_path)
     lo_home = tempfile.mkdtemp(prefix="lo_")
     env = os.environ.copy()
     env["HOME"] = lo_home
-    try:
-        result = subprocess.run(
-            ["libreoffice", "--headless", "--norestore",
-             "--convert-to", "docx", "--infilter=writer_pdf_import",
-             "--outdir", outdir, pdf_path],
-            env=env, capture_output=True, timeout=60,
-        )
-    finally:
-        shutil.rmtree(lo_home, ignore_errors=True)
-    if result.returncode != 0:
-        stderr = (result.stderr or b"").decode(errors="replace")[:300]
-        raise RuntimeError(f"libreoffice exit {result.returncode}: {stderr}")
+    # Serialize LibreOffice — otherwise up to _IO_WORKERS soffice instances run
+    # at once (~150-300MB each) and OOM the basic tier.
+    with _office_convert_sem:
+        try:
+            rc, _out, _err = _run_soffice(
+                ["libreoffice", "--headless", "--norestore",
+                 "--convert-to", "docx", "--infilter=writer_pdf_import",
+                 "--outdir", outdir, pdf_path],
+                env=env, timeout=60,
+            )
+        finally:
+            shutil.rmtree(lo_home, ignore_errors=True)
+    if rc != 0:
+        stderr = (_err or b"").decode(errors="replace")[:300]
+        raise RuntimeError(f"libreoffice exit {rc}: {stderr}")
     expected = os.path.join(outdir, os.path.splitext(os.path.basename(pdf_path))[0] + ".docx")
     if not os.path.exists(expected) or os.path.getsize(expected) < 100:
         raise RuntimeError("LibreOffice DOCX chiqarilmadi yoki bo'sh")
@@ -239,10 +274,16 @@ def _do_pdf2docx_docling(pdf_path: str, docx_path: str) -> None:
 
 def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
     def _disabled(name: str) -> bool:
+        # marker/docling load multi-GB ML models → instant OOM on Railway's
+        # basic tier. They are OFF by default and only used when BOTH the
+        # explicit opt-in env (MARKER_ENABLED=1 / DOCLING_ENABLED=1) is set
+        # AND the package is importable.
         if os.environ.get(f"{name}_DISABLED", "").lower() in ("1", "true", "yes"):
             return True
         pkg = {"MARKER": "marker", "DOCLING": "docling"}.get(name)
         if pkg:
+            if os.environ.get(f"{name}_ENABLED", "").lower() not in ("1", "true", "yes"):
+                return True  # default off — opt-in required
             try:
                 __import__(pkg)
             except ImportError:
@@ -469,6 +510,15 @@ def _safe_pdf_filename(filename: str) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-")
     stem = stem[:64] or "document"
     return f"{stem}.pdf"
+
+
+def _pdf_content_disposition(filename: str) -> str:
+    """attachment header with ASCII fallback + RFC 5987 filename* so a
+    Cyrillic/Uzbek original name survives instead of collapsing to document.pdf."""
+    ascii_name = _safe_pdf_filename(filename)
+    stem = os.path.splitext(os.path.basename(filename or ""))[0][:64].strip() or "document"
+    utf8_name = url_quote(f"{stem}.pdf")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
 
 
 def _inspect_docx(data: bytes) -> dict:
@@ -826,17 +876,16 @@ def _do_docx2pdf_libreoffice(data: bytes, ext: str) -> bytes:
                         "--outdir", tmpdir, input_path,
                     ]
                     try:
-                        result = subprocess.run(
-                            cmd, env=env, capture_output=True,
-                            timeout=_OFFICE_CONVERT_TIMEOUT,
+                        rc, _out, _err = _run_soffice(
+                            cmd, env=env, timeout=_OFFICE_CONVERT_TIMEOUT,
                         )
                     except subprocess.TimeoutExpired:
                         raise RuntimeError(f"LibreOffice timeout {_OFFICE_CONVERT_TIMEOUT}s")
 
-                    stderr = (result.stderr or b"").decode(errors="replace")[:300]
-                    stdout = (result.stdout or b"").decode(errors="replace")[:300]
-                    if result.returncode != 0:
-                        errors.append(f"{export_filter}: exit {result.returncode}: {stderr or stdout}")
+                    stderr = (_err or b"").decode(errors="replace")[:300]
+                    stdout = (_out or b"").decode(errors="replace")[:300]
+                    if rc != 0:
+                        errors.append(f"{export_filter}: exit {rc}: {stderr or stdout}")
                         continue
 
                     try:
@@ -956,7 +1005,7 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
             content=pdf_bytes,
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f"attachment; filename={_safe_pdf_filename(original_name)}",
+                "Content-Disposition": _pdf_content_disposition(original_name),
                 "X-Info": safe_header(info),
             },
         )
@@ -1116,19 +1165,18 @@ def _legacy_doc_to_docx_via_libreoffice(data: bytes) -> bytes:
                     "--outdir", tmpdir, input_path,
                 ]
                 try:
-                    result = subprocess.run(
-                        cmd, env=env, capture_output=True,
-                        timeout=_OFFICE_CONVERT_TIMEOUT,
+                    rc, _out, _err = _run_soffice(
+                        cmd, env=env, timeout=_OFFICE_CONVERT_TIMEOUT,
                     )
                 except subprocess.TimeoutExpired:
                     raise RuntimeError(
                         f"LibreOffice .doc→.docx timeout {_OFFICE_CONVERT_TIMEOUT}s"
                     )
 
-                if result.returncode != 0:
-                    stderr = (result.stderr or b"").decode(errors="replace")[:300]
+                if rc != 0:
+                    stderr = (_err or b"").decode(errors="replace")[:300]
                     raise RuntimeError(
-                        f"LibreOffice .doc→.docx muvaffaqiyatsiz: rc={result.returncode}: {stderr}"
+                        f"LibreOffice .doc→.docx muvaffaqiyatsiz: rc={rc}: {stderr}"
                     )
 
                 # LibreOffice yaratgan .docx ni topamiz (nom kichik harf bilan keladi)
@@ -1298,8 +1346,10 @@ async def docx_edit(
     except HTTPException:
         raise
     except asyncio.TimeoutError:
+        # 408 (Request Timeout) for consistency with the other convert
+        # endpoints — the condition is user-fixable (smaller file / fewer pairs).
         raise HTTPException(
-            status_code=504,
+            status_code=408,
             detail="Almashtirish vaqti tugadi. Kichikroq fayl yoki kamroq juftlik tanlang.",
         )
     except Exception as e:
@@ -1329,67 +1379,72 @@ def _do_imgs2pdf(images_data: list) -> bytes:
     from PIL import Image, ImageOps
 
     pdf = pikepdf.new()
+    try:
+        for raw in images_data:
+            # Process one image at a time and release it before the next so peak
+            # RAM stays bounded (decoded pixels can be far larger than the file).
+            img = Image.open(io.BytesIO(raw))
+            try:
+                img.load()
+                try:
+                    img = ImageOps.exif_transpose(img)
+                except Exception:
+                    pass
 
-    for raw in images_data:
-        img = Image.open(io.BytesIO(raw))
-        img.load()
+                if img.mode in ("RGBA", "LA"):
+                    bg = Image.new("RGB", img.size, "white")
+                    alpha = img.getchannel("A")
+                    bg.paste(img.convert("RGBA"), mask=alpha)
+                    img = bg
+                elif img.mode == "P":
+                    img = img.convert("RGBA")
+                    bg = Image.new("RGB", img.size, "white")
+                    bg.paste(img, mask=img.getchannel("A") if "A" in img.getbands() else None)
+                    img = bg
+                elif img.mode == "L":
+                    pass
+                elif img.mode != "RGB":
+                    img = img.convert("RGB")
 
-        try:
-            img = ImageOps.exif_transpose(img)
-        except Exception:
-            pass
+                mode = "L" if img.mode == "L" else "RGB"
+                iw, ih = img.size
 
-        if img.mode in ("RGBA", "LA"):
-            bg = Image.new("RGB", img.size, "white")
-            alpha = img.getchannel("A")
-            bg.paste(img.convert("RGBA"), mask=alpha)
-            img = bg
-        elif img.mode == "P":
-            img = img.convert("RGBA")
-            bg = Image.new("RGB", img.size, "white")
-            bg.paste(img, mask=img.getchannel("A") if "A" in img.getbands() else None)
-            img = bg
-        elif img.mode == "L":
-            pass
-        elif img.mode != "RGB":
-            img = img.convert("RGB")
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=92)
+                jpeg_bytes = buf.getvalue()
+            finally:
+                img.close()
 
-        mode = "L" if img.mode == "L" else "RGB"
-        iw, ih = img.size
+            colorspace = pikepdf.Name("/DeviceGray" if mode == "L" else "/DeviceRGB")
+            img_obj = pikepdf.Stream(pdf, jpeg_bytes)
+            img_obj.stream_dict = pikepdf.Dictionary(
+                Type=pikepdf.Name("/XObject"),
+                Subtype=pikepdf.Name("/Image"),
+                Width=iw,
+                Height=ih,
+                ColorSpace=colorspace,
+                BitsPerComponent=8,
+                Filter=pikepdf.Name("/DCTDecode"),
+            )
 
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=92)
-        jpeg_bytes = buf.getvalue()
+            page = pikepdf.Dictionary(
+                Type=pikepdf.Name("/Page"),
+                MediaBox=[0, 0, iw, ih],
+                Resources=pikepdf.Dictionary(
+                    XObject=pikepdf.Dictionary(Im0=img_obj)
+                ),
+                Contents=pikepdf.Stream(
+                    pdf,
+                    f"q {iw} 0 0 {ih} 0 0 cm /Im0 Do Q".encode(),
+                ),
+            )
+            pdf.pages.append(pikepdf.Page(page))
 
-        colorspace = pikepdf.Name("/DeviceGray" if mode == "L" else "/DeviceRGB")
-        img_obj = pikepdf.Stream(pdf, jpeg_bytes)
-        img_obj.stream_dict = pikepdf.Dictionary(
-            Type=pikepdf.Name("/XObject"),
-            Subtype=pikepdf.Name("/Image"),
-            Width=iw,
-            Height=ih,
-            ColorSpace=colorspace,
-            BitsPerComponent=8,
-            Filter=pikepdf.Name("/DCTDecode"),
-        )
-
-        page = pikepdf.Dictionary(
-            Type=pikepdf.Name("/Page"),
-            MediaBox=[0, 0, iw, ih],
-            Resources=pikepdf.Dictionary(
-                XObject=pikepdf.Dictionary(Im0=img_obj)
-            ),
-            Contents=pikepdf.Stream(
-                pdf,
-                f"q {iw} 0 0 {ih} 0 0 cm /Im0 Do Q".encode(),
-            ),
-        )
-        pdf.pages.append(pikepdf.Page(page))
-
-    out = io.BytesIO()
-    pdf.save(out, linearize=True)
-    pdf.close()
-    return out.getvalue()
+        out = io.BytesIO()
+        pdf.save(out, linearize=True)
+        return out.getvalue()
+    finally:
+        pdf.close()
 
 @router.post("/api/imgs2pdf")
 @limiter.limit("5/minute")
@@ -1409,7 +1464,7 @@ async def imgs2pdf(request: Request, files: List[UploadFile] = File(...)):
                 timeout=60.0,
             )
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail="Rasmlar PDF ga aylantirishda vaqt tugadi.")
+            raise HTTPException(status_code=408, detail="Rasmlar PDF ga aylantirishda vaqt tugadi.")
         logger.info(f"imgs2pdf: {len(images)} ta rasm → {len(pdf_bytes)//1024}KB PDF")
         return Response(
             content=pdf_bytes,
