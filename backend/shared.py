@@ -480,53 +480,64 @@ _rembg_lock    = threading.Lock()
 def get_rembg_session():
     """rembg session olish (lazy + thread-safe).
 
-    Default model — `birefnet-general` (~200MB, eng yaxshi sifat).
-    Birinchi yuklash 30-90 soniya olishi mumkin (model internetdan yuklab
-    olinadi). Keyingi so'rovlarda RAM'da turadi, 2-5 soniya ishlatadi.
+    Default model — `isnet-general-use` (~170MB, yuqori sifat).
+    Eski default `birefnet-general` Railway konteynerida muvaffaqiyatsiz
+    bo'ldi (RAM yetishmasligi yoki dependency muammosi). isnet — sifati
+    yuqori, CNN-based, juda ishonchli.
 
     Modellar (sifat → tezlik):
-      birefnet-general    — ENG YAXSHI sifat, transformer-based (default)
-      isnet-general-use   — yuqori sifat, CNN-based
-      u2net               — o'rta sifat, eski standart
+      isnet-general-use   — YUQORI sifat, CNN-based (default)
+      birefnet-general    — eng yaxshi, lekin og'ir (200MB+)
+      u2net               — klassik, o'rta sifat (~170MB)
       u2netp              — tez (5MB), past sifat
 
     Boshqa model kerak bo'lsa, Railway Variables → REMBG_MODEL=...
+
+    Har bir modelni alohida try/except bilan o'rab oldik — biri xato bo'lsa,
+    keyingisi sinaladi va aniq log yoziladi.
     """
     global _rembg_session
     if _rembg_session is None:
         with _rembg_lock:
             if _rembg_session is None:
                 from rembg import new_session
-                model = os.environ.get("REMBG_MODEL", "birefnet-general")
-                t0 = time.time()
-                try:
-                    _rembg_session = new_session(model)
-                    logger.info(
-                        f"rembg session yaratildi ({model}) "
-                        f"— {time.time()-t0:.1f}s"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"rembg model '{model}' yuklanmadi: {type(e).__name__}: "
-                        f"{str(e)[:120]}. u2net ga o'tish (o'rta sifat fallback)."
-                    )
+                env_model = os.environ.get("REMBG_MODEL", "").strip()
+                # Sinash tartibi: env model → isnet → u2net → u2netp
+                chain = []
+                if env_model:
+                    chain.append(env_model)
+                # default chain
+                for m in ("isnet-general-use", "u2net", "u2netp"):
+                    if m not in chain:
+                        chain.append(m)
+
+                last_err = None
+                for model in chain:
+                    t0 = time.time()
                     try:
-                        _rembg_session = new_session("u2net")
+                        _rembg_session = new_session(model)
                         logger.info(
-                            f"rembg session yaratildi (u2net fallback) "
+                            f"rembg session yaratildi ({model}) "
                             f"— {time.time()-t0:.1f}s"
                         )
-                    except Exception as e2:
-                        # Oxirgi fallback — eng kichik
+                        return _rembg_session
+                    except Exception as e:
+                        last_err = e
                         logger.warning(
-                            f"rembg u2net ham yuklanmadi: {type(e2).__name__}. "
-                            "u2netp ga o'tish."
+                            f"rembg '{model}' yuklanmadi "
+                            f"({time.time()-t0:.1f}s): "
+                            f"{type(e).__name__}: {str(e)[:160]}"
                         )
-                        _rembg_session = new_session("u2netp")
-                        logger.info(
-                            f"rembg session yaratildi (u2netp final fallback) "
-                            f"— {time.time()-t0:.1f}s"
-                        )
+
+                # Hech qaysi model yuklanmasa — xatoni propagatsiya qilamiz
+                logger.error(
+                    "rembg: barcha modellar yuklanmadi. "
+                    f"Oxirgi xato: {type(last_err).__name__}: {last_err}"
+                )
+                raise RuntimeError(
+                    f"rembg modellarning hech qaysi yuklanmadi. "
+                    f"Oxirgi: {type(last_err).__name__ if last_err else 'Unknown'}"
+                )
     return _rembg_session
 
 def reset_rembg_session():
