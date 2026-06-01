@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import time
 import asyncio
@@ -21,6 +22,36 @@ from shared import (
 )
 
 router = APIRouter()
+
+# Max longest-edge (px) for the bgremove input. Phone photos are often 4000px+;
+# rembg works on a fixed internal resolution anyway, so downscaling first bounds
+# RAM/CPU on a small instance with no meaningful quality loss for cut-outs.
+_BGREMOVE_MAX_DIM = int(os.environ.get("BGREMOVE_MAX_DIM", "2000"))
+
+
+def _downscale_image_bytes(data: bytes, max_dim: int) -> bytes:
+    """Return PNG bytes downscaled so the longest edge ≤ max_dim.
+
+    Best-effort: on ANY failure (unknown format, decode error) the original
+    bytes are returned unchanged so the caller's normal path still runs.
+    """
+    try:
+        from PIL import Image, ImageOps
+        with Image.open(io.BytesIO(data)) as im:
+            im = ImageOps.exif_transpose(im)
+            w, h = im.size
+            if max(w, h) <= max_dim:
+                return data
+            scale = max_dim / max(w, h)
+            im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
+            if im.mode not in ("RGB", "RGBA"):
+                im = im.convert("RGBA")
+            buf = io.BytesIO()
+            im.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception:
+        return data
+
 
 # ─── ReportLab font helper (used by xlsx2pdf + cv fallback) ───────────────────
 
@@ -1038,7 +1069,12 @@ async def bgremove(request: Request):
                 ),
             )
 
-        # Asl fon olib tashlash — 180s timeout (birefnet katta rasmlar uchun
+        # Katta rasmlarni model'ga uzatishdan oldin kichiklashtiramiz — bu
+        # past-RAM (Railway basic) instansiyada onnxruntime xotira portlashini
+        # oldini oladi va tezlashtiradi. Xato bo'lsa, asl baytlar ishlatiladi.
+        data = _downscale_image_bytes(data, max_dim=_BGREMOVE_MAX_DIM)
+
+        # Asl fon olib tashlash — 180s timeout (katta rasmlar uchun
         # sekin bo'lishi mumkin, foydalanuvchi sifat uchun kutadi)
         try:
             result_png = await asyncio.wait_for(
@@ -1240,11 +1276,50 @@ def _do_ocr_paddle(img_bytes: bytes) -> str:
     return en_text if len(en_text) >= len(cyr_text) else cyr_text
 
 
+_TESS_LANGS_CACHE: list = []
+
+
+def _tess_langs() -> str:
+    """Resolve the OCR language string against languages actually installed.
+
+    Hardcoding 'rus+eng+uzb' makes EVERY OCR request crash with a TesseractError
+    if any one pack is missing from the container. Here we intersect the wanted
+    languages with `get_languages()` and always keep 'eng' as a safe fallback.
+    """
+    if _TESS_LANGS_CACHE:
+        return _TESS_LANGS_CACHE[0]
+    import pytesseract
+    wanted = ['eng', 'rus', 'uzb']
+    try:
+        available = set(pytesseract.get_languages(config=''))
+        langs = [l for l in wanted if l in available] or ['eng']
+    except Exception:
+        # get_languages can fail on some Tesseract builds — fall back to eng only.
+        langs = ['eng']
+    _TESS_LANGS_CACHE.append('+'.join(langs))
+    return _TESS_LANGS_CACHE[0]
+
+
+def _tess_ocr(img, config: str) -> str:
+    """Run Tesseract with a hard subprocess timeout so a wedged page can't pin
+    an ML-pool worker indefinitely (pytesseract kills the process on timeout)."""
+    import pytesseract
+    try:
+        return pytesseract.image_to_string(
+            img, lang=_tess_langs(), config=config, timeout=45
+        )
+    except RuntimeError:
+        # Timeout / Tesseract process error — retry once with eng only.
+        try:
+            return pytesseract.image_to_string(img, lang='eng', config=config, timeout=30)
+        except Exception:
+            return ''
+
+
 def _do_ocr(data: bytes, is_pdf: bool) -> str:
     import pytesseract
     from PIL import Image
 
-    LANGS  = 'rus+eng+uzb'
     CONFIG = '--oem 3 --psm 6'
 
     if is_pdf:
@@ -1273,11 +1348,20 @@ def _do_ocr(data: bytes, is_pdf: bool) -> str:
                 return result or 'Matn topilmadi.'
 
             zoom  = 200 / 72
-            mat   = fitz.Matrix(zoom, zoom)
             MAX_P = 8
+            # Cap the rendered pixmap so a large MediaBox (A0/A1 page) can't
+            # allocate a multi-hundred-MB bitmap and OOM the worker.
+            _MAX_OCR_PX = 4000
             parts = []
             for i in range(min(total_pages, MAX_P)):
-                pix       = doc[i].get_pixmap(matrix=mat, alpha=False)
+                page      = doc[i]
+                rect      = page.rect
+                pg_zoom   = zoom
+                longest   = max(rect.width, rect.height) or 1
+                if longest * pg_zoom > _MAX_OCR_PX:
+                    pg_zoom = _MAX_OCR_PX / longest
+                mat       = fitz.Matrix(pg_zoom, pg_zoom)
+                pix       = page.get_pixmap(matrix=mat, alpha=False)
                 img       = Image.frombytes('RGB', [pix.width, pix.height], pix.samples)
                 del pix
                 img_bytes = io.BytesIO()
@@ -1287,7 +1371,7 @@ def _do_ocr(data: bytes, is_pdf: bool) -> str:
                     text = _do_ocr_paddle(img_bytes)
                 except Exception:
                     img  = _preprocess_for_ocr(img)
-                    text = pytesseract.image_to_string(img, lang=LANGS, config=CONFIG)
+                    text = _tess_ocr(img, CONFIG)
                 cleaned = _clean_ocr_text(text)
                 if cleaned:
                     if total_pages > 1:
@@ -1309,7 +1393,7 @@ def _do_ocr(data: bytes, is_pdf: bool) -> str:
         pass
     img  = Image.open(io.BytesIO(data))
     img  = _preprocess_for_ocr(img)
-    text = pytesseract.image_to_string(img, lang=LANGS, config=CONFIG)
+    text = _tess_ocr(img, CONFIG)
     return _clean_ocr_text(text) or 'Matn topilmadi.'
 
 

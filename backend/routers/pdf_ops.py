@@ -33,22 +33,33 @@ def _do_mergepdf(data_list: list) -> tuple:
     import pikepdf
 
     out_pdf = pikepdf.new()
+    # Keep every source open until AFTER out_pdf.save() — pikepdf resolves the
+    # extended pages lazily, so closing a source early can corrupt the output.
+    # Also guarantees no QPDF handle leaks if a later file is invalid.
+    sources: list = []
     page_count = 0
-    for data in data_list:
-        if data[:4] != b"%PDF":
-            raise ValueError("Faqat PDF fayllar qabul qilinadi")
-        try:
-            src = pikepdf.open(io.BytesIO(data))
-        except pikepdf.PasswordError:
-            raise ValueError("Himoyalangan PDF birlashtirish uchun ochib bo'lmadi")
-        out_pdf.pages.extend(src.pages)
-        page_count += len(src.pages)
-        src.close()
-    buf = io.BytesIO()
-    out_pdf.save(buf, linearize=True)
-    out_pdf.close()
-    info = f"{len(data_list)} fayl, {page_count} sahifa"
-    return buf.getvalue(), info, page_count
+    try:
+        for data in data_list:
+            if data[:4] != b"%PDF":
+                raise ValueError("Faqat PDF fayllar qabul qilinadi")
+            try:
+                src = pikepdf.open(io.BytesIO(data))
+            except pikepdf.PasswordError:
+                raise ValueError("Himoyalangan PDF birlashtirish uchun ochib bo'lmadi")
+            sources.append(src)
+            out_pdf.pages.extend(src.pages)
+            page_count += len(src.pages)
+        buf = io.BytesIO()
+        out_pdf.save(buf, linearize=True)
+        info = f"{len(data_list)} fayl, {page_count} sahifa"
+        return buf.getvalue(), info, page_count
+    finally:
+        out_pdf.close()
+        for src in sources:
+            try:
+                src.close()
+            except Exception:
+                pass
 
 
 @router.post("/api/mergepdf")
@@ -483,8 +494,18 @@ def _do_pdf2img(data: bytes, dpi: int = 150, fmt: str = "png", quality: int = 85
     fmt     = fmt if fmt in _PDF2IMG_VALID_FMT else "png"
     quality = max(50, min(95, quality))
     zoom    = dpi / 72
-    mat     = fitz.Matrix(zoom, zoom)
     ext     = "jpg" if fmt == "jpeg" else fmt
+
+    # Clamp the per-page render so a huge MediaBox (e.g. A0 at 300 DPI ≈ 415 MB
+    # for one RGB pixmap) cannot OOM the worker on a low-RAM instance.
+    _MAX_PAGE_PX = 5000
+
+    def _page_matrix(page):
+        longest = max(page.rect.width, page.rect.height) or 1
+        z = zoom
+        if longest * z > _MAX_PAGE_PX:
+            z = _MAX_PAGE_PX / longest
+        return fitz.Matrix(z, z)
 
     doc = fitz.open(stream=data, filetype="pdf")
     if doc.is_encrypted:
@@ -499,7 +520,7 @@ def _do_pdf2img(data: bytes, dpi: int = 150, fmt: str = "png", quality: int = 85
     truncated = total_pages > _PDF2IMG_MAX_PAGES
 
     if render_n == 1:
-        pix       = doc[0].get_pixmap(matrix=mat, alpha=False)
+        pix       = doc[0].get_pixmap(matrix=_page_matrix(doc[0]), alpha=False)
         img_bytes = pix.tobytes(fmt, jpg_quality=quality) if fmt != "png" else pix.tobytes("png")
         doc.close()
         media = f"image/{fmt}"
@@ -512,7 +533,7 @@ def _do_pdf2img(data: bytes, dpi: int = 150, fmt: str = "png", quality: int = 85
     zip_mode = zipfile.ZIP_STORED if fmt == "png" else zipfile.ZIP_DEFLATED
     with zipfile.ZipFile(zf_buf, "w", zip_mode) as zf:
         for i in range(render_n):
-            pix       = doc[i].get_pixmap(matrix=mat, alpha=False)
+            pix       = doc[i].get_pixmap(matrix=_page_matrix(doc[i]), alpha=False)
             img_bytes = pix.tobytes(fmt, jpg_quality=quality) if fmt != "png" else pix.tobytes("png")
             total_size += len(img_bytes)
             zf.writestr(f"page_{str(i + 1).zfill(padding)}.{ext}", img_bytes)
@@ -539,6 +560,9 @@ async def pdf_to_img(
     user_id = _get_user_id(request)
     try:
         data = await read_upload(file, "/api/pdf2img")
+        if data[:4] != b'%PDF':
+            raise HTTPException(status_code=422,
+                detail="Bu PDF fayl emas. Iltimos, haqiqiy PDF yuklang.")
 
         loop = asyncio.get_running_loop()
         try:
@@ -564,6 +588,9 @@ async def pdf_to_img(
         )
     except HTTPException:
         raise
+    except ValueError as e:
+        # _do_pdf2img raises ValueError for user-fixable cases (encrypted/empty PDF).
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"pdf2img xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"pdf2img: {type(e).__name__}: {str(e)[:160]}")

@@ -1079,32 +1079,41 @@ def _do_translate(query: str, lang: str) -> str:
     except Exception as google_err:
         logger.warning(f"translate google xato: {google_err}")
 
-    try:
-        import argostranslate.translate as _at
-        installed = _at.get_installed_languages()
-        lang_map  = {l.code: l for l in installed}
-        for src_code in ("en", "ru", "uz"):
-            if src_code == lang:
-                continue
-            if src_code in lang_map and lang in lang_map:
-                translation = lang_map[src_code].get_translation(lang_map[lang])
-                if translation:
-                    result = translation.translate(query)
-                    if result and result.strip():
-                        return result.strip()
-    except Exception as argo_err:
-        logger.debug(f"argostranslate xato: {argo_err}")
+    # argostranslate (offline NMT) is heavy on RAM and rarely has models
+    # installed on Railway's basic tier — opt-in only via ARGOS_TRANSLATE=1.
+    if os.environ.get("ARGOS_TRANSLATE", "").strip().lower() in ("1", "true", "yes"):
+        try:
+            import argostranslate.translate as _at
+            installed = _at.get_installed_languages()
+            lang_map  = {l.code: l for l in installed}
+            for src_code in ("en", "ru", "uz"):
+                if src_code == lang:
+                    continue
+                if src_code in lang_map and lang in lang_map:
+                    translation = lang_map[src_code].get_translation(lang_map[lang])
+                    if translation:
+                        result = translation.translate(query)
+                        if result and result.strip():
+                            return result.strip()
+        except Exception as argo_err:
+            logger.debug(f"argostranslate xato: {argo_err}")
 
     chunk  = query[:500]
     suffix = "\n⚠️ Faqat 500 belgi tarjima qilindi (MyMemory chegarasi)" if len(query) > 500 else ""
+    # Cumulative deadline so the 3-source fallback can't exceed the outer 20s
+    # budget and leak a busy worker thread on a slow network.
+    deadline = time.monotonic() + 12.0
     for src in ("uz", "ru", "en"):
         if src == lang:
             continue
+        remaining = deadline - time.monotonic()
+        if remaining <= 1.0:
+            break
         try:
             r   = httpx.get(
                 "https://api.mymemory.translated.net/get",
                 params={"q": chunk, "langpair": f"{src}|{lang}"},
-                timeout=10,
+                timeout=min(6.0, remaining),
             )
             d   = r.json()
             txt = (d.get("responseData") or {}).get("translatedText", "")
@@ -1502,6 +1511,19 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
                     if len(names) > _UNZIP_MAX_FILES:
                         raise HTTPException(status_code=400,
                             detail=f"7z ichida {len(names)} fayl — maksimal {_UNZIP_MAX_FILES}")
+                    # 7z achieves extreme ratios — guard the uncompressed size and
+                    # the compression ratio BEFORE readall() loads everything to RAM.
+                    try:
+                        total_uncomp = sum(
+                            getattr(fi, "uncompressed", 0) or 0 for fi in sz.list()
+                        )
+                    except Exception:
+                        total_uncomp = 0
+                    if total_uncomp > _UNZIP_MAX_UNCOMP_MB * 1024 * 1024:
+                        raise HTTPException(status_code=400,
+                            detail=f"Siqilmagan hajm {total_uncomp // (1024*1024)} MB — maksimal {_UNZIP_MAX_UNCOMP_MB} MB")
+                    if len(data) > 0 and total_uncomp / len(data) > _UNZIP_MAX_RATIO:
+                        raise HTTPException(status_code=400, detail="7z bomb aniqlandi — fayl xavfsiz emas")
                     all_data_dict = sz.readall() or {}
                 entries = [
                     (os.path.basename(n) or "file", buf.read())
