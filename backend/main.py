@@ -213,7 +213,7 @@ async def lifespan(app: FastAPI):
                 if r.json().get("ok"):
                     logger.info(
                         f"Webhook ro'yxatdan o'tdi: {webhook_url} "
-                        f"(secret_token: {'YOQ' if WEBHOOK_SECRET else 'YOQ EMAS'})"
+                        f"(secret_token: {'sozlangan' if WEBHOOK_SECRET else 'sozlanmagan'})"
                     )
                 else:
                     logger.error(f"setWebhook muvaffaqiyatsiz: {r.json()}")
