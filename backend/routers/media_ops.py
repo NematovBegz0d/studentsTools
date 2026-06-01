@@ -1005,21 +1005,22 @@ async def bgremove(request: Request):
             check_size(data, "/api/bgremove")
             bg_color = (body.get("bg_color") or "").strip().lstrip("#") or None
 
-        # rembg session olish — birinchi marta 10-30s olishi mumkin (model yuklab oladi).
-        # Shuning uchun loop'ni bloklamasdan executor'da chaqiramiz.
+        # rembg session olish — birefnet-general birinchi marta 60-120s olishi
+        # mumkin (200MB model internetdan yuklab olinadi). Shuning uchun
+        # loop'ni bloklamasdan executor'da chaqiramiz va 180s timeout beramiz.
         loop = asyncio.get_running_loop()
         try:
             session = await asyncio.wait_for(
                 loop.run_in_executor(_ml_pool, get_rembg_session),
-                timeout=60.0,  # birinchi yuklash uchun
+                timeout=180.0,  # 3 daqiqa — birefnet birinchi yuklash uchun
             )
         except asyncio.TimeoutError:
             raise HTTPException(
                 status_code=503,
                 detail=(
-                    "AI model yuklanish vaqti uzaydi. Iltimos, 30-60 soniyadan "
-                    "keyin qayta urinib ko'ring (birinchi so'rovda model "
-                    "internetdan yuklanadi)."
+                    "AI model birinchi marta yuklanmoqda (3 daqiqadan oshdi). "
+                    "Iltimos, 1-2 daqiqa kuting va qayta urinib ko'ring. "
+                    "Keyingi safarlar tez bo'ladi."
                 ),
             )
         except Exception as e:
@@ -1032,21 +1033,23 @@ async def bgremove(request: Request):
                 ),
             )
 
-        # Aslida fon olib tashlash — 120s timeout (rembg ba'zan sekin)
+        # Asl fon olib tashlash — 180s timeout (birefnet katta rasmlar uchun
+        # sekin bo'lishi mumkin, foydalanuvchi sifat uchun kutadi)
         try:
             result_png = await asyncio.wait_for(
                 loop.run_in_executor(
                     _ml_pool,
                     functools.partial(remove, data, session=session),
                 ),
-                timeout=120.0,
+                timeout=180.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(
                 status_code=408,
                 detail=(
-                    "Fon olib tashlash juda uzoq vaqt oldi (>2 daqiqa). "
-                    "Kichikroq rasm yuklang (1-2 MP) yoki keyinroq urinib ko'ring."
+                    "Fon olib tashlash juda uzoq vaqt oldi (>3 daqiqa). "
+                    "Iltimos, kichikroq rasm yuklang (telefonda olingan "
+                    "1-2 MP rasm yetarli) yoki keyinroq urinib ko'ring."
                 ),
             )
 

@@ -302,7 +302,8 @@ function buildFormData(key, value) {
 
 // ✅ NEW: Mobile fallback (FormData → base64 JSON)
 // BGRemove va OCR kabi ba'zi endpointlar uchun
-async function postWithFallback(endpoint, file) {
+// timeoutMs — bgremove (birefnet) birinchi marta 3+ daqiqa olishi mumkin
+async function postWithFallback(endpoint, file, timeoutMs = 45000) {
   const form = buildFormData("file", file);
 
   try {
@@ -313,8 +314,8 @@ async function postWithFallback(endpoint, file) {
         headers: getAuthHeaders(),
         body: form,
       },
-      45000,
-    ); // OCR/bgremove takes longer
+      timeoutMs,
+    );
 
     if (response.ok) return response;
 
@@ -340,7 +341,7 @@ async function postWithFallback(endpoint, file) {
           },
           body: JSON.stringify({ data: base64 }),
         },
-        45000,
+        timeoutMs,
       );
     }
     throw networkErr;
@@ -525,14 +526,16 @@ async function bgremove({ file }) {
   validateFile(file, ".jpg,.png");
   if (!BACKEND_URL) return { type: "text", content: "⚠️ Backend ulanmagan." };
 
-  const response = await postWithFallback("/api/bgremove", file);
+  // 4 daqiqa timeout: birefnet AI model birinchi marta yuklanganda 60-120s,
+  // keyin har rasm uchun 2-30s. Foydalanuvchi yaxshi sifat uchun kutadi.
+  const response = await postWithFallback("/api/bgremove", file, 240000);
   await handleResponseError(response);
   const blob = await response.blob();
   return {
     type: "file",
     blob,
     filename: "no-bg.png",
-    info: "Fon olib tashlandi ✨",
+    info: "Fon olib tashlandi ✨ (birefnet AI)",
   };
 }
 

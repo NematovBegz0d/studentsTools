@@ -375,13 +375,18 @@ function TextInputBox({ t, placeholder, onChange, maxLength = 5000 }) {
 }
 
 // ─── Processing animation ─────────────────────────────────────────
-function Processing({ t, accent }) {
+function Processing({ t, accent, slowHint }) {
   const [pct, setPct] = useS(0);
+  const [elapsed, setElapsed] = useS(0);
 
   useE(() => {
+    // Uzoq xizmatlar uchun (bgremove, OCR): har sekundda
+    // "5 soniya... 10 soniya..." ko'rsatamiz va foydalanuvchini xotirjam qilamiz.
+    const SLOW = !!slowHint;
     const start = performance.now();
-    const DURATION = 2200;
+    const DURATION = SLOW ? 90000 : 2200; // bgremove uchun 90s 95%'gacha
     let rafId;
+    let secondTimer;
 
     const tick = (now) => {
       const progress = Math.min(1, (now - start) / DURATION);
@@ -390,9 +395,18 @@ function Processing({ t, accent }) {
       if (progress < 1) rafId = requestAnimationFrame(tick);
     };
 
+    if (SLOW) {
+      secondTimer = setInterval(() => {
+        setElapsed(Math.floor((performance.now() - start) / 1000));
+      }, 1000);
+    }
+
     rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, []);
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (secondTimer) clearInterval(secondTimer);
+    };
+  }, [slowHint]);
 
   const circumference = 2 * Math.PI * 48;
 
@@ -460,8 +474,27 @@ function Processing({ t, accent }) {
       <div
         style={{ color: "var(--text-primary)", fontSize: 15, fontWeight: 600 }}
       >
-        {t.sheetProcessing}
+        {slowHint || t.sheetProcessing}
       </div>
+      {slowHint && (
+        <div
+          style={{
+            color: "var(--text-muted)",
+            fontSize: 12,
+            textAlign: "center",
+            maxWidth: 280,
+            lineHeight: 1.5,
+          }}
+        >
+          {elapsed > 0 && (
+            <div style={{ marginBottom: 4, color: "var(--text-secondary)" }}>
+              ⏱ {elapsed} soniya
+            </div>
+          )}
+          Birinchi marta AI model yuklanyapti (1-2 daqiqa).
+          Keyingi safar tez bo'ladi.
+        </div>
+      )}
     </div>
   );
 }
@@ -2186,7 +2219,19 @@ function ServiceSheet({
         </>
       )}
 
-      {step === "processing" && <Processing t={t} accent={accent} />}
+      {step === "processing" && (
+        <Processing
+          t={t}
+          accent={accent}
+          slowHint={
+            service.id === "bgremove"
+              ? "AI fon olib tashlanmoqda"
+              : service.id === "ocr"
+                ? "Matn aniqlanmoqda"
+                : null
+          }
+        />
+      )}
 
       {step === "error" && (
         <ErrorState

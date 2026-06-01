@@ -480,22 +480,24 @@ _rembg_lock    = threading.Lock()
 def get_rembg_session():
     """rembg session olish (lazy + thread-safe).
 
-    Default model — `u2netp` (5MB, tez). Ilgari `birefnet-general` (~200MB)
-    edi, lekin u Numba JIT cache muammosi bilan Railway konteynerda muammoga
-    duch keldi va birinchi so'rovda timeout bo'lardi.
+    Default model — `birefnet-general` (~200MB, eng yaxshi sifat).
+    Birinchi yuklash 30-90 soniya olishi mumkin (model internetdan yuklab
+    olinadi). Keyingi so'rovlarda RAM'da turadi, 2-5 soniya ishlatadi.
 
-    Yaxshiroq sifat kerak bo'lsa, Railway Variables'ga qo'shing:
-        REMBG_MODEL=birefnet-general    (sekin, 200MB)
-        REMBG_MODEL=u2net               (o'rta, ~170MB)
-        REMBG_MODEL=u2netp              (tez, 5MB) ← default
-        REMBG_MODEL=isnet-general-use   (yangi, sifatli)
+    Modellar (sifat → tezlik):
+      birefnet-general    — ENG YAXSHI sifat, transformer-based (default)
+      isnet-general-use   — yuqori sifat, CNN-based
+      u2net               — o'rta sifat, eski standart
+      u2netp              — tez (5MB), past sifat
+
+    Boshqa model kerak bo'lsa, Railway Variables → REMBG_MODEL=...
     """
     global _rembg_session
     if _rembg_session is None:
         with _rembg_lock:
             if _rembg_session is None:
                 from rembg import new_session
-                model = os.environ.get("REMBG_MODEL", "u2netp")
+                model = os.environ.get("REMBG_MODEL", "birefnet-general")
                 t0 = time.time()
                 try:
                     _rembg_session = new_session(model)
@@ -506,20 +508,25 @@ def get_rembg_session():
                 except Exception as e:
                     logger.warning(
                         f"rembg model '{model}' yuklanmadi: {type(e).__name__}: "
-                        f"{str(e)[:120]}. u2netp ga o'tish."
+                        f"{str(e)[:120]}. u2net ga o'tish (o'rta sifat fallback)."
                     )
                     try:
-                        _rembg_session = new_session("u2netp")
+                        _rembg_session = new_session("u2net")
                         logger.info(
-                            f"rembg session yaratildi (u2netp fallback) "
+                            f"rembg session yaratildi (u2net fallback) "
                             f"— {time.time()-t0:.1f}s"
                         )
                     except Exception as e2:
-                        logger.error(
-                            f"rembg u2netp ham yuklanmadi: {type(e2).__name__}: "
-                            f"{str(e2)[:120]}"
+                        # Oxirgi fallback — eng kichik
+                        logger.warning(
+                            f"rembg u2net ham yuklanmadi: {type(e2).__name__}. "
+                            "u2netp ga o'tish."
                         )
-                        raise
+                        _rembg_session = new_session("u2netp")
+                        logger.info(
+                            f"rembg session yaratildi (u2netp final fallback) "
+                            f"— {time.time()-t0:.1f}s"
+                        )
     return _rembg_session
 
 def reset_rembg_session():
