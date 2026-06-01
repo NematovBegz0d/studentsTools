@@ -32,7 +32,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 ENV SAL_USE_VCLPLUGIN=svp \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    NUMBA_CACHE_DIR=/tmp/numba_cache \
+    NUMBA_DISABLE_JIT_CACHE=1
 
 RUN groupadd -r -g 1000 appgroup && useradd -r -u 1000 -g appgroup appuser
 

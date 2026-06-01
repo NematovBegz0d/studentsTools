@@ -983,7 +983,13 @@ async def bgremove(request: Request):
     from rembg import remove
     t0 = time.time()
     if not await acquire_user_ml_slot(user_id):
-        raise HTTPException(status_code=429, detail="Parallel ML so'rov rad etildi — oldingi so'rov tugashini kuting")
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Boshqa AI so'rovingiz ishlashda. Iltimos, "
+                "oldingisi tugashini kuting va qayta urinib ko'ring."
+            ),
+        )
     try:
         ct       = request.headers.get("content-type", "")
         bg_color = None
@@ -999,19 +1005,50 @@ async def bgremove(request: Request):
             check_size(data, "/api/bgremove")
             bg_color = (body.get("bg_color") or "").strip().lstrip("#") or None
 
-        session = get_rembg_session()
-        loop    = asyncio.get_running_loop()
+        # rembg session olish — birinchi marta 10-30s olishi mumkin (model yuklab oladi).
+        # Shuning uchun loop'ni bloklamasdan executor'da chaqiramiz.
+        loop = asyncio.get_running_loop()
+        try:
+            session = await asyncio.wait_for(
+                loop.run_in_executor(_ml_pool, get_rembg_session),
+                timeout=60.0,  # birinchi yuklash uchun
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "AI model yuklanish vaqti uzaydi. Iltimos, 30-60 soniyadan "
+                    "keyin qayta urinib ko'ring (birinchi so'rovda model "
+                    "internetdan yuklanadi)."
+                ),
+            )
+        except Exception as e:
+            logger.error(f"bgremove get_rembg_session xatosi: {type(e).__name__}: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "AI fon olib tashlash xizmati hozir ishlashga tayyor emas. "
+                    "Iltimos, biroz keyin qayta urinib ko'ring."
+                ),
+            )
+
+        # Aslida fon olib tashlash — 120s timeout (rembg ba'zan sekin)
         try:
             result_png = await asyncio.wait_for(
                 loop.run_in_executor(
                     _ml_pool,
                     functools.partial(remove, data, session=session),
                 ),
-                timeout=60.0,
+                timeout=120.0,
             )
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=408,
-                detail="Fon olib tashlash 60 soniyadan oshdi. Kichikroq rasm yuklang.")
+            raise HTTPException(
+                status_code=408,
+                detail=(
+                    "Fon olib tashlash juda uzoq vaqt oldi (>2 daqiqa). "
+                    "Kichikroq rasm yuklang (1-2 MP) yoki keyinroq urinib ko'ring."
+                ),
+            )
 
         _bg = bg_color.lstrip("#") if bg_color else ""
         if len(_bg) == 3:
