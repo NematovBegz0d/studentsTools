@@ -128,19 +128,30 @@ function _MpAdder({ count, onAdd }) {
         }}
         style={{
           width: "100%",
-          minHeight: isEmpty ? 160 : 64,
-          padding: isEmpty ? 22 : 14,
-          background: dragOver ? MP_ACCENT_SOFT : "var(--bg-surface-1)",
+          minHeight: isEmpty ? 170 : 64,
+          padding: isEmpty ? "26px 22px" : 14,
+          background: isEmpty
+            ? (dragOver
+                ? `linear-gradient(135deg, ${MP_ACCENT}26, ${MP_ACCENT}08)`
+                : "linear-gradient(180deg, var(--bg-surface-1), var(--bg-surface-2))")
+            : (dragOver ? MP_ACCENT_SOFT : "var(--bg-surface-1)"),
           border: `1.5px dashed ${dragOver ? MP_ACCENT : "var(--border-medium)"}`,
-          borderRadius: 18,
+          borderRadius: isEmpty ? 20 : 14,
           cursor: "pointer",
           display: "flex",
           flexDirection: isEmpty ? "column" : "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: isEmpty ? 8 : 10,
+          gap: isEmpty ? 10 : 10,
           font: "inherit",
           color: "var(--text-primary)",
+          transition: "all 0.22s cubic-bezier(0.3, 0.7, 0.4, 1)",
+          transform: isEmpty && dragOver ? "scale(1.01)" : "scale(1)",
+          boxShadow: isEmpty
+            ? (dragOver ? `0 10px 32px ${MP_ACCENT}30` : "0 1px 0 rgba(255,255,255,0.04) inset")
+            : "none",
+          position: "relative",
+          overflow: "hidden",
         }}
       >
         {isEmpty ? (
@@ -148,37 +159,61 @@ function _MpAdder({ count, onAdd }) {
             <div
               aria-hidden="true"
               style={{
-                width: 46,
-                height: 46,
-                borderRadius: 12,
-                background: MP_ACCENT_SOFT,
+                position: "absolute",
+                top: -40,
+                left: "50%",
+                transform: "translateX(-50%)",
+                width: 200,
+                height: 80,
+                background: dragOver
+                  ? `radial-gradient(ellipse at center, ${MP_ACCENT}40, transparent 70%)`
+                  : `radial-gradient(ellipse at center, ${MP_ACCENT}1a, transparent 70%)`,
+                pointerEvents: "none",
+              }}
+            />
+            <div
+              aria-hidden="true"
+              style={{
+                position: "relative",
+                width: 56,
+                height: 56,
+                borderRadius: 16,
+                background: `linear-gradient(135deg, ${MP_ACCENT}38, ${MP_ACCENT}14)`,
                 border: `1px solid ${MP_ACCENT_BD}`,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                boxShadow: `0 6px 20px ${MP_ACCENT}30`,
               }}
             >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                <path d="M12 3v12m0-12l-4 4m4-4l4 4M5 21h14"
-                  stroke={MP_ACCENT} strokeWidth="2"
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+                <path d="M12 16V4m0 0l-5 5m5-5l5 5M5 20h14"
+                  stroke={MP_ACCENT} strokeWidth="2.2"
                   strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </div>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.2, position: "relative" }}>
               PDF fayllarni shu yerga tashlang
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            <div style={{ fontSize: 12.5, color: "var(--text-muted)", fontWeight: 500, position: "relative" }}>
               yoki bosib tanlang (bir nechta fayl)
             </div>
             <div
               style={{
                 fontSize: 10.5,
-                letterSpacing: 0.4,
+                letterSpacing: 0.5,
                 textTransform: "uppercase",
-                color: "var(--text-faint)",
+                color: "var(--text-secondary)",
+                fontWeight: 600,
+                background: "var(--bg-surface-2)",
+                border: "0.5px solid var(--border-subtle)",
+                padding: "4px 12px",
+                borderRadius: 99,
+                marginTop: 4,
+                position: "relative",
               }}
             >
-              .PDF · Har biri maks {MP_MAX_FILE_MB} MB · Jami maks {MP_MAX_TOTAL_MB} MB
+              .PDF · Har biri maks {MP_MAX_FILE_MB} MB
             </div>
           </>
         ) : (
@@ -186,25 +221,27 @@ function _MpAdder({ count, onAdd }) {
             <div
               aria-hidden="true"
               style={{
-                width: 28,
-                height: 28,
-                borderRadius: 8,
-                background: MP_ACCENT_SOFT,
-                color: MP_ACCENT,
+                width: 32,
+                height: 32,
+                borderRadius: 9,
+                background: `linear-gradient(135deg, ${MP_ACCENT}, ${MP_ACCENT}cc)`,
+                color: "#fff",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 fontSize: 18,
                 fontWeight: 700,
+                boxShadow: `0 4px 12px ${MP_ACCENT}45`,
+                flexShrink: 0,
               }}
             >
               +
             </div>
-            <div style={{ flex: 1, textAlign: "left" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
+            <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text-primary)", letterSpacing: -0.1 }}>
                 Yana PDF qo'shish
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
                 Tanlangan: {count} ta · Maksimum {MP_MAX_FILES} ta
               </div>
             </div>

@@ -99,51 +99,94 @@ function Dropzone({ accept, multi, t, onPick }) {
         }
         style={{
           width: "100%",
-          minHeight: 160,
-          padding: 22,
+          minHeight: 180,
+          padding: "26px 22px",
           background: error
-            ? "rgba(239,68,68,0.06)"
-            : dragOver
-              ? "rgba(139,92,246,0.08)"
-              : "var(--bg-surface-1)",
+            ? "linear-gradient(135deg, rgba(239,68,68,0.08), rgba(239,68,68,0.02))"
+            : label
+              ? "linear-gradient(135deg, rgba(34,197,94,0.10), rgba(34,197,94,0.03))"
+              : dragOver
+                ? "linear-gradient(135deg, rgba(139,92,246,0.14), rgba(59,130,246,0.06))"
+                : "linear-gradient(180deg, var(--bg-surface-1), var(--bg-surface-2))",
           border: `1.5px dashed ${
             error
-              ? "rgba(239,68,68,0.4)"
-              : dragOver
-                ? "#8b5cf6"
-                : "var(--border-medium)"
+              ? "rgba(239,68,68,0.45)"
+              : label
+                ? "rgba(34,197,94,0.40)"
+                : dragOver
+                  ? "#8b5cf6"
+                  : "var(--border-medium)"
           }`,
-          borderRadius: 18,
+          borderRadius: 20,
           cursor: "pointer",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          gap: 8,
-          transition: "all 0.2s",
+          gap: 10,
+          transition: "all 0.22s cubic-bezier(0.3, 0.7, 0.4, 1)",
+          transform: dragOver ? "scale(1.01)" : "scale(1)",
+          boxShadow: dragOver
+            ? "0 10px 32px rgba(139,92,246,0.18)"
+            : "0 1px 0 rgba(255,255,255,0.04) inset",
           font: "inherit",
+          position: "relative",
+          overflow: "hidden",
         }}
       >
+        {/* Dekorativ orqa fon — subtle radial glow yuqorida */}
+        {!label && !error && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              top: -40,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 200,
+              height: 80,
+              background: dragOver
+                ? "radial-gradient(ellipse at center, rgba(139,92,246,0.25), transparent 70%)"
+                : "radial-gradient(ellipse at center, rgba(139,92,246,0.10), transparent 70%)",
+              pointerEvents: "none",
+              transition: "opacity 0.22s",
+            }}
+          />
+        )}
+
         {/* Icon */}
         <div
           aria-hidden="true"
           style={{
-            width: 48,
-            height: 48,
-            borderRadius: 14,
+            position: "relative",
+            width: 56,
+            height: 56,
+            borderRadius: 16,
             background: error
-              ? "rgba(239,68,68,0.14)"
+              ? "linear-gradient(135deg, rgba(239,68,68,0.20), rgba(239,68,68,0.08))"
               : label
-                ? "rgba(34,197,94,0.16)"
-                : "rgba(139,92,246,0.16)",
+                ? "linear-gradient(135deg, rgba(34,197,94,0.22), rgba(34,197,94,0.08))"
+                : "linear-gradient(135deg, rgba(139,92,246,0.22), rgba(59,130,246,0.10))",
+            border: `1px solid ${
+              error
+                ? "rgba(239,68,68,0.30)"
+                : label
+                  ? "rgba(34,197,94,0.35)"
+                  : "rgba(139,92,246,0.35)"
+            }`,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            marginBottom: 4,
+            boxShadow: error
+              ? "0 6px 20px rgba(239,68,68,0.12)"
+              : label
+                ? "0 6px 20px rgba(34,197,94,0.14)"
+                : "0 6px 20px rgba(139,92,246,0.15)",
+            marginBottom: 2,
           }}
         >
           {error ? (
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
               <path
                 d="M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"
                 stroke="#fb7185"
@@ -153,21 +196,22 @@ function Dropzone({ accept, multi, t, onPick }) {
               />
             </svg>
           ) : label ? (
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
               <path
                 d="M5 12l4 4L19 6"
                 stroke="#4ade80"
-                strokeWidth="2.5"
+                strokeWidth="2.6"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
             </svg>
           ) : (
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+              {/* UPLOAD arrow — yuqoriga, ramka bilan */}
               <path
-                d="M12 4v12m0 0l-5-5m5 5l5-5M5 20h14"
+                d="M12 16V4m0 0l-5 5m5-5l5 5M5 20h14"
                 stroke="#a78bfa"
-                strokeWidth="2"
+                strokeWidth="2.2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -183,50 +227,70 @@ function Dropzone({ accept, multi, t, onPick }) {
               fontSize: 13,
               fontWeight: 600,
               textAlign: "center",
+              maxWidth: 280,
+              lineHeight: 1.4,
+              position: "relative",
             }}
           >
             {error}
           </div>
         ) : label ? (
-          <>
-            <div
-              style={{
-                color: "var(--text-primary)",
-                fontSize: 13.5,
-                fontWeight: 600,
-                textAlign: "center",
-                wordBreak: "break-all",
-                maxWidth: 260,
-              }}
-            >
-              {label}
-            </div>
-            <div style={{ color: "var(--text-muted)", fontSize: 11.5 }}>
-              {sizeText}
-            </div>
-          </>
-        ) : (
-          <>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, position: "relative" }}>
             <div
               style={{
                 color: "var(--text-primary)",
                 fontSize: 14,
-                fontWeight: 600,
+                fontWeight: 700,
+                textAlign: "center",
+                wordBreak: "break-all",
+                maxWidth: 260,
+                letterSpacing: -0.1,
+              }}
+            >
+              {label}
+            </div>
+            <div
+              style={{
+                color: "var(--text-muted)",
+                fontSize: 11.5,
+                fontWeight: 500,
+                background: "var(--bg-surface-2)",
+                padding: "3px 10px",
+                borderRadius: 99,
+                border: "0.5px solid var(--border-subtle)",
+              }}
+            >
+              {sizeText} · tayyor
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, position: "relative" }}>
+            <div
+              style={{
+                color: "var(--text-primary)",
+                fontSize: 15,
+                fontWeight: 700,
+                letterSpacing: -0.2,
               }}
             >
               {t.sheetUpload}
             </div>
-            <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
+            <div style={{ color: "var(--text-muted)", fontSize: 12.5, fontWeight: 500 }}>
               {t.sheetUploadSub}
             </div>
             {accept && (
               <div
                 style={{
-                  color: "var(--text-faint)",
+                  color: "var(--text-secondary)",
                   fontSize: 10.5,
-                  marginTop: 4,
+                  marginTop: 6,
                   textTransform: "uppercase",
-                  letterSpacing: 0.4,
+                  letterSpacing: 0.5,
+                  fontWeight: 600,
+                  background: "var(--bg-surface-2)",
+                  border: "0.5px solid var(--border-subtle)",
+                  padding: "4px 10px",
+                  borderRadius: 99,
                 }}
               >
                 {accept
@@ -240,11 +304,12 @@ function Dropzone({ accept, multi, t, onPick }) {
                 color: "var(--text-faint)",
                 fontSize: 10.5,
                 marginTop: 2,
+                fontWeight: 500,
               }}
             >
               Maks. {MAX_FILE_MB} MB
             </div>
-          </>
+          </div>
         )}
       </button>
     </div>
@@ -1726,36 +1791,92 @@ function ServicePage({ service, isPremium, t, accent, onBack, onToast, onGoToPla
           <div
             style={{
               margin: "16px 16px 0",
-              padding: "14px 16px",
-              background: "var(--bg-surface-1)",
-              borderRadius: 16,
+              padding: "16px 18px",
+              background:
+                "linear-gradient(140deg, var(--bg-surface-1) 0%, var(--bg-surface-2) 100%)",
+              borderRadius: 18,
               border: "0.5px solid var(--border-subtle)",
+              position: "relative",
+              overflow: "hidden",
             }}
           >
+            {/* Subtle aksent qatlami yuqori chetda */}
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 1,
+                background: `linear-gradient(90deg, transparent, ${accent}55, transparent)`,
+              }}
+            />
             <div
               style={{
-                fontSize: 10.5, fontWeight: 700, letterSpacing: 0.7,
-                textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 10.5,
+                fontWeight: 700,
+                letterSpacing: 0.7,
+                textTransform: "uppercase",
+                color: "var(--text-muted)",
+                marginBottom: 14,
               }}
             >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke={accent} strokeWidth="2" />
+                <path
+                  d="M12 7v6m0 3v.5"
+                  stroke={accent}
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                />
+              </svg>
               Qanday ishlaydi
             </div>
             {howTo.map((step, i) => (
               <div
                 key={i}
-                style={{ display: "flex", gap: 10, marginBottom: i < howTo.length - 1 ? 10 : 0 }}
+                style={{
+                  display: "flex",
+                  gap: 12,
+                  marginBottom: i < howTo.length - 1 ? 12 : 0,
+                  alignItems: "flex-start",
+                }}
               >
                 <div
+                  aria-hidden="true"
                   style={{
-                    width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
-                    background: `${accent}1a`, border: `1.5px solid ${accent}55`,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 10, fontWeight: 700, color: accent, marginTop: 2,
+                    width: 24,
+                    height: 24,
+                    borderRadius: 8,
+                    flexShrink: 0,
+                    background: `linear-gradient(135deg, ${accent}30, ${accent}10)`,
+                    border: `1px solid ${accent}50`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    color: accent,
+                    marginTop: 1,
+                    fontVariantNumeric: "tabular-nums",
+                    boxShadow: `0 2px 8px ${accent}25`,
                   }}
                 >
                   {i + 1}
                 </div>
-                <div style={{ fontSize: 13.5, color: "var(--text-secondary)", lineHeight: 1.5, whiteSpace: "pre-line" }}>
+                <div
+                  style={{
+                    fontSize: 13.5,
+                    color: "var(--text-secondary)",
+                    lineHeight: 1.55,
+                    whiteSpace: "pre-line",
+                    paddingTop: 2,
+                  }}
+                >
                   {step}
                 </div>
               </div>

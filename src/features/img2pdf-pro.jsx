@@ -335,17 +335,119 @@ function _ImageList({ images, mode, onMove, onDelete }) {
     return (
       <div
         style={{
-          padding:        "26px 16px",
-          textAlign:      "center",
-          border:         "0.5px dashed var(--border-medium)",
-          borderRadius:   14,
-          background:     "var(--bg-surface-1)",
-          color:          "var(--text-muted)",
-          fontSize:       13,
+          padding: "32px 16px",
+          textAlign: "center",
+          border: "0.5px dashed var(--border-medium)",
+          borderRadius: 16,
+          background:
+            "linear-gradient(180deg, var(--bg-surface-1) 0%, var(--bg-surface-2) 100%)",
+          color: "var(--text-muted)",
+          fontSize: 13,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 10,
+          position: "relative",
+          overflow: "hidden",
         }}
       >
-        <div style={{ fontSize: 26, marginBottom: 6 }} aria-hidden="true">🗂️</div>
-        Hozircha hech qanday rasm yuklanmadi
+        {/* Subtle amber glow */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            top: -30,
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 200,
+            height: 60,
+            background: `radial-gradient(ellipse at center, ${AMBER}1a, transparent 70%)`,
+            pointerEvents: "none",
+          }}
+        />
+        {/* Yumshoq miniatyura-stack illyustratsiya */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: "relative",
+            width: 64,
+            height: 48,
+            marginBottom: 2,
+          }}
+        >
+          {/* Orqa kart */}
+          <div
+            style={{
+              position: "absolute",
+              top: 4,
+              left: 4,
+              width: 56,
+              height: 40,
+              borderRadius: 8,
+              background: AMBER_SOFT,
+              border: `1px solid ${AMBER_BD}`,
+              transform: "rotate(-6deg)",
+              opacity: 0.6,
+            }}
+          />
+          {/* O'rta kart */}
+          <div
+            style={{
+              position: "absolute",
+              top: 2,
+              left: 2,
+              width: 56,
+              height: 40,
+              borderRadius: 8,
+              background: AMBER_SOFT,
+              border: `1px solid ${AMBER_BD}`,
+              transform: "rotate(3deg)",
+            }}
+          />
+          {/* Old kart (asosiy) */}
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 4,
+              width: 56,
+              height: 40,
+              borderRadius: 8,
+              background: `linear-gradient(135deg, ${AMBER_BG_HI}, ${AMBER_SOFT})`,
+              border: `1px solid ${AMBER}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: `0 4px 12px ${AMBER}30`,
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="4" width="18" height="16" rx="2" stroke={AMBER} strokeWidth="1.8"/>
+              <circle cx="9" cy="10" r="2" stroke={AMBER} strokeWidth="1.8" fill="none"/>
+              <path d="M21 16l-5-5-9 9" stroke={AMBER} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+        </div>
+        <div
+          style={{
+            fontSize: 13.5,
+            fontWeight: 600,
+            color: "var(--text-secondary)",
+            position: "relative",
+          }}
+        >
+          Hozircha hech qanday rasm yuklanmadi
+        </div>
+        <div
+          style={{
+            fontSize: 11,
+            color: "var(--text-faint)",
+            position: "relative",
+            letterSpacing: 0.2,
+          }}
+        >
+          Yuqoridagi joydan rasm tashlang yoki tanlang
+        </div>
       </div>
     );
   }

@@ -136,45 +136,75 @@ function _DocxDropzone({ file, onPick, onClear }) {
           display: "flex",
           alignItems: "center",
           gap: 12,
-          padding: "12px 14px",
-          background: DE_ACCENT_SOFT,
-          border: `1px solid ${DE_ACCENT_BD}`,
-          borderRadius: 14,
+          padding: "14px 16px",
+          background:
+            "linear-gradient(135deg, rgba(34,197,94,0.10), rgba(34,197,94,0.02))",
+          border: "1px solid rgba(34,197,94,0.35)",
+          borderRadius: 16,
+          boxShadow: "0 4px 16px rgba(34,197,94,0.10)",
         }}
       >
         <div
           aria-hidden="true"
           style={{
-            width: 38,
-            height: 38,
-            borderRadius: 10,
-            background: "rgba(139,92,246,0.20)",
+            width: 42,
+            height: 42,
+            borderRadius: 11,
+            background:
+              "linear-gradient(135deg, rgba(34,197,94,0.25), rgba(34,197,94,0.10))",
+            border: "0.5px solid rgba(34,197,94,0.40)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: 18,
             flexShrink: 0,
+            boxShadow: "0 4px 12px rgba(34,197,94,0.20)",
           }}
         >
-          📝
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M5 12l5 5L20 7"
+              stroke="#4ade80"
+              strokeWidth="2.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
-              fontSize: 13.5,
-              fontWeight: 600,
+              fontSize: 14,
+              fontWeight: 700,
               color: "var(--text-primary)",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
+              letterSpacing: -0.1,
             }}
           >
             {file.name}
           </div>
           <div
-            style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}
+            style={{
+              fontSize: 11,
+              color: "var(--text-muted)",
+              marginTop: 3,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
           >
-            {(file.size / 1024).toFixed(0)} KB · tayyor
+            <span
+              aria-hidden="true"
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "#22c55e",
+                boxShadow: "0 0 6px #22c55e",
+              }}
+            />
+            {(file.size / 1024).toFixed(0)} KB · yuklash tayyor
           </div>
         </div>
         <button
@@ -182,14 +212,15 @@ function _DocxDropzone({ file, onPick, onClear }) {
           onClick={onClear}
           aria-label="Faylni o'zgartirish"
           style={{
-            background: "transparent",
+            background: "var(--bg-surface-2)",
             border: "0.5px solid var(--border-medium)",
             color: "var(--text-secondary)",
-            padding: "6px 10px",
-            borderRadius: 8,
-            fontSize: 11,
+            padding: "8px 12px",
+            borderRadius: 10,
+            fontSize: 11.5,
             fontWeight: 600,
             cursor: "pointer",
+            flexShrink: 0,
           }}
         >
           O'zgartirish
@@ -222,66 +253,105 @@ function _DocxDropzone({ file, onPick, onClear }) {
         }}
         style={{
           width: "100%",
-          minHeight: 140,
-          padding: 22,
+          minHeight: 170,
+          padding: "26px 22px",
           background: err
-            ? "rgba(248,113,113,0.06)"
+            ? "linear-gradient(135deg, rgba(248,113,113,0.10), rgba(248,113,113,0.02))"
             : dragOver
-              ? DE_ACCENT_SOFT
-              : "var(--bg-surface-1)",
+              ? `linear-gradient(135deg, ${DE_ACCENT}26, ${DE_ACCENT}08)`
+              : "linear-gradient(180deg, var(--bg-surface-1), var(--bg-surface-2))",
           border: `1.5px dashed ${
             err
-              ? "rgba(248,113,113,0.4)"
+              ? "rgba(248,113,113,0.45)"
               : dragOver
                 ? DE_ACCENT
                 : "var(--border-medium)"
           }`,
-          borderRadius: 18,
+          borderRadius: 20,
           cursor: "pointer",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          gap: 8,
+          gap: 10,
           font: "inherit",
           color: "var(--text-primary)",
+          transition: "all 0.22s cubic-bezier(0.3, 0.7, 0.4, 1)",
+          transform: dragOver ? "scale(1.01)" : "scale(1)",
+          boxShadow: dragOver
+            ? `0 10px 32px ${DE_ACCENT}30`
+            : "0 1px 0 rgba(255,255,255,0.04) inset",
+          position: "relative",
+          overflow: "hidden",
         }}
       >
+        {/* Yumshoq glow yuqorida */}
+        {!err && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              top: -40,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 200,
+              height: 80,
+              background: dragOver
+                ? `radial-gradient(ellipse at center, ${DE_ACCENT}40, transparent 70%)`
+                : `radial-gradient(ellipse at center, ${DE_ACCENT}1a, transparent 70%)`,
+              pointerEvents: "none",
+              transition: "opacity 0.22s",
+            }}
+          />
+        )}
         <div
           aria-hidden="true"
           style={{
-            width: 46,
-            height: 46,
-            borderRadius: 12,
-            background: DE_ACCENT_SOFT,
-            border: `1px solid ${DE_ACCENT_BD}`,
+            position: "relative",
+            width: 56,
+            height: 56,
+            borderRadius: 16,
+            background: err
+              ? "linear-gradient(135deg, rgba(248,113,113,0.20), rgba(248,113,113,0.08))"
+              : `linear-gradient(135deg, ${DE_ACCENT}38, ${DE_ACCENT}14)`,
+            border: `1px solid ${err ? "rgba(248,113,113,0.40)" : DE_ACCENT_BD}`,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            boxShadow: err
+              ? "0 6px 20px rgba(248,113,113,0.15)"
+              : `0 6px 20px ${DE_ACCENT}30`,
           }}
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
             <path
-              d="M12 3v12m0-12l-4 4m4-4l4 4M5 21h14"
-              stroke={DE_ACCENT}
-              strokeWidth="2"
+              d="M12 16V4m0 0l-5 5m5-5l5 5M5 20h14"
+              stroke={err ? "#fb7185" : DE_ACCENT}
+              strokeWidth="2.2"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           </svg>
         </div>
-        <div style={{ fontSize: 14, fontWeight: 700 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.2, position: "relative" }}>
           {err ? "Boshqa fayl tanlang" : "Word faylni shu yerga tashlang"}
         </div>
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        <div style={{ fontSize: 12.5, color: "var(--text-muted)", fontWeight: 500, position: "relative" }}>
           yoki bosib tanlang
         </div>
         <div
           style={{
             fontSize: 10.5,
-            letterSpacing: 0.4,
+            letterSpacing: 0.5,
             textTransform: "uppercase",
-            color: "var(--text-faint)",
+            color: "var(--text-secondary)",
+            fontWeight: 600,
+            background: "var(--bg-surface-2)",
+            border: "0.5px solid var(--border-subtle)",
+            padding: "4px 10px",
+            borderRadius: 99,
+            marginTop: 4,
+            position: "relative",
           }}
         >
           .DOC · .DOCX · Maks {DE_MAX_FILE_MB} MB
@@ -305,34 +375,45 @@ function _DocxDropzone({ file, onPick, onClear }) {
 
 // ─── Pair Row (chap | o'ng) ─────────────────────────────────────────
 function _PairRow({ idx, pair, onChange, onRemove, canRemove }) {
+  const _hasContent = !!pair.find?.trim();
   return (
     <div
       style={{
         display: "flex",
         alignItems: "stretch",
-        gap: 8,
-        padding: "10px 10px",
-        background: "var(--bg-surface-1)",
-        border: "0.5px solid var(--border-subtle)",
+        gap: 10,
+        padding: "12px 12px",
+        background: _hasContent
+          ? `linear-gradient(135deg, ${DE_ACCENT_SOFT}, var(--bg-surface-1) 60%)`
+          : "var(--bg-surface-1)",
+        border: `0.5px solid ${_hasContent ? DE_ACCENT_BD : "var(--border-subtle)"}`,
         borderRadius: 14,
+        transition: "all 0.18s",
       }}
     >
       {/* tartib raqami */}
       <div
         aria-hidden="true"
         style={{
-          minWidth: 24,
-          height: 24,
-          borderRadius: 7,
-          background: DE_ACCENT_SOFT,
-          color: DE_ACCENT,
-          fontSize: 11,
-          fontWeight: 700,
+          minWidth: 26,
+          height: 26,
+          borderRadius: 8,
+          background: _hasContent
+            ? `linear-gradient(135deg, ${DE_ACCENT}, ${DE_ACCENT}cc)`
+            : `linear-gradient(135deg, ${DE_ACCENT}33, ${DE_ACCENT}11)`,
+          color: _hasContent ? "#fff" : DE_ACCENT,
+          fontSize: 11.5,
+          fontWeight: 800,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           alignSelf: "flex-start",
           marginTop: 4,
+          fontVariantNumeric: "tabular-nums",
+          boxShadow: _hasContent
+            ? `0 4px 12px ${DE_ACCENT}45`
+            : `0 2px 8px ${DE_ACCENT}20`,
+          transition: "all 0.18s",
         }}
       >
         {idx + 1}
