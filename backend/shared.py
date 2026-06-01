@@ -500,6 +500,15 @@ def get_rembg_session():
     if _rembg_session is None:
         with _rembg_lock:
             if _rembg_session is None:
+                # rembg model katalogini ishonchli yo'lga belgilash
+                # (appuser HOME dir Docker'da yo'q bo'lishi mumkin)
+                u2net_home = os.environ.get("U2NET_HOME", "/tmp/u2net")
+                try:
+                    os.makedirs(u2net_home, exist_ok=True)
+                    os.environ["U2NET_HOME"] = u2net_home
+                except Exception as _e:
+                    logger.warning(f"u2net_home yaratish xatosi: {_e}")
+
                 from rembg import new_session
                 env_model = os.environ.get("REMBG_MODEL", "").strip()
                 # Sinash tartibi: env model → isnet → u2net → u2netp

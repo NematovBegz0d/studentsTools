@@ -34,7 +34,11 @@ RUN apt-get update && apt-get install -y \
 ENV SAL_USE_VCLPLUGIN=svp \
     PYTHONUNBUFFERED=1 \
     NUMBA_CACHE_DIR=/tmp/numba_cache \
-    NUMBA_DISABLE_JIT_CACHE=1
+    NUMBA_DISABLE_JIT_CACHE=1 \
+    U2NET_HOME=/tmp/u2net \
+    REMBG_HOME=/tmp/rembg \
+    XDG_CACHE_HOME=/tmp/.cache \
+    HF_HOME=/tmp/huggingface
 
 RUN groupadd -r -g 1000 appgroup && useradd -r -u 1000 -g appgroup appuser
 
