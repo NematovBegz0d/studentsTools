@@ -6,7 +6,7 @@
 // Cache name bumped on each release so old assets are purged.
 "use strict";
 
-const VERSION    = "v11";
+const VERSION    = "v12";
 const CACHE_NAME = `edubot-shell-${VERSION}`;
 
 // Pre-cached shell — what the app needs to render offline-first.
@@ -67,10 +67,16 @@ function isApiRequest(url) {
   return /\/api\//.test(url.pathname);
 }
 
-function isShellAsset(url) {
-  // dist/* and EduBot.html on same origin
-  return url.origin === self.location.origin &&
-         (/\/dist\//.test(url.pathname) || /EduBot\.html$/.test(url.pathname));
+function isHtmlShell(url) {
+  // Entry HTML — NOT versioned, so it must be network-first or new deploys
+  // get stuck behind a cached copy that still points at old ?v= dist files.
+  return url.origin === self.location.origin && /EduBot\.html$/.test(url.pathname);
+}
+
+function isDistAsset(url) {
+  // dist/* — versioned with ?v=N in EduBot.html, so cache-first is safe:
+  // a new release changes the URL and naturally misses the old cache entry.
+  return url.origin === self.location.origin && /\/dist\//.test(url.pathname);
 }
 
 self.addEventListener("fetch", (event) => {
@@ -82,8 +88,25 @@ self.addEventListener("fetch", (event) => {
   // API: always network, never cache (responses are user-specific)
   if (isApiRequest(url)) return;
 
-  // Shell assets: cache-first → fallback to network → fallback to stale cache
-  if (isShellAsset(url)) {
+  // Entry HTML: network-first → fallback to cache (offline). This guarantees
+  // a fresh deploy is picked up immediately instead of serving a stale shell.
+  if (isHtmlShell(url)) {
+    event.respondWith(
+      fetch(req)
+        .then((resp) => {
+          if (resp && resp.ok) {
+            const copy = resp.clone();
+            caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {});
+          }
+          return resp;
+        })
+        .catch(() => caches.match(req)),
+    );
+    return;
+  }
+
+  // Versioned dist assets: cache-first → network → stale fallback
+  if (isDistAsset(url)) {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached;
