@@ -153,9 +153,23 @@ function TranslitPro({ t, accent, onToast }) {
           lineHeight: 1.55,
         }}
       />
-      {dir === "auto" && detected && (
-        <div style={{ fontSize: 12, color: accent, marginTop: 5 }}>🔍 Aniqlandi: {detected}</div>
-      )}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 5, minHeight: 18 }}>
+        <span style={{ fontSize: 12, color: accent }}>
+          {dir === "auto" && detected ? `🔍 Aniqlandi: ${detected}` : ""}
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{input.length} belgi</span>
+          {input && (
+            <button
+              onClick={() => setInput("")}
+              style={{ background: "transparent", border: "none", color: "var(--text-muted)",
+                fontSize: 12, cursor: "pointer", textDecoration: "underline", padding: 0 }}
+            >
+              Tozalash
+            </button>
+          )}
+        </span>
+      </div>
 
       {result && (
         <div style={{

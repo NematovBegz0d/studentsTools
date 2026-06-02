@@ -69,17 +69,21 @@ def _rl_fonts():
 # ─── CV (Resume) Generator ────────────────────────────────────────────────────
 
 _CV_TEMPLATES = {
-    "modern":  {"accent": (79, 70, 229),  "bg": (248, 247, 255), "text": (15, 15, 30)},
-    "classic": {"accent": (30, 64, 175),  "bg": (255, 255, 255), "text": (17, 24, 39)},
-    "minimal": {"accent": (5, 150, 105),  "bg": (255, 255, 255), "text": (17, 24, 39)},
-    "dark":    {"accent": (167, 139, 250), "bg": (15, 15, 30),   "text": (240, 240, 255)},
+    "modern":       {"accent": (79, 70, 229),  "bg": (248, 247, 255), "text": (15, 15, 30)},
+    "classic":      {"accent": (30, 64, 175),  "bg": (255, 255, 255), "text": (17, 24, 39)},
+    "minimal":      {"accent": (5, 150, 105),  "bg": (255, 255, 255), "text": (17, 24, 39)},
+    "dark":         {"accent": (167, 139, 250), "bg": (15, 15, 30),   "text": (240, 240, 255)},
+    "professional": {"accent": (14, 116, 144), "bg": (247, 250, 252), "text": (15, 23, 42)},
+    "elegant":      {"accent": (159, 18, 57),  "bg": (255, 252, 250), "text": (28, 25, 23)},
 }
 
 _CV_HTML_THEMES = {
-    "modern":  {"accent": "#4F46E5", "bg": "#F8F7FF", "text": "#0F0F1E", "header_bg": "#4F46E5", "header_fg": "#FFFFFF"},
-    "classic": {"accent": "#1E40AF", "bg": "#FFFFFF", "text": "#111827", "header_bg": "#1E40AF", "header_fg": "#FFFFFF"},
-    "minimal": {"accent": "#059669", "bg": "#FFFFFF", "text": "#111827", "header_bg": "#059669", "header_fg": "#FFFFFF"},
-    "dark":    {"accent": "#A78BFA", "bg": "#0F0F1E", "text": "#F0F0FF", "header_bg": "#1A1A2E", "header_fg": "#F0F0FF"},
+    "modern":       {"accent": "#4F46E5", "bg": "#F8F7FF", "text": "#0F0F1E", "header_bg": "#4F46E5", "header_fg": "#FFFFFF"},
+    "classic":      {"accent": "#1E40AF", "bg": "#FFFFFF", "text": "#111827", "header_bg": "#1E40AF", "header_fg": "#FFFFFF"},
+    "minimal":      {"accent": "#059669", "bg": "#FFFFFF", "text": "#111827", "header_bg": "#059669", "header_fg": "#FFFFFF"},
+    "dark":         {"accent": "#A78BFA", "bg": "#0F0F1E", "text": "#F0F0FF", "header_bg": "#1A1A2E", "header_fg": "#F0F0FF"},
+    "professional": {"accent": "#0E7490", "bg": "#F7FAFC", "text": "#0F172A", "header_bg": "#0E7490", "header_fg": "#FFFFFF"},
+    "elegant":      {"accent": "#9F1239", "bg": "#FFFCFA", "text": "#1C1917", "header_bg": "#9F1239", "header_fg": "#FFFFFF"},
 }
 
 _CV_HTML_TMPL = """<!DOCTYPE html>
@@ -107,14 +111,24 @@ _CV_HTML_TMPL = """<!DOCTYPE html>
   .entry-sub { font-size: 9pt; opacity: .75; margin: 1px 0; }
   .entry-desc { font-size: 9pt; margin-top: 2px; opacity: .85; }
   .summary { font-size: 10pt; line-height: 1.55; opacity: .92; }
+  .header { display: flex; align-items: center; gap: 20px; }
+  .header .head-text { flex: 1; min-width: 0; }
+  .photo { width: 96px; height: 96px; border-radius: 50%; object-fit: cover;
+           border: 3px solid {{ header_fg }}; flex-shrink: 0; }
 </style></head><body>
 <div class="header">
+  {% if photo %}<img class="photo" src="{{ photo }}" alt="">{% endif %}
+  <div class="head-text">
   <h1>{{ name }}</h1>
   {% if title %}<div class="title">{{ title }}</div>{% endif %}
   <div class="contacts">
-    {% if email %}<span>Email: {{ email }}</span>{% endif %}
-    {% if phone %}<span>Tel: {{ phone }}</span>{% endif %}
-    {% if location %}<span>Manzil: {{ location }}</span>{% endif %}
+    {% if email %}<span>✉ {{ email }}</span>{% endif %}
+    {% if phone %}<span>☎ {{ phone }}</span>{% endif %}
+    {% if location %}<span>📍 {{ location }}</span>{% endif %}
+    {% if telegram %}<span>Telegram: {{ telegram }}</span>{% endif %}
+    {% if instagram %}<span>Instagram: {{ instagram }}</span>{% endif %}
+    {% if website %}<span>{{ website }}</span>{% endif %}
+  </div>
   </div>
 </div>
 <div class="body">
@@ -167,11 +181,49 @@ _CV_HTML_TMPL = """<!DOCTYPE html>
 </body></html>"""
 
 
+def _cv_photo_data_uri(photo: str) -> str:
+    """Foydalanuvchi rasmini xavfsiz `data:image/jpeg;base64,...` ga aylantiradi.
+
+    - `data:` prefiksli yoki xom base64 qabul qiladi.
+    - PIL bilan ochadi, kvadrat crop + 300px ga kichraytiradi, JPEG qiladi.
+    - Har qanday xatoda "" qaytaradi (CV rasmsiz ham yaratilaveradi).
+    """
+    if not photo or not isinstance(photo, str):
+        return ""
+    try:
+        import base64 as _b64
+        s = photo.strip()
+        if s.startswith("data:"):
+            s = s.split(",", 1)[1] if "," in s else ""
+        if not s:
+            return ""
+        raw = _b64.b64decode(s, validate=False)
+        if len(raw) < 64 or len(raw) > 8 * 1024 * 1024:   # 64B..8MB oralig'i
+            return ""
+        from PIL import Image as _PILImage
+        im = _PILImage.open(io.BytesIO(raw))
+        im.load()
+        if im.mode not in ("RGB",):
+            im = im.convert("RGB")
+        w, h = im.size
+        side = min(w, h)
+        left, top = (w - side) // 2, (h - side) // 2
+        im = im.crop((left, top, left + side, top + side)).resize((300, 300))
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=85)
+        return "data:image/jpeg;base64," + _b64.b64encode(out.getvalue()).decode("ascii")
+    except Exception as e:
+        logger.warning(f"CV photo o'qib bo'lmadi: {type(e).__name__}: {e}")
+        return ""
+
+
 def _do_cv(
     name: str, title: str, email: str, phone: str, location: str,
     summary: str, skills: list, education: list, experience: list,
     languages: list, template: str = "modern",
+    telegram: str = "", instagram: str = "", website: str = "", photo: str = "",
 ) -> bytes:
+    photo_uri = _cv_photo_data_uri(photo)
     try:
         from jinja2 import Environment, BaseLoader
         from weasyprint import HTML
@@ -183,10 +235,12 @@ def _do_cv(
             name=name, title=title, email=email, phone=phone,
             location=location, summary=summary, skills=skills,
             education=education, experience=experience, languages=languages,
+            telegram=telegram, instagram=instagram, website=website,
+            photo=photo_uri,
             **theme,
         )
         # SSRF guard: block any external/file/http resources WeasyPrint might try
-        # to fetch (CV template only needs system fonts — data:/no URLs at all).
+        # to fetch. Only `data:` (system fonts + the embedded photo) is allowed.
         return HTML(string=html_str, url_fetcher=safe_url_fetcher).write_pdf()
     except ImportError as e:
         logger.warning(f"CV WeasyPrint/Jinja2 yo'q ({e}) — ReportLab fallback")
@@ -196,6 +250,7 @@ def _do_cv(
     return _do_cv_reportlab(
         name, title, email, phone, location, summary,
         skills, education, experience, languages, template,
+        telegram, instagram, website, photo_uri,
     )
 
 
@@ -203,12 +258,14 @@ def _do_cv_reportlab(
     name: str, title: str, email: str, phone: str, location: str,
     summary: str, skills: list, education: list, experience: list,
     languages: list, template: str = "modern",
+    telegram: str = "", instagram: str = "", website: str = "", photo_uri: str = "",
 ) -> bytes:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib.colors import Color
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle,
+        Image as RLImage,
     )
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.pdfbase import pdfmetrics
@@ -273,13 +330,50 @@ def _do_cv_reportlab(
     def hr():
         return HRFlowable(width="100%", thickness=0.8, color=accent, spaceAfter=4, spaceBefore=2)
 
-    story = []
-    story.append(Paragraph(name or "Ism Familiya", s_name))
+    # Header text block (name, title, contacts)
+    head_flow = [Paragraph(name or "Ism Familiya", s_name)]
     if title:
-        story.append(Paragraph(title, s_title))
-    contacts = [x for x in [email, phone, location] if x]
+        head_flow.append(Paragraph(title, s_title))
+    contacts = [x for x in [
+        f"✉ {email}"     if email     else "",
+        f"☎ {phone}"     if phone     else "",
+        f"📍 {location}" if location  else "",
+        f"Telegram: {telegram}"   if telegram  else "",
+        f"Instagram: {instagram}" if instagram else "",
+        website,
+    ] if x]
     if contacts:
-        story.append(Paragraph("  •  ".join(contacts), s_contact))
+        head_flow.append(Paragraph("  •  ".join(contacts), s_contact))
+
+    # Optional photo (decoded from the data: URI produced by _cv_photo_data_uri)
+    photo_img = None
+    if photo_uri and photo_uri.startswith("data:"):
+        try:
+            import base64 as _b64
+            photo_img = RLImage(
+                io.BytesIO(_b64.b64decode(photo_uri.split(",", 1)[1])),
+                width=28*mm, height=28*mm,
+            )
+        except Exception as _pe:
+            logger.debug(f"CV reportlab photo skip: {_pe}")
+            photo_img = None
+
+    story = []
+    if photo_img is not None:
+        col_text = (W - ML - MR) - 32*mm
+        htbl = Table([[head_flow, photo_img]], colWidths=[col_text, 32*mm])
+        htbl.setStyle(TableStyle([
+            ("VALIGN",       (0, 0), (0, 0),  "MIDDLE"),
+            ("VALIGN",       (1, 0), (1, 0),  "TOP"),
+            ("ALIGN",        (1, 0), (1, 0),  "RIGHT"),
+            ("LEFTPADDING",  (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING",   (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING",(0, 0), (-1, -1), 0),
+        ]))
+        story.append(htbl)
+    else:
+        story.extend(head_flow)
     story.append(Spacer(1, 4*mm))
 
     if summary:
@@ -361,6 +455,12 @@ async def make_cv(request: Request):
         phone    = (body.get("phone") or "").strip()[:30]
         location = (body.get("location") or "").strip()[:80]
         summary  = (body.get("summary") or "").strip()[:800]
+        telegram = (body.get("telegram") or "").strip()[:60]
+        instagram = (body.get("instagram") or "").strip()[:60]
+        website  = (body.get("website") or "").strip()[:80]
+        photo    = body.get("photo") or ""          # data:URI yoki xom base64
+        if not isinstance(photo, str) or len(photo) > 12_000_000:
+            photo = ""                              # ~12MB string chegarasi
         template = (body.get("template") or "modern").strip().lower()
         if template not in _CV_TEMPLATES:
             template = "modern"
@@ -404,6 +504,7 @@ async def make_cv(request: Request):
                 functools.partial(
                     _do_cv, name, title, email, phone, location,
                     summary, skills, education, experience, languages, template,
+                    telegram, instagram, website, photo,
                 ),
             ),
             timeout=30.0,

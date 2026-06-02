@@ -6,7 +6,7 @@
 // Cache name bumped on each release so old assets are purged.
 "use strict";
 
-const VERSION    = "v12";
+const VERSION    = "v13";
 const CACHE_NAME = `edubot-shell-${VERSION}`;
 
 // Pre-cached shell — what the app needs to render offline-first.
@@ -88,8 +88,8 @@ self.addEventListener("fetch", (event) => {
   // API: always network, never cache (responses are user-specific)
   if (isApiRequest(url)) return;
 
-  // Entry HTML: network-first → fallback to cache (offline). This guarantees
-  // a fresh deploy is picked up immediately instead of serving a stale shell.
+  // Entry HTML: network-first → fallback to cache (offline). Guarantees a
+  // fresh deploy is picked up immediately instead of a stale shell.
   if (isHtmlShell(url)) {
     event.respondWith(
       fetch(req)

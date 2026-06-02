@@ -21,7 +21,6 @@ const FREE_SERVICES = [
   { id: 'imgcompress', cat: 'file', icon: '🗜️', new: false, ai: false, accept: '.jpg,.png' },
   { id: 'translit', cat: 'text',   icon: '🔤', new: false, ai: false, input: 'text' },
   // Matematika
-  { id: 'stats',    cat: 'math',   icon: '📐', new: true,  ai: false, input: 'text' },
   { id: 'math',     cat: 'math',   icon: '🧮', new: true,  ai: false, input: 'form' },
   { id: 'age',      cat: 'plan',   icon: '🎂', new: true,  ai: false, input: 'form' },
   // Matn va Ma'lumot (5)
@@ -29,9 +28,8 @@ const FREE_SERVICES = [
   { id: 'wiki',      cat: 'text',  icon: '📖', new: false, ai: false, input: 'text' },
   { id: 'readtime',  cat: 'text',  icon: '⏱️', new: false, ai: false, input: 'text' },
   { id: 'books',     cat: 'text',  icon: '📚', new: true,  ai: false, input: 'text' },
-  // Generator (4)
+  // Generator
   { id: 'qr',        cat: 'gen',   icon: '🔲', new: false, ai: false, input: 'text' },
-  { id: 'password',  cat: 'gen',   icon: '🔐', new: true,  ai: false, input: 'form' },
   { id: 'cert',      cat: 'gen',   icon: '🏆', new: false, ai: false, input: 'text' },
   { id: 'cv',        cat: 'gen',   icon: '📄', new: true,  ai: false, input: 'form' },
   { id: 'bgremove',  cat: 'gen',   icon: '🪄', new: true,  ai: true,  accept: '.jpg,.png' },

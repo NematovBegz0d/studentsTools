@@ -1400,10 +1400,12 @@ function LockedState({ t, accent, onSubscribe, onClose }) {
 
 // ─── CV Form ──────────────────────────────────────────────────────
 const CV_TEMPLATES = [
-  { id: "modern",  label: "Modern",  color: "#4f46e5" },
-  { id: "classic", label: "Classic", color: "#1e40af" },
-  { id: "minimal", label: "Minimal", color: "#059669" },
-  { id: "dark",    label: "Dark",    color: "#a78bfa" },
+  { id: "modern",       label: "Modern",   color: "#4f46e5" },
+  { id: "classic",      label: "Classic",  color: "#1e40af" },
+  { id: "minimal",      label: "Minimal",  color: "#059669" },
+  { id: "dark",         label: "Dark",     color: "#a78bfa" },
+  { id: "professional", label: "Pro",      color: "#0e7490" },
+  { id: "elegant",      label: "Elegant",  color: "#9f1239" },
 ];
 
 function CVForm({ data, onChange, accent }) {
@@ -1457,19 +1459,21 @@ function CVForm({ data, onChange, accent }) {
     <div style={{ paddingBottom: 8 }}>
       {/* Template selector */}
       <div style={sectionTitle}>Shablon</div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
         {CV_TEMPLATES.map(tmpl => (
           <button
             key={tmpl.id}
             onClick={() => notify({ template: tmpl.id })}
             style={{
-              flex: 1, padding: "7px 4px", borderRadius: "var(--radius-sm)",
+              padding: "8px 4px", borderRadius: "var(--radius-sm)",
               border: `2px solid ${data.template === tmpl.id ? tmpl.color : "var(--border-medium)"}`,
               background: data.template === tmpl.id ? tmpl.color + "22" : "var(--bg-surface-2)",
               color: data.template === tmpl.id ? tmpl.color : "var(--text-muted)",
               fontSize: 11, fontWeight: 600, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
             }}
           >
+            <span style={{ width: 9, height: 9, borderRadius: "50%", background: tmpl.color, display: "inline-block" }} />
             {tmpl.label}
           </button>
         ))}
@@ -1477,6 +1481,51 @@ function CVForm({ data, onChange, accent }) {
 
       {/* Basic info */}
       <div style={sectionTitle}>Asosiy ma'lumot</div>
+
+      {/* Photo */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+        <div style={{
+          width: 64, height: 64, borderRadius: "50%", flexShrink: 0, overflow: "hidden",
+          border: `2px solid ${data.photo ? accent : "var(--border-medium)"}`,
+          background: "var(--bg-surface-2)", display: "flex", alignItems: "center",
+          justifyContent: "center", fontSize: 24,
+        }}>
+          {data.photo
+            ? <img src={data.photo} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            : <span aria-hidden="true">🙂</span>}
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{
+            display: "inline-block", padding: "7px 14px", borderRadius: "var(--radius-sm)",
+            border: `1px solid ${accent}`, color: accent, background: accent + "12",
+            fontSize: 12, fontWeight: 600, cursor: "pointer",
+          }}>
+            {data.photo ? "Rasmni almashtirish" : "📷 Rasm qo'shish"}
+            <input
+              type="file" accept="image/*" style={{ display: "none" }}
+              onChange={e => {
+                const f = e.target.files && e.target.files[0];
+                if (!f) return;
+                if (f.size > 8 * 1024 * 1024) { alert("Rasm 8MB dan kichik bo'lsin"); return; }
+                const reader = new FileReader();
+                reader.onload = () => notify({ photo: String(reader.result || "") });
+                reader.readAsDataURL(f);
+              }}
+            />
+          </label>
+          {data.photo && (
+            <button
+              onClick={() => notify({ photo: "" })}
+              style={{ marginLeft: 8, background: "transparent", border: "none",
+                color: "var(--text-muted)", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}
+            >
+              O'chirish
+            </button>
+          )}
+          <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 4 }}>Ixtiyoriy · kvadrat eng yaxshi</div>
+        </div>
+      </div>
+
       <label style={label}>Ism Familiya *</label>
       <input style={inp} placeholder="Abdullayev Anvar" value={data.name || ""} onChange={e => notify({ name: e.target.value })} />
       <label style={label}>Kasb / Lavozim</label>
@@ -1493,6 +1542,19 @@ function CVForm({ data, onChange, accent }) {
       </div>
       <label style={{ ...label, marginTop: 8 }}>Shahar / Manzil</label>
       <input style={inp} placeholder="Toshkent, O'zbekiston" value={data.location || ""} onChange={e => notify({ location: e.target.value })} />
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <div>
+          <label style={label}>Telegram</label>
+          <input style={{ ...inp, marginBottom: 0 }} placeholder="@username" value={data.telegram || ""} onChange={e => notify({ telegram: e.target.value })} />
+        </div>
+        <div>
+          <label style={label}>Instagram</label>
+          <input style={{ ...inp, marginBottom: 0 }} placeholder="@username" value={data.instagram || ""} onChange={e => notify({ instagram: e.target.value })} />
+        </div>
+      </div>
+      <label style={{ ...label, marginTop: 8 }}>Veb-sayt / Portfolio</label>
+      <input style={inp} placeholder="github.com/username" value={data.website || ""} onChange={e => notify({ website: e.target.value })} />
 
       {/* Summary */}
       <div style={sectionTitle}>Qisqacha ma'lumot</div>
@@ -1991,6 +2053,7 @@ function ServiceSheet({
   const [extraText, setExtraText] = useS("");
   const _defaultOpts = (id) => {
     if (id === "cv") return { name: "", title: "", email: "", phone: "", location: "", summary: "",
+      telegram: "", instagram: "", website: "", photo: "",
       template: "modern", skills: [], languages: [], education: [], experience: [] };
     if (id === "imgs2pdf") return { mode: "normal" };
     return { bg: "white", sheet: true };
