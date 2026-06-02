@@ -560,6 +560,50 @@ async function ocr({ file }) {
 // translit/readtime/deadline/stats are handled by window.*Pro components.
 // These _*Backend functions exist for optional server-side fallback only.
 
+// Self-contained Lotin↔Kirill — needs NO backend, NO auth, NO *Pro component.
+const _LAT2CYR = [
+  ["SHH","ШҲ"],["shh","шҳ"],
+  ["SH","Ш"],["CH","Ч"],["NG","НГ"],["O'","Ў"],["Oʻ","Ў"],["G'","Ғ"],["Gʻ","Ғ"],
+  ["YO","Ё"],["YU","Ю"],["YA","Я"],["TS","Ц"],["KH","Х"],
+  ["sh","ш"],["ch","ч"],["ng","нг"],["o'","ў"],["oʻ","ў"],["g'","ғ"],["gʻ","ғ"],
+  ["yo","ё"],["yu","ю"],["ya","я"],["ts","ц"],["kh","х"],
+  ["A","А"],["B","Б"],["D","Д"],["E","Е"],["F","Ф"],["G","Г"],["H","Ҳ"],["I","И"],["J","Ж"],
+  ["K","К"],["L","Л"],["M","М"],["N","Н"],["O","О"],["P","П"],["Q","Қ"],["R","Р"],["S","С"],
+  ["T","Т"],["U","У"],["V","В"],["X","Х"],["Y","Й"],["Z","З"],
+  ["a","а"],["b","б"],["d","д"],["e","е"],["f","ф"],["g","г"],["h","ҳ"],["i","и"],["j","ж"],
+  ["k","к"],["l","л"],["m","м"],["n","н"],["o","о"],["p","п"],["q","қ"],["r","р"],["s","с"],
+  ["t","т"],["u","у"],["v","в"],["x","х"],["y","й"],["z","з"],
+];
+const _CYR2LAT = [
+  ["Ш","Sh"],["ш","sh"],["Ч","Ch"],["ч","ch"],["Ю","Yu"],["ю","yu"],["Я","Ya"],["я","ya"],
+  ["Ё","Yo"],["ё","yo"],["Ц","Ts"],["ц","ts"],["Щ","Sh"],["щ","sh"],
+  ["Ў","Oʻ"],["ў","oʻ"],["Ғ","Gʻ"],["ғ","gʻ"],["Қ","Q"],["қ","q"],["Ҳ","H"],["ҳ","h"],
+  ["А","A"],["а","a"],["Б","B"],["б","b"],["В","V"],["в","v"],["Г","G"],["г","g"],
+  ["Д","D"],["д","d"],["Е","E"],["е","e"],["Ж","J"],["ж","j"],["З","Z"],["з","z"],
+  ["И","I"],["и","i"],["Й","Y"],["й","y"],["К","K"],["к","k"],["Л","L"],["л","l"],
+  ["М","M"],["м","m"],["Н","N"],["н","n"],["О","O"],["о","o"],["П","P"],["п","p"],
+  ["Р","R"],["р","r"],["С","S"],["с","s"],["Т","T"],["т","t"],["У","U"],["у","u"],
+  ["Ф","F"],["ф","f"],["Х","X"],["х","x"],["Э","E"],["э","e"],
+  ["Ъ","'"],["ъ","'"],["Ь","'"],["ь","'"],["Ы","I"],["ы","i"],
+];
+function _translitConvert(text, table) {
+  let out = "", i = 0;
+  while (i < text.length) {
+    let hit = false;
+    for (const [from, to] of table) {
+      if (text.startsWith(from, i)) { out += to; i += from.length; hit = true; break; }
+    }
+    if (!hit) { out += text[i]; i++; }
+  }
+  return out;
+}
+async function _translitClient({ text }) {
+  const src = String(text || "").trim();
+  if (!src) throw new Error("Matn kiriting (lotin yoki kirill).");
+  const isCyr = /[А-ЯЎҒҚҲа-яўғқҳё]/u.test(src);
+  return { type: "text", content: _translitConvert(src, isCyr ? _CYR2LAT : _LAT2CYR) };
+}
+
 async function _translitBackend({ text }) {
   return apiText("/api/translit", { text: sanitizeText(text) });
 }
@@ -577,9 +621,12 @@ async function _statsBackend({ text }) {
   return apiText("/api/stats", { text: sanitizeText(text, 1000) });
 }
 
-async function translate({ text }) {
+async function translate({ text, target, source }) {
   if (!text?.trim()) throw new Error("Tarjima uchun matn kiriting.");
-  return apiText("/api/translate", { text: sanitizeText(text) });
+  const body = { text: sanitizeText(text) };
+  if (target) body.target = target;
+  if (source) body.source = source;
+  return apiText("/api/translate", body);
 }
 
 async function wiki({ text }) {
@@ -781,7 +828,7 @@ const SERVICE_HANDLERS = {
   // ALSO register their backend handlers here as a fallback: if the client
   // component fails to load/render for any reason, the generic ServiceSheet
   // still produces a real result instead of "🚧 tez kunda".
-  translit: _translitBackend,
+  translit: _translitClient,
   readtime: _readtimeBackend,
   deadline: _deadlineBackend,
   translate,

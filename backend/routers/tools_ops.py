@@ -1093,7 +1093,7 @@ _LANG_ALIASES = {
 }
 
 
-def _do_translate(query: str, lang: str) -> str:
+def _do_translate(query: str, lang: str, source: str = "auto") -> str:
     try:
         import socket
         from deep_translator import GoogleTranslator
@@ -1103,7 +1103,7 @@ def _do_translate(query: str, lang: str) -> str:
         _old_to = socket.getdefaulttimeout()
         socket.setdefaulttimeout(8)
         try:
-            result = GoogleTranslator(source="auto", target=lang).translate(query)
+            result = GoogleTranslator(source=source or "auto", target=lang).translate(query)
         finally:
             socket.setdefaulttimeout(_old_to)
         if result and result.strip():
@@ -1167,16 +1167,30 @@ async def translate(request: Request):
     body = await request.json()
     raw  = (body.get("text") or "").strip()
     if not raw:
-        return JSONResponse({"result": "❌ Matn kiriting.\n\nFormat:\nTarjima qilinadigan matn\nen  (til kodi — ixtiyoriy, default: en)"})
+        return JSONResponse({"result": "❌ Matn kiriting."})
 
-    lines = raw.split("\n")
-    last  = lines[-1].strip()
-    if len(lines) >= 2 and last and len(last) <= 7 and " " not in last:
-        lang  = _LANG_ALIASES.get(last.lower(), last.lower())
-        query = "\n".join(lines[:-1]).strip()
+    # Explicit mode (TranslatePro UI): {text, target, source}. When `target`
+    # is given we skip last-line parsing and return the clean translation only.
+    explicit_target = (body.get("target") or "").strip().lower()
+    explicit_source = (body.get("source") or "").strip().lower()
+
+    if explicit_target:
+        lang   = _LANG_ALIASES.get(explicit_target, explicit_target)
+        source = _LANG_ALIASES.get(explicit_source, explicit_source) if explicit_source else "auto"
+        query  = raw
+        clean  = True
     else:
-        lang  = "en"
-        query = raw
+        # Legacy mode: last line may be a short language code.
+        lines = raw.split("\n")
+        last  = lines[-1].strip()
+        if len(lines) >= 2 and last and len(last) <= 7 and " " not in last:
+            lang  = _LANG_ALIASES.get(last.lower(), last.lower())
+            query = "\n".join(lines[:-1]).strip()
+        else:
+            lang  = "en"
+            query = raw
+        source = "auto"
+        clean  = False
 
     if not query:
         return JSONResponse({"result": "❌ Matn kiriting."})
@@ -1186,10 +1200,12 @@ async def translate(request: Request):
     try:
         loop   = asyncio.get_running_loop()
         result = await asyncio.wait_for(
-            loop.run_in_executor(_io_pool, _do_translate, query, lang),
+            loop.run_in_executor(_io_pool, _do_translate, query, lang, source),
             timeout=20.0,
         )
-        logger.info(f"translate: {len(query)} belgi → {lang}")
+        logger.info(f"translate: {len(query)} belgi {source}→{lang}")
+        if clean:
+            return JSONResponse({"result": result})
         return JSONResponse({"result": f"🌐 → {lang}\n\n{result}"})
     except asyncio.TimeoutError:
         return JSONResponse({"result": "❌ Tarjima vaqti tugadi (20s). Matnni qisqartiring."})

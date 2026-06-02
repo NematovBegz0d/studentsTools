@@ -1408,6 +1408,74 @@ const CV_TEMPLATES = [
   { id: "elegant",      label: "Elegant",  color: "#9f1239" },
 ];
 
+// ─── Translate language bar (Google-Translate-like) ──────────────
+const TRANSLATE_LANGS = [
+  { code: "uz",    label: "O'zbek" },
+  { code: "en",    label: "English" },
+  { code: "ru",    label: "Русский" },
+  { code: "tr",    label: "Türkçe" },
+  { code: "ar",    label: "العربية" },
+  { code: "de",    label: "Deutsch" },
+  { code: "fr",    label: "Français" },
+  { code: "es",    label: "Español" },
+  { code: "it",    label: "Italiano" },
+  { code: "zh-CN", label: "中文" },
+  { code: "ja",    label: "日本語" },
+  { code: "ko",    label: "한국어" },
+  { code: "kk",    label: "Qazaqsha" },
+  { code: "fa",    label: "فارسی" },
+  { code: "hi",    label: "हिन्दी" },
+  { code: "uk",    label: "Українська" },
+  { code: "pt",    label: "Português" },
+];
+
+function TranslateBar({ source, target, accent, onChange }) {
+  const sel = {
+    flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: "var(--radius-sm)",
+    border: "1px solid var(--border-medium)", background: "var(--bg-surface-2)",
+    color: "var(--text-primary)", fontSize: 13, fontWeight: 600, cursor: "pointer",
+    outline: "none", appearance: "none", textAlign: "center",
+  };
+  const swap = () => onChange({ source: target, target: source === "auto" ? "uz" : source });
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+      <select
+        style={sel}
+        value={source}
+        onChange={(e) => onChange({ source: e.target.value })}
+        aria-label="Manba til"
+      >
+        <option value="auto">🌐 Aniqlash</option>
+        {TRANSLATE_LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+      </select>
+
+      <button
+        type="button"
+        onClick={swap}
+        aria-label="Tillarni almashtirish"
+        title="Almashtirish"
+        className="press"
+        style={{
+          flexShrink: 0, width: 38, height: 38, borderRadius: "50%",
+          border: `1px solid ${accent}55`, background: accent + "18", color: accent,
+          cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
+        }}
+      >
+        🔀
+      </button>
+
+      <select
+        style={sel}
+        value={target}
+        onChange={(e) => onChange({ target: e.target.value })}
+        aria-label="Maqsad til"
+      >
+        {TRANSLATE_LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
 function CVForm({ data, onChange, accent }) {
   const [expItems, setExpItems] = useS(data.experience?.length ? data.experience : [{ position: "", company: "", period: "", desc: "" }]);
   const [eduItems, setEduItems] = useS(data.education?.length ? data.education : [{ degree: "", school: "", year: "" }]);
@@ -1654,7 +1722,7 @@ const SERVICE_HOW_TO = {
   stats:       ["Raqamlarni bo'sh joy bilan ajratib kiriting: 4 7 2 9 1 5", "Boshlash ni bosing", "O'rtacha, mediana, dispersiya va boshqa ko'rsatkichlar chiqadi"],
   math:        ["Kategoriyani tanlang: Geometriya, Trigonometriya, Algebra", "Kerakli xizmatni bosing", "Qiymatlarni kiriting — natija avtomatik hisoblanadi"],
   age:         ["Yosh hisoblash yoki kelajak sanasi rejimini tanlang", "Sanani DD.MM.YYYY shaklida kiriting (06.05.2001)", "Yil, oy, kun, soat, daqiqa — real-time yangilanadi"],
-  translate:   ["Matnni kiriting", "Oxirgi qatorda til kodini yozing: en  ru  tr  de  ja  ko", "Tarjima natijasini nusxalab oling"],
+  translate:   ["Yuqoridan tillarni tanlang (manba 🔀 maqsad)", "Tarjima qilinadigan matnni kiriting", "“Boshlash” ni bosing va natijani nusxalab oling"],
   wiki:        ["Maqola nomini kiriting (masalan: Amir Temur)", "Boshlash ni bosing", "Wikipedia dan qisqacha ma'lumot oling"],
   readtime:    ["Matnni kiriting yoki joylashtiring", "Boshlash ni bosing", "O'qish uchun taxminiy vaqt ko'rsatiladi"],
   books:       ["Kitob nomi yoki muallif ismini kiriting", "Boshlash ni bosing", "Open Library dan kitob ma'lumotlari ko'rsatiladi"],
@@ -2014,7 +2082,7 @@ const TEXT_HINTS = {
   readtime: "O'qish vaqtini hisoblash uchun matn kiriting...",
   deadline: "Sana kiriting: 31.12.2025 yoki 2025-12-31",
   stats: "Raqamlar kiriting: 4 7 2 9 1 5",
-  translate: "Tarjima qilinadigan matn\nen  ← (oxirgi qatorda til kodi: en, ru, tr, de, zh-CN, ja, ko...)",
+  translate: "Tarjima qilinadigan matnni shu yerga yozing yoki joylashtiring...",
   wiki: "Maqola nomi kiriting (uz, ru, en da)",
   books: "Kitob nomi yoki muallif",
   qr: "QR kod uchun matn yoki URL",
@@ -2056,6 +2124,7 @@ function ServiceSheet({
       telegram: "", instagram: "", website: "", photo: "",
       template: "modern", skills: [], languages: [], education: [], experience: [] };
     if (id === "imgs2pdf") return { mode: "normal" };
+    if (id === "translate") return { source: "auto", target: "uz" };
     return { bg: "white", sheet: true };
   };
 
@@ -2108,6 +2177,10 @@ function ServiceSheet({
         arg = { opts: serviceOpts };
       } else if (acceptText) {
         arg = { text: String(inputData || "").trim() };
+        if (service.id === "translate") {
+          arg.target = serviceOpts.target || "uz";
+          arg.source = serviceOpts.source || "auto";
+        }
       } else if (service.multi) {
         const files = Array.isArray(inputData) ? inputData : [inputData];
         arg = { files, file: files[0], text: needsExtraText ? extraText.trim() : "", opts: serviceOpts };
@@ -2218,14 +2291,24 @@ function ServiceSheet({
               accent={accent}
             />
           ) : acceptText ? (
-            <TextInputBox
-              t={t}
-              placeholder={TEXT_HINTS[service.id] || t.sheetTextPlaceholder}
-              onChange={(v) => {
-                setInputData(v);
-                setHasInput(v.trim().length > 0);
-              }}
-            />
+            <>
+              {service.id === "translate" && (
+                <TranslateBar
+                  source={serviceOpts.source || "auto"}
+                  target={serviceOpts.target || "uz"}
+                  accent={accent}
+                  onChange={(patch) => setServiceOpts((s) => ({ ...s, ...patch }))}
+                />
+              )}
+              <TextInputBox
+                t={t}
+                placeholder={TEXT_HINTS[service.id] || t.sheetTextPlaceholder}
+                onChange={(v) => {
+                  setInputData(v);
+                  setHasInput(v.trim().length > 0);
+                }}
+              />
+            </>
           ) : (
             <Dropzone
               accept={service.accept}
