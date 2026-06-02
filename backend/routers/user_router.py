@@ -32,6 +32,58 @@ async def user_plan(request: Request, user_id: int):
     }
 
 
+# ─── Daily usage (profil sahifasi: "Bugungi foydalanish") ──────────────────────
+
+# "Konvertatsiya" qatoriga kiruvchi xizmatlar (fayl/format amallari).
+_CONVERT_SERVICES = {
+    "mergepdf", "pdfpages", "pdftext", "pdflock", "watermark", "pdf2img",
+    "compresspdf", "pdf2docx", "docx2pdf", "docxedit", "imgs2pdf", "cv",
+    "xlsx2pdf", "compresspptx", "imgcompress", "bgremove", "ocr",
+    "zip", "unzip", "qr", "cert", "send-file",
+}
+
+# Kunlik limitlar (tarif bo'yicha). Profil progress-bar'lari shulardan foydalanadi.
+_DAILY_LIMITS = {
+    "free":     {"convert": 50,   "translate": 100},
+    "standard": {"convert": 300,  "translate": 1000},
+    "premium":  {"convert": 2000, "translate": 5000},
+}
+
+
+@router.get("/api/user/usage")
+@limiter.limit("60/minute")
+async def user_usage(request: Request):
+    """Joriy foydalanuvchining bugungi foydalanish statistikasi."""
+    user_id = _get_user_id(request)
+    try:
+        by_service = await db.get_user_daily_usage(user_id)
+    except Exception as e:
+        logger.warning(f"get_user_daily_usage xato [{user_id}]: {e}")
+        by_service = {}
+
+    convert   = sum(c for s, c in by_service.items() if s in _CONVERT_SERVICES)
+    translate = int(by_service.get("translate", 0))
+
+    plan = "free"
+    try:
+        user = await db.get_user(user_id)
+        if user and user.get("plan"):
+            plan = user["plan"]
+    except Exception:
+        pass
+    limits = _DAILY_LIMITS.get(plan, _DAILY_LIMITS["free"])
+
+    return {
+        "convert":          convert,
+        "translate":        translate,
+        "convert_limit":    limits["convert"],
+        "translate_limit":  limits["translate"],
+        "total":            sum(by_service.values()),
+        "by_service":       by_service,
+        "plan":             plan,
+    }
+
+
 # ─── History ──────────────────────────────────────────────────────────────────
 
 @router.get("/api/history")

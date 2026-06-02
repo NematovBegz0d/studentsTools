@@ -799,4 +799,33 @@ const SERVICE_HANDLERS = {
   pptx: premiumStub,
 };
 
-Object.assign(window, { SERVICE_HANDLERS, BACKEND_URL });
+// ─── JSON GET helpers (profil sahifasi: usage + history) ──────────
+// Auth header bilan GET so'rov yuboradi. Backend ulanmagan bo'lsa null qaytaradi.
+async function apiGetJSON(path, timeoutMs = 12000) {
+  if (!BACKEND_URL) return null;
+  const response = await fetchWithTimeout(
+    `${BACKEND_URL}${path}`,
+    { method: "GET", headers: getAuthHeaders() },
+    timeoutMs,
+  );
+  await handleResponseError(response);
+  return response.json();
+}
+
+// Bugungi foydalanish statistikasi (Konvertatsiya / Tarjima)
+async function fetchDailyUsage() {
+  return apiGetJSON("/api/user/usage");
+}
+
+// Foydalanish tarixi (Statistika oynasi uchun)
+async function fetchHistory(limit = 30) {
+  return apiGetJSON(`/api/history?limit=${encodeURIComponent(limit)}`);
+}
+
+Object.assign(window, {
+  SERVICE_HANDLERS,
+  BACKEND_URL,
+  apiGetJSON,
+  fetchDailyUsage,
+  fetchHistory,
+});

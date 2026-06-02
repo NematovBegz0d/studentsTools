@@ -383,6 +383,7 @@ function App() {
               currentPlan={currentPlan}
               onGoTo={setTab}
               user={TG_USER}
+              onShowToast={showToast}
             />
           )}
         </div>

@@ -10,7 +10,7 @@
 
 "use strict";
 
-const { useState: u_S2, useCallback: u_C2 } = React;
+const { useState: u_S2, useCallback: u_C2, useEffect: u_E2 } = React;
 
 // ─── Plan Configuration ───────────────────────────────────────────
 // ✅ FIX: Single source of truth — fixes price mismatch bug!
@@ -397,7 +397,7 @@ function PlansPage({ t, accent, currentPlan, onSubscribe }) {
 // ─────────────────────────────────────────────────────────────────
 // PROFILE PAGE
 // ─────────────────────────────────────────────────────────────────
-function ProfilePage({ t, accent, lang, setLang, theme, setTheme, currentPlan, onGoTo, user }) {
+function ProfilePage({ t, accent, lang, setLang, theme, setTheme, currentPlan, onGoTo, user, onShowToast }) {
   const fullName =
     [user?.first_name, user?.last_name].filter(Boolean).join(" ") ||
     t.studentRole;
@@ -411,23 +411,71 @@ function ProfilePage({ t, accent, lang, setLang, theme, setTheme, currentPlan, o
   const planIconName = planConfig.iconName;
   const planColor = planConfig.color;
 
-  // 1-Bosqich: AI so'rovlar qatori vaqtincha olib tashlangan (premium tayyor emas).
-  // Konvertatsiya va tarjima qatorlari placeholder sifatida qoldi —
-  // keyingi bosqichda haqiqiy `/api/admin/stats` orqali yangilanadi.
+  const toast = u_C2((msg) => { if (onShowToast) onShowToast(msg); }, [onShowToast]);
+  const haptic = u_C2((type = "light") => {
+    try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.(type); } catch (_) {}
+  }, []);
+
+  // ── Bugungi foydalanish — backenddan real ma'lumot ──────────────
+  const [usageData, setUsageData] = u_S2(null);   // { convert, translate, convert_limit, translate_limit, by_service }
+  const [usageLoading, setUsageLoading] = u_S2(true);
+
+  const loadUsage = u_C2(async () => {
+    setUsageLoading(true);
+    try {
+      const data = window.fetchDailyUsage ? await window.fetchDailyUsage() : null;
+      if (data) setUsageData(data);
+    } catch (e) {
+      console.error("[usage]", e);
+    } finally {
+      setUsageLoading(false);
+    }
+  }, []);
+
+  u_E2(() => { loadUsage(); }, [loadUsage]);
+
   const usage = [
     {
       label: t.usage?.convert || "Konvertatsiya",
-      value: 0,
-      max: 50,
+      value: usageData?.convert ?? 0,
+      max: usageData?.convert_limit ?? 50,
       color: "#4ade80",
     },
     {
       label: t.usage?.translate || "Tarjima",
-      value: 0,
-      max: 100,
+      value: usageData?.translate ?? 0,
+      max: usageData?.translate_limit ?? 100,
       color: "#60a5fa",
     },
   ];
+
+  // ── Bildirishnomalar — localStorage'da saqlanadigan haqiqiy holat ──
+  const [notifOn, setNotifOn] = u_S2(() => {
+    try { return localStorage.getItem("edubot_notif") !== "0"; } catch (_) { return true; }
+  });
+  const toggleNotif = u_C2(() => {
+    setNotifOn((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("edubot_notif", next ? "1" : "0"); } catch (_) {}
+      haptic("light");
+      toast(next ? (t.notifEnabled || "Bildirishnomalar yoqildi") : (t.notifDisabled || "Bildirishnomalar o'chirildi"));
+      return next;
+    });
+  }, [haptic, toast, t]);
+
+  // ── Statistika / Yordam oynalari ───────────────────────────────
+  const [statsOpen, setStatsOpen] = u_S2(false);
+  const [helpOpen, setHelpOpen] = u_S2(false);
+
+  const openHelpLink = u_C2(() => {
+    const url = (t.helpBotUrl || "https://t.me/EduBot_support");
+    try {
+      const tg = window.Telegram?.WebApp;
+      if (tg?.openTelegramLink && url.includes("t.me")) tg.openTelegramLink(url);
+      else if (tg?.openLink) tg.openLink(url);
+      else window.open(url, "_blank");
+    } catch (_) { window.open(url, "_blank"); }
+  }, [t]);
 
   const langs = [
     { id: "uz", label: "UZ" },
@@ -451,22 +499,22 @@ function ProfilePage({ t, accent, lang, setLang, theme, setTheme, currentPlan, o
       iconName: "bell",
       color: "#60a5fa",
       label: t.settingsNotif,
-      sub: "On",
-      onClick: () => {},
+      sub: notifOn ? (t.on || "Yoniq") : (t.off || "O'chiq"),
+      onClick: toggleNotif,
     },
     {
       iconName: "chart-bar",
       color: "#a78bfa",
       label: t.settingsStats,
       sub: null,
-      onClick: () => {},
+      onClick: () => { haptic("light"); setStatsOpen(true); },
     },
     {
       iconName: "help",
       color: "#34d399",
       label: t.settingsHelp,
       sub: null,
-      onClick: () => {},
+      onClick: () => { haptic("light"); setHelpOpen(true); },
     },
   ];
 
@@ -754,6 +802,162 @@ function ProfilePage({ t, accent, lang, setLang, theme, setTheme, currentPlan, o
           {t.logout}
         </button>
       </div>
+
+      {/* Statistika oynasi */}
+      <BottomSheet open={statsOpen} onClose={() => setStatsOpen(false)}>
+        <StatsSheet t={t} usageData={usageData} loading={usageLoading} onRefresh={loadUsage} />
+      </BottomSheet>
+
+      {/* Yordam oynasi */}
+      <BottomSheet open={helpOpen} onClose={() => setHelpOpen(false)}>
+        <HelpSheet t={t} accent={accent} onOpenLink={openHelpLink} />
+      </BottomSheet>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// STATS SHEET — Statistika oynasi (real foydalanish ma'lumotlari)
+// ─────────────────────────────────────────────────────────────────
+function StatsSheet({ t, usageData, loading, onRefresh }) {
+  const byService = usageData?.by_service || {};
+  const total = usageData?.total ?? 0;
+  const catalog = (typeof window !== "undefined" && window.FREE_SERVICES) || [];
+  const iconFor = (id) => catalog.find((s) => s.id === id)?.icon || "•";
+  const nameFor = (id) => t.s?.[id]?.name || id;
+
+  const top = Object.entries(byService)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+
+  const cards = [
+    { label: t.usage?.convert || "Konvertatsiya", value: usageData?.convert ?? 0, color: "#4ade80" },
+    { label: t.usage?.translate || "Tarjima", value: usageData?.translate ?? 0, color: "#60a5fa" },
+  ];
+
+  return (
+    <div style={{ padding: "6px 20px 20px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <div style={{ color: "var(--text-primary)", fontSize: 18, fontWeight: 700 }}>
+          {t.statsTitle || "Statistika"}
+        </div>
+        <button
+          className="press" type="button" onClick={onRefresh} aria-label={t.refresh || "Yangilash"}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 99,
+            background: "var(--bg-surface-1)", border: "0.5px solid var(--border-light)",
+            color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, cursor: "pointer", font: "inherit",
+          }}
+        >
+          {t.refresh || "Yangilash"}
+        </button>
+      </div>
+
+      {/* Bugungi jami */}
+      <div style={{
+        padding: 16, borderRadius: 18, marginBottom: 12, textAlign: "center",
+        background: "linear-gradient(135deg, rgba(139,92,246,0.16), rgba(59,130,246,0.10))",
+        border: "0.5px solid rgba(139,92,246,0.22)",
+      }}>
+        <div style={{ color: "var(--text-muted)", fontSize: 11.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6 }}>
+          {t.todayUsage || "Bugungi foydalanish"}
+        </div>
+        <div style={{ color: "var(--text-primary)", fontSize: 34, fontWeight: 800, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+          {loading ? "…" : total}
+        </div>
+        <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
+          {t.statsTotalOps || "ta amal bajarildi"}
+        </div>
+      </div>
+
+      {/* Kategoriya kartlari */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+        {cards.map((c, i) => (
+          <div key={i} style={{
+            flex: 1, padding: 14, borderRadius: 16,
+            background: "var(--bg-surface-1)", border: "0.5px solid var(--border-subtle)",
+          }}>
+            <div style={{ color: c.color, fontSize: 26, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+              {loading ? "…" : c.value}
+            </div>
+            <div style={{ color: "var(--text-secondary)", fontSize: 12, marginTop: 2 }}>{c.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Eng ko'p ishlatilgan */}
+      <div style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10 }}>
+        {t.statsTopServices || "Eng ko'p ishlatilgan"}
+      </div>
+      {top.length === 0 ? (
+        <EmptyState
+          emoji="📊"
+          title={t.statsEmpty || "Bugun hali foydalanmadingiz"}
+          subtitle={t.statsEmptySub || "Xizmatlardan foydalaning — statistika shu yerda ko'rinadi."}
+        />
+      ) : (
+        <div style={{ borderRadius: 16, overflow: "hidden", background: "var(--bg-surface-1)", border: "0.5px solid var(--border-subtle)" }}>
+          {top.map(([id, cnt], i) => (
+            <div key={id} style={{
+              display: "flex", alignItems: "center", gap: 12, padding: "12px 14px",
+              borderBottom: i < top.length - 1 ? "0.5px solid var(--border-subtle)" : "none",
+            }}>
+              <span aria-hidden="true" style={{ fontSize: 18 }}>{iconFor(id)}</span>
+              <span style={{ flex: 1, color: "var(--text-primary)", fontSize: 13.5, fontWeight: 500 }}>{nameFor(id)}</span>
+              <span style={{ color: "var(--text-secondary)", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{cnt}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// HELP SHEET — Yordam oynasi (FAQ + qo'llab-quvvatlash)
+// ─────────────────────────────────────────────────────────────────
+function HelpSheet({ t, accent, onOpenLink }) {
+  const faqs = t.helpFaqs || [
+    { q: "Xizmatlar bepulmi?", a: "Ha, barcha asosiy xizmatlar bepul. Kunlik limitlar mavjud." },
+    { q: "Fayllarim saqlanadimi?", a: "Yo'q. Fayllar faqat qayta ishlanadi va serverda saqlanmaydi." },
+    { q: "Limit tugasa nima bo'ladi?", a: "Ertangi kun limit yangilanadi yoki Premium tarifga o'tishingiz mumkin." },
+  ];
+
+  return (
+    <div style={{ padding: "6px 20px 20px" }}>
+      <div style={{ color: "var(--text-primary)", fontSize: 18, fontWeight: 700, marginBottom: 16 }}>
+        {t.helpTitle || "Yordam"}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
+        {faqs.map((f, i) => (
+          <div key={i} style={{
+            padding: 14, borderRadius: 14,
+            background: "var(--bg-surface-1)", border: "0.5px solid var(--border-subtle)",
+          }}>
+            <div style={{ color: "var(--text-primary)", fontSize: 13.5, fontWeight: 600, marginBottom: 4 }}>
+              {f.q}
+            </div>
+            <div style={{ color: "var(--text-secondary)", fontSize: 12.5, lineHeight: 1.5 }}>
+              {f.a}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        className="press" type="button" onClick={onOpenLink}
+        style={{
+          width: "100%", padding: "13px 16px", borderRadius: 14,
+          background: accent, border: "none", color: "#fff",
+          fontSize: 14, fontWeight: 700, cursor: "pointer", font: "inherit",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          boxShadow: `0 4px 14px ${accent}40`,
+        }}
+      >
+        <Icon name="help" size={16} color="#fff" strokeWidth={2} aria-hidden="true" />
+        {t.helpContact || "Qo'llab-quvvatlash bilan bog'lanish"}
+      </button>
     </div>
   );
 }

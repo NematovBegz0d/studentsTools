@@ -234,6 +234,18 @@ if _USE_PG:
             "total_revenue":  total_revenue,
         }
 
+    async def get_user_daily_usage(user_id: int) -> dict:
+        """Bugungi (UTC) foydalanish — service_id → soni, faqat shu user uchun."""
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT service_id, COUNT(*) AS cnt
+                FROM usage_log
+                WHERE user_id = $1 AND created_at >= CURRENT_DATE
+                GROUP BY service_id
+            """, user_id)
+        return {r["service_id"]: int(r["cnt"]) for r in rows}
+
     async def get_users(offset: int = 0, limit: int = 50, search: str = "") -> list:
         pool = await _get_pool()
         async with pool.acquire() as conn:
@@ -540,6 +552,19 @@ else:
             "today_revenue":  today_revenue,
             "total_revenue":  total_revenue,
         }
+
+    async def get_user_daily_usage(user_id: int) -> dict:
+        """Bugungi foydalanish — service_id → soni, faqat shu user uchun."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT service_id, COUNT(*) as cnt FROM usage_log "
+                "WHERE user_id = ? AND created_at >= ? GROUP BY service_id",
+                (user_id, today),
+            ) as cur:
+                rows = await cur.fetchall()
+        return {r["service_id"]: int(r["cnt"]) for r in rows}
 
     async def get_users(offset: int = 0, limit: int = 50, search: str = "") -> dict:
         async with aiosqlite.connect(DB_PATH) as db:
