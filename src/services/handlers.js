@@ -777,7 +777,13 @@ const SERVICE_HANDLERS = {
   compresspptx,
   // Image — imgcompress is CLIENT-SIDE (window.ImgCompressPro)
   bgremove,
-  // Text — translit/readtime/deadline/stats are CLIENT-SIDE (*Pro components)
+  // Text — translit/readtime/deadline have CLIENT-SIDE *Pro components, but we
+  // ALSO register their backend handlers here as a fallback: if the client
+  // component fails to load/render for any reason, the generic ServiceSheet
+  // still produces a real result instead of "🚧 tez kunda".
+  translit: _translitBackend,
+  readtime: _readtimeBackend,
+  deadline: _deadlineBackend,
   translate,
   wiki,
   books,
