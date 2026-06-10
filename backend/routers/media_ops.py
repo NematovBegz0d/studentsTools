@@ -1207,13 +1207,11 @@ async def bgremove(request: Request):
             logger.error(
                 f"bgremove get_rembg_session xatosi: {type(e).__name__}: {e}"
             )
-            # Diagnostic message — xato turini ham aytamiz (debug uchun)
-            # Foydalanuvchi screenshot qiladi va aniq sababini ko'ramiz
+            # Technical cause goes to the log only — never to the user.
             raise HTTPException(
                 status_code=503,
                 detail=(
-                    f"AI fon olib tashlash hozir ishlamayapti. "
-                    f"Texnik sabab: {type(e).__name__}. "
+                    "AI fon olib tashlash hozir ishlamayapti. "
                     "Iltimos, 1-2 daqiqa keyin qayta urinib ko'ring."
                 ),
             )
