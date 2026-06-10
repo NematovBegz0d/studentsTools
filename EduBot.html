@@ -31,6 +31,24 @@
     <title>EduBot вЂ” Telegram Mini App</title>
 
     <!-- вњ… NEW: Preconnect for faster CDN loading -->
+    <!-- Defense-in-depth CSP. GitHub Pages can't send response headers, so this
+         meta tag is the enforcement point. 'unsafe-inline' is kept because the
+         page has inline bootstrap scripts + inline styles, but external script
+         origins are restricted to the pinned (SRI) CDNs, blocking injected
+         attacker-hosted scripts. object-src/base-uri are locked down. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self' 'unsafe-inline' https://telegram.org https://unpkg.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net;
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data: blob: https:;
+               font-src 'self' data:;
+               connect-src 'self' https://studenttools-production.up.railway.app https://telegram.org;
+               object-src 'none';
+               base-uri 'self';
+               form-action 'self'"
+    />
+
     <link rel="preconnect" href="https://telegram.org" />
     <link rel="preconnect" href="https://unpkg.com" crossorigin />
 

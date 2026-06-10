@@ -168,6 +168,22 @@ if _USE_PG:
             row = await conn.fetchrow("SELECT * FROM payments WHERE id = $1", payment_id)
             return dict(row) if row else None
 
+    async def set_payment_payme_id(payment_id: str, payme_id: str) -> bool:
+        """Bind a Payme transaction id to a payment, but only if none is set yet.
+
+        Returns True if this call bound the id (first CreateTransaction), False
+        if a payme_id was already present — lets the RPC layer enforce Payme's
+        "one transaction per order" rule and stay idempotent on retries.
+        """
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE payments SET payme_id=$1 WHERE id=$2 AND payme_id IS NULL",
+                payme_id, payment_id,
+            )
+            # asyncpg returns e.g. "UPDATE 1" / "UPDATE 0"
+            return result.split()[-1] == "1"
+
     async def get_payment_by_payme(payme_id: str) -> Optional[dict]:
         pool = await _get_pool()
         async with pool.acquire() as conn:
@@ -480,6 +496,16 @@ else:
                 row = await cur.fetchone()
                 return dict(row) if row else None
 
+    async def set_payment_payme_id(payment_id: str, payme_id: str) -> bool:
+        """Bind a Payme transaction id only if none is set yet (idempotent)."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            cur = await db.execute(
+                "UPDATE payments SET payme_id=? WHERE id=? AND payme_id IS NULL",
+                (payme_id, payment_id),
+            )
+            await db.commit()
+            return cur.rowcount == 1
+
     async def get_payment_by_payme(payme_id: str) -> Optional[dict]:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
@@ -493,7 +519,9 @@ else:
         payment = await get_payment(payment_id)
         if not payment:
             return None
-        now_str = datetime.now().isoformat()
+        # Use timezone-aware UTC consistently with the PostgreSQL path so dev
+        # (SQLite) and prod (PG) compute plan_until / is_premium identically.
+        now_str = datetime.now(timezone.utc).isoformat()
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
                 "UPDATE payments SET status='paid', payme_id=?, completed_at=? WHERE id=?",
@@ -501,7 +529,7 @@ else:
             )
             await db.commit()
         from dateutil.relativedelta import relativedelta
-        plan_until = datetime.now() + (
+        plan_until = datetime.now(timezone.utc) + (
             relativedelta(years=1) if payment["plan"] == "yearly"
             else relativedelta(months=1)
         )
@@ -604,7 +632,7 @@ else:
 
     async def admin_set_plan(user_id: int, plan: str, days: int = 30):
         from datetime import timedelta
-        plan_until = (datetime.now() + timedelta(days=days)).isoformat() if plan != "free" else None
+        plan_until = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat() if plan != "free" else None
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
                 "UPDATE users SET plan=?, plan_until=? WHERE id=?",

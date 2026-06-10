@@ -1,7 +1,7 @@
 # ─── Core framework ─────────────────────────────────────────────────
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
-python-multipart==0.0.12
+python-multipart==0.0.18
 httpx==0.28.1
 slowapi==0.1.9
 loguru==0.7.3
@@ -34,7 +34,9 @@ openpyxl==3.1.5
 python-pptx==1.0.2
 
 # ─── Imaging ────────────────────────────────────────────────────────
-Pillow==10.4.0
+# CVE-2025-48379 (DDS heap overflow, fixed 11.3) va CVE-2026-42311 (PSD memory
+# corruption) sabab 10.4.0 dan 11.3.0 ga yangilandi.
+Pillow==11.3.0
 pillow-heif>=0.18.0
 pillow-avif-plugin>=1.4.0
 opencv-python-headless>=4.8.0,<4.11.0
