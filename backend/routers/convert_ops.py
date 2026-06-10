@@ -428,7 +428,7 @@ async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"pdf2docx xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
-            detail=f"pdf2docx: {type(e).__name__}: {str(e)[:160]}")
+            detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
     finally:
         # Wipe the whole tempdir (handles partial writes / subprocess artifacts too)
         import shutil as _shutil
@@ -1015,7 +1015,7 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"docx2pdf xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
-            detail=f"docx2pdf: {type(e).__name__}: {str(e)[:160]}")
+            detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── DOCX Edit ────────────────────────────────────────────────────────────────
@@ -1245,10 +1245,11 @@ async def docx_edit(
                     ),
                 )
             except RuntimeError as e:
+                logger.warning(f"doc2docx aylantirish xatosi: {type(e).__name__}: {str(e)[:200]}")
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        f"Eski .doc faylni aylantirib bo'lmadi: {str(e)[:160]}. "
+                        "Eski .doc faylni aylantirib bo'lmadi. "
                         "Iltimos, faylni Word'da .docx sifatida saqlang va qayta yuklang."
                     ),
                 )
@@ -1478,4 +1479,4 @@ async def imgs2pdf(request: Request, files: List[UploadFile] = File(...)):
         raise
     except Exception as e:
         logger.error(f"imgs2pdf xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"imgs2pdf: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
