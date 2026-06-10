@@ -408,8 +408,30 @@ def _get_wm_font() -> str:
     return _wm_font_cached
 
 
+def _parse_hex_color(value: str, default: tuple = (0.5, 0.5, 0.5)) -> tuple:
+    """Parse '#rgb' / '#rrggbb' / 'rrggbb' → (r, g, b) floats in 0..1.
+
+    Returns `default` (gray) for empty/invalid input so the watermark never
+    fails on a bad color string."""
+    if not value:
+        return default
+    s = value.strip().lstrip("#")
+    if len(s) == 3:
+        s = "".join(c * 2 for c in s)
+    if len(s) != 6:
+        return default
+    try:
+        r = int(s[0:2], 16) / 255.0
+        g = int(s[2:4], 16) / 255.0
+        b = int(s[4:6], 16) / 255.0
+        return (r, g, b)
+    except ValueError:
+        return default
+
+
 def _make_wm_bytes(pw: float, ph: float, text: str,
-                   opacity: float = 0.22, angle: int = 42, repeat: bool = True) -> bytes:
+                   opacity: float = 0.22, angle: int = 42, repeat: bool = True,
+                   color_rgb: tuple = (0.5, 0.5, 0.5)) -> bytes:
     """Render a single-page watermark PDF and return its raw bytes.
 
     Returning bytes (not a live pypdf page) lets the caller build a FRESH
@@ -422,12 +444,13 @@ def _make_wm_bytes(pw: float, ph: float, text: str,
     font_size = max(20, min(56, int(pw * 0.07)))
     spacing = max(pw, ph) * 0.38
 
+    r, g, b = color_rgb
     wm_buf = io.BytesIO()
     c = rl_canvas.Canvas(wm_buf, pagesize=(pw, ph))
     c.saveState()
     c.translate(pw / 2, ph / 2)
     c.rotate(angle)
-    c.setFillColor(Color(0.5, 0.5, 0.5, alpha=max(0.05, min(0.9, opacity))))
+    c.setFillColor(Color(r, g, b, alpha=max(0.05, min(0.9, opacity))))
     c.setFont(_get_wm_font(), font_size)
     offsets = (-spacing, 0, spacing) if repeat else (0,)
     for offset in offsets:
@@ -437,7 +460,8 @@ def _make_wm_bytes(pw: float, ph: float, text: str,
     return wm_buf.getvalue()
 
 def _do_watermark(data: bytes, wm_text: str,
-                  opacity: float = 0.22, angle: int = 42, repeat: bool = True) -> tuple:
+                  opacity: float = 0.22, angle: int = 42, repeat: bool = True,
+                  color_rgb: tuple = (0.5, 0.5, 0.5)) -> tuple:
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(io.BytesIO(data))
@@ -458,7 +482,7 @@ def _do_watermark(data: bytes, wm_text: str,
         ph = float(page.mediabox.height)
         key = (round(pw), round(ph))
         if key not in wm_bytes_cache:
-            wm_bytes_cache[key] = _make_wm_bytes(pw, ph, text, opacity, angle, repeat)
+            wm_bytes_cache[key] = _make_wm_bytes(pw, ph, text, opacity, angle, repeat, color_rgb)
         # Fresh overlay page object per merge — prevents content-stream reuse bugs.
         wm_page = PdfReader(io.BytesIO(wm_bytes_cache[key])).pages[0]
         page.merge_page(wm_page)
@@ -479,6 +503,7 @@ async def watermark_pdf(
     opacity: float = Form(0.22),
     angle: int = Form(42),
     repeat: bool = Form(True),
+    color: str = Form(""),
 ):
     t0 = time.time()
     user_id = _get_user_id(request)
@@ -488,12 +513,14 @@ async def watermark_pdf(
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
         opacity = max(0.05, min(0.9, opacity))
         angle   = angle % 360
+        # Optional hex color (e.g. "#c00", "ff0000"); falls back to gray.
+        color_rgb = _parse_hex_color(color)
         loop = asyncio.get_running_loop()
         try:
             out_bytes, info = await asyncio.wait_for(
                 loop.run_in_executor(
                     _io_pool,
-                    functools.partial(_do_watermark, data, text, opacity, angle, repeat),
+                    functools.partial(_do_watermark, data, text, opacity, angle, repeat, color_rgb),
                 ),
                 timeout=45.0,
             )
