@@ -167,10 +167,25 @@ async def _create_transaction(params: dict, db_fns: dict) -> dict:
     if payment["status"] == "cancelled":
         return _err(PaymeError.CANT_PERFORM, "To'lov bekor qilingan")
 
-    now_ms = int(time.time() * 1000)
+    # Payme allows exactly one transaction per order. Bind this payme_id to the
+    # payment; if a *different* transaction already owns it, reject. Retries with
+    # the same id are idempotent (existing == current → allowed).
+    existing_payme = payment.get("payme_id")
+    if existing_payme and existing_payme != payme_id:
+        return _err(PaymeError.CANT_PERFORM, "Bu buyurtma uchun boshqa tranzaksiya mavjud")
+    if not existing_payme and db_fns.get("set_payment_payme_id"):
+        bound = await db_fns["set_payment_payme_id"](payment_id, payme_id)
+        if not bound:
+            # Lost a race to another CreateTransaction — re-read to compare.
+            refreshed = await db_fns["get_payment"](payment_id)
+            if refreshed and refreshed.get("payme_id") != payme_id:
+                return _err(PaymeError.CANT_PERFORM, "Bu buyurtma uchun boshqa tranzaksiya mavjud")
+
+    # Persisted create_time keeps CheckTransaction stable across calls.
+    create_ms = _parse_dt_ms(payment.get("created_at"))
     return {
         "result": {
-            "create_time":  now_ms,
+            "create_time":  create_ms,
             "transaction":  payment_id,
             "state":        TxState.PENDING,
         }
@@ -183,11 +198,10 @@ async def _perform_transaction(params: dict, db_fns: dict) -> dict:
     # Agar allaqachon confirm qilingan bo'lsa
     existing = await db_fns["get_payment_by_payme"](payme_id)
     if existing and existing["status"] == "paid":
-        now_ms = int(time.time() * 1000)
         return {
             "result": {
                 "transaction":  existing["id"],
-                "perform_time": now_ms,
+                "perform_time": _parse_dt_ms(existing.get("completed_at")),
                 "state":        TxState.PAID,
             }
         }
@@ -203,14 +217,16 @@ async def _perform_transaction(params: dict, db_fns: dict) -> dict:
     if payment["status"] == "cancelled":
         return _err(PaymeError.CANT_PERFORM, "To'lov bekor qilingan")
 
-    confirmed = await db_fns["confirm_payment"](payment_id, payme_id)
+    await db_fns["confirm_payment"](payment_id, payme_id)
     logger.info(f"To'lov tasdiqlandi: {payment_id} user={payment['user_id']} plan={payment['plan']}")
 
-    now_ms = int(time.time() * 1000)
+    # Re-read so perform_time reflects the persisted completed_at (stable on retry).
+    confirmed = await db_fns["get_payment"](payment_id)
+    perform_ms = _parse_dt_ms(confirmed.get("completed_at")) if confirmed else int(time.time() * 1000)
     return {
         "result": {
             "transaction":  payment_id,
-            "perform_time": now_ms,
+            "perform_time": perform_ms,
             "state":        TxState.PAID,
         }
     }
@@ -266,7 +282,7 @@ async def _check_transaction(params: dict, db_fns: dict) -> dict:
     state    = status_map.get(payment["status"], TxState.PENDING)
     now_ms   = int(time.time() * 1000)
     created  = _parse_dt_ms(payment["created_at"])
-    performed = now_ms if payment["status"] == "paid"      else 0
+    performed = _parse_dt_ms(payment.get("completed_at")) if payment["status"] == "paid"      else 0
     cancelled  = now_ms if payment["status"] == "cancelled" else 0
 
     return {
