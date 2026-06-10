@@ -454,7 +454,7 @@ async def make_qr(request: Request):
         raise
     except Exception as e:
         logger.error(f"qr xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"qr: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── Certificate ──────────────────────────────────────────────────────────────
@@ -802,7 +802,7 @@ async def make_cert(request: Request):
         raise
     except Exception as e:
         logger.error(f"cert xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"cert: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 @router.get("/api/cert/verify/{cert_id}")
@@ -1077,7 +1077,7 @@ async def make_schedule(request: Request):
         raise
     except Exception as e:
         logger.error(f"schedule xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"schedule: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── Translate ────────────────────────────────────────────────────────────────
@@ -1520,7 +1520,7 @@ async def make_zip(
         raise
     except Exception as e:
         logger.error(f"zip xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"zip: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── Unzip ────────────────────────────────────────────────────────────────────
@@ -1679,4 +1679,4 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
         raise
     except Exception as e:
         logger.error(f"unzip xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"unzip: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")

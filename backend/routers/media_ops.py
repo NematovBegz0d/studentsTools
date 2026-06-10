@@ -529,7 +529,7 @@ async def make_cv(request: Request):
         raise
     except Exception as e:
         logger.error(f"cv xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"cv: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── Excel → PDF ──────────────────────────────────────────────────────────────
@@ -824,7 +824,7 @@ async def xlsx_to_pdf(request: Request, file: UploadFile = File(...)):
         raise
     except Exception as e:
         logger.error(f"xlsx2pdf xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"xlsx2pdf: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── PPTX Compress ────────────────────────────────────────────────────────────
@@ -967,7 +967,7 @@ async def compress_pptx(request: Request, file: UploadFile = File(...)):
         raise
     except Exception as e:
         logger.error(f"compresspptx xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"compresspptx: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── Image compress ───────────────────────────────────────────────────────────
@@ -1148,7 +1148,7 @@ async def img_compress(
         raise
     except Exception as e:
         logger.error(f"imgcompress xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"imgcompress: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── Background removal ───────────────────────────────────────────────────────
@@ -1277,7 +1277,7 @@ async def bgremove(request: Request):
         raise
     except Exception as e:
         logger.error(f"bgremove xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"bgremove: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
     finally:
         await release_user_ml_slot(user_id)
 
@@ -1598,6 +1598,6 @@ async def ocr(request: Request):
         raise
     except Exception as e:
         logger.error(f"ocr xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"ocr: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
     finally:
         await release_user_ml_slot(user_id)
