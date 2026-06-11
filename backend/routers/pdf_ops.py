@@ -100,7 +100,7 @@ async def merge_pdf(request: Request, files: List[UploadFile] = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"mergepdf xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"mergepdf: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: Page range parser (shared by pdfpages) ──────────────────────────────
 
@@ -195,7 +195,7 @@ async def pdf_select_pages(
         raise
     except Exception as e:
         logger.error(f"pdfpages xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"pdfpages: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: Text extraction ─────────────────────────────────────────────────────
 
@@ -283,7 +283,7 @@ async def pdf_text(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"pdftext xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"pdftext: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: Lock ────────────────────────────────────────────────────────────────
 
@@ -383,7 +383,7 @@ async def lock_pdf(
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"pdflock xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"pdflock: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: Watermark ───────────────────────────────────────────────────────────
 
@@ -515,7 +515,7 @@ async def watermark_pdf(
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"watermark xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"watermark: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: To image ────────────────────────────────────────────────────────────
 
@@ -630,7 +630,7 @@ async def pdf_to_img(
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"pdf2img xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"pdf2img: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: Compress ────────────────────────────────────────────────────────────
 
@@ -814,4 +814,4 @@ async def compress_pdf(
     except Exception as e:
         logger.error(f"compresspdf xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
-            detail=f"compresspdf: {type(e).__name__}: {str(e)[:160]}")
+            detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")

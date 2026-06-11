@@ -15,6 +15,13 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 _USE_PG = bool(DATABASE_URL)
 
 
+def _like_escape(term: str) -> str:
+    """Escape LIKE/ILIKE wildcards so an admin search term can't be interpreted
+    as a pattern (e.g. '%' matching everything, '_' matching any char). Pairs
+    with `ESCAPE '\\'` in the query."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  PostgreSQL (asyncpg)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -269,9 +276,9 @@ if _USE_PG:
                 rows = await conn.fetch("""
                     SELECT id, username, first_name, plan, plan_until, created_at, usage_count
                     FROM users
-                    WHERE username ILIKE $1 OR CAST(id AS TEXT) LIKE $1
+                    WHERE username ILIKE $1 ESCAPE '\\' OR CAST(id AS TEXT) LIKE $1 ESCAPE '\\'
                     ORDER BY created_at DESC LIMIT $2 OFFSET $3
-                """, f"%{search}%", limit, offset)
+                """, f"%{_like_escape(search)}%", limit, offset)
             else:
                 rows = await conn.fetch("""
                     SELECT id, username, first_name, plan, plan_until, created_at, usage_count
@@ -598,10 +605,10 @@ else:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             if search:
-                q = f"%{search}%"
+                q = f"%{_like_escape(search)}%"
                 async with db.execute("""
                     SELECT id, username, first_name, plan, plan_until, created_at, usage_count
-                    FROM users WHERE username LIKE ? OR CAST(id AS TEXT) LIKE ?
+                    FROM users WHERE username LIKE ? ESCAPE '\\' OR CAST(id AS TEXT) LIKE ? ESCAPE '\\'
                     ORDER BY created_at DESC LIMIT ? OFFSET ?
                 """, (q, q, limit, offset)) as cur:
                     users = [dict(r) for r in await cur.fetchall()]
