@@ -294,7 +294,18 @@ async def deadline(request: Request):
             detail="Sana formatini aniqlab bo'lmadi. Misollar: 31.12.2025, 2025-12-31, next Monday",
         )
 
-    now  = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # "Bugun"ni server UTC'da emas, foydalanuvchi mintaqasida (Asia/Tashkent)
+    # hisoblaymiz — aks holda yarim tunga yaqin "necha kun qoldi" ±1 kunga
+    # xato bo'ladi (Railway UTC'da ishlaydi). `d` naive bo'lgani uchun `now`ni
+    # ham tz'siz qilamiz.
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Asia/Tashkent")).replace(
+            tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
+    except Exception:
+        from datetime import timezone, timedelta
+        now = (datetime.now(timezone.utc) + timedelta(hours=5)).replace(
+            tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
     d0   = d.replace(hour=0, minute=0, second=0, microsecond=0)
     days = (d0 - now).days
     emoji = "🔴" if days < 0 else ("🚨" if days <= 3 else ("🟡" if days <= 7 else "🟢"))
@@ -454,7 +465,7 @@ async def make_qr(request: Request):
         raise
     except Exception as e:
         logger.error(f"qr xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"qr: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── Certificate ──────────────────────────────────────────────────────────────
@@ -526,15 +537,47 @@ def _do_cert(name: str, course: str, issuer: str, theme: str = "classic") -> byt
         except Exception:
             return W // 4
 
+    def _text_w(text, font):
+        try:
+            bb = draw.textbbox((0, 0), text, font=font)
+            return bb[2] - bb[0]
+        except Exception:
+            return len(text) * 10
+
+    def _fit(text, font_path, base_size, max_w, min_size):
+        """Pick the largest font that fits `text` in `max_w`; if even the
+        smallest doesn't fit, truncate with an ellipsis. Prevents long names /
+        course titles from overflowing the 900px certificate."""
+        size = base_size
+        font = None
+        while size >= min_size:
+            try:
+                font = ImageFont.truetype(font_path, size)
+            except Exception:
+                return ImageFont.load_default(), text
+            if _text_w(text, font) <= max_w:
+                return font, text
+            size -= 2
+        # At min size still too wide → drop characters until "<text>…" fits.
+        t = text
+        while len(t) > 1 and _text_w(t + "…", font) > max_w:
+            t = t[:-1]
+        return font, (t + "…")
+
+    MAX_TEXT_W = W - 140  # ~760px usable width inside the gold border
+
     draw.text((center_x("SERTIFIKAT", fn_title), 108), "SERTIFIKAT", font=fn_title, fill=GOLD)
     sub = "ushbu kurs muvaffaqiyatli yakunlanganligi tasdiqlanganligi uchun beriladi"
     draw.text((center_x(sub, fn_sm), 168), sub, font=fn_sm, fill=SILVER)
-    draw.text((center_x(name, fn_name), 230), name, font=fn_name, fill=WHITE)
+
+    fn_name_fit, name_draw = _fit(name, FONT_BOLD, 44, MAX_TEXT_W, 22)
+    draw.text((center_x(name_draw, fn_name_fit), 230), name_draw, font=fn_name_fit, fill=WHITE)
     draw.line([(W // 2 - 200, 295), (W // 2 + 200, 295)], fill=GOLD2, width=1)
 
     label = "kurs:"
     draw.text((center_x(label, fn_sm), 308), label, font=fn_sm, fill=SILVER)
-    draw.text((center_x(course, fn_course), 328), course, font=fn_course, fill=PURPLE)
+    fn_course_fit, course_draw = _fit(course, FONT_REGULAR, 22, MAX_TEXT_W, 12)
+    draw.text((center_x(course_draw, fn_course_fit), 328), course_draw, font=fn_course_fit, fill=PURPLE)
 
     sc, sr = W // 2, H - 140
     draw.ellipse([(sc - 46, sr - 46), (sc + 46, sr + 46)], outline=GOLD2, width=2)
@@ -802,7 +845,7 @@ async def make_cert(request: Request):
         raise
     except Exception as e:
         logger.error(f"cert xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"cert: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 @router.get("/api/cert/verify/{cert_id}")
@@ -1077,7 +1120,7 @@ async def make_schedule(request: Request):
         raise
     except Exception as e:
         logger.error(f"schedule xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"schedule: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── Translate ────────────────────────────────────────────────────────────────
@@ -1520,7 +1563,7 @@ async def make_zip(
         raise
     except Exception as e:
         logger.error(f"zip xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"zip: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── Unzip ────────────────────────────────────────────────────────────────────
@@ -1679,4 +1722,4 @@ async def unzip_file(request: Request, file: UploadFile = File(...)):
         raise
     except Exception as e:
         logger.error(f"unzip xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"unzip: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")

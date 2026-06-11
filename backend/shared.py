@@ -27,10 +27,18 @@ from slowapi.util import get_remote_address
 # ─── Config ───────────────────────────────────────────────────────────────────
 
 BOT_TOKEN      = os.environ.get("BOT_TOKEN", "")
-APP_URL        = os.environ.get("APP_URL", "https://nematovbegz0d.github.io/studentsTools/EduBot.html?v=8")
+APP_URL        = os.environ.get("APP_URL", "https://nematovbegz0d.github.io/studentsTools/EduBot.html?v=26")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 if not WEBHOOK_SECRET and BOT_TOKEN:
+    # Fallback only: derive a secret so the webhook still validates out of the
+    # box. This is weaker than an independent secret — if BOT_TOKEN leaks, the
+    # webhook secret is trivially recomputable. Set an explicit WEBHOOK_SECRET
+    # (e.g. `openssl rand -hex 32`) in production.
     WEBHOOK_SECRET = hashlib.sha256(f"webhook:{BOT_TOKEN}".encode()).hexdigest()[:48]
+    logger.warning(
+        "WEBHOOK_SECRET sozlanmagan — BOT_TOKEN'dan derivatsiya qilindi. "
+        "Productionda mustaqil WEBHOOK_SECRET o'rnating (openssl rand -hex 32)."
+    )
 
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
@@ -66,8 +74,25 @@ FONT_REGULAR = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 FONT_BOLD    = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
 
 # ─── Rate limiter ─────────────────────────────────────────────────────────────
+# Behind Railway's reverse proxy `get_remote_address` returns the proxy IP, so
+# every user shares one bucket. Derive the real client IP from X-Forwarded-For
+# (left-most hop) and fall back to the socket address. Use Redis for storage
+# when REDIS_URL is set so limits are shared across replicas/restarts; otherwise
+# fall back to in-memory.
+def _client_ip_key(request: "Request") -> str:
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    return get_remote_address(request)
 
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+_RATE_LIMIT_STORAGE = os.environ.get("REDIS_URL", "").strip() or "memory://"
+limiter = Limiter(
+    key_func=_client_ip_key,
+    default_limits=["60/minute"],
+    storage_uri=_RATE_LIMIT_STORAGE,
+)
 
 # ─── Thread pools ─────────────────────────────────────────────────────────────
 # _io_pool — PDF ops, file conversions, QR, cert, schedule, zip (fast CPU)

@@ -64,6 +64,7 @@ async def payment_payme(request: Request):
     db_fns = {
         "get_payment":          db.get_payment,
         "get_payment_by_payme": db.get_payment_by_payme,
+        "set_payment_payme_id": db.set_payment_payme_id,
         "confirm_payment":      db.confirm_payment,
         "cancel_payment":       db.cancel_payment,
     }
@@ -75,8 +76,13 @@ async def payment_payme(request: Request):
 @router.get("/api/payment/status/{payment_id}")
 @limiter.limit("30/minute")
 async def payment_status(request: Request, payment_id: str):
+    # Auth + ownership: only the user who created the payment may read its
+    # status. Without this check any caller who knows/guesses a payment_id
+    # could read plan/amount/paid_at (IDOR / info disclosure). A non-owner is
+    # given the same 404 as a missing id so payment_ids can't be enumerated.
+    user_id = _get_user_id(request)
     payment = await db.get_payment(payment_id)
-    if not payment:
+    if not payment or int(payment["user_id"]) != int(user_id):
         raise HTTPException(status_code=404, detail="To'lov topilmadi")
     return {
         "status":  payment["status"],

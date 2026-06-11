@@ -526,8 +526,7 @@ async function bgremove({ file }) {
   validateFile(file, ".jpg,.png");
   if (!BACKEND_URL) return { type: "text", content: "⚠️ Backend ulanmagan." };
 
-  // 4 daqiqa timeout: birefnet AI model birinchi marta yuklanganda 60-120s,
-  // keyin har rasm uchun 2-30s. Foydalanuvchi yaxshi sifat uchun kutadi.
+  // Timeout: AI model birinchi marta yuklanganda 60-120s, keyin har rasm 2-30s.
   const response = await postWithFallback("/api/bgremove", file, 240000);
   await handleResponseError(response);
   const blob = await response.blob();
@@ -535,7 +534,7 @@ async function bgremove({ file }) {
     type: "file",
     blob,
     filename: "no-bg.png",
-    info: "Fon olib tashlandi ✨ (birefnet AI)",
+    info: "Fon olib tashlandi ✨",
   };
 }
 

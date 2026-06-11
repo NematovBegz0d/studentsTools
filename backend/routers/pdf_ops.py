@@ -100,7 +100,7 @@ async def merge_pdf(request: Request, files: List[UploadFile] = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"mergepdf xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"mergepdf: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: Page range parser (shared by pdfpages) ──────────────────────────────
 
@@ -146,43 +146,59 @@ async def pdf_select_pages(
         if data[:4] != b"%PDF":
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
         import pikepdf as _pike
-        try:
-            _pdf_tmp = _pike.open(io.BytesIO(data))
-        except _pike.PasswordError:
-            raise HTTPException(status_code=422, detail="PDF parol bilan himoyalangan.")
-        except Exception:
-            raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
-        total_n = len(_pdf_tmp.pages)
-        _pdf_tmp.close()
-        try:
-            indices = _parse_page_ranges(pages, total_n)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Sahifa oralig'i noto'g'ri. Format: 1-5,8,10")
-        if not indices:
-            raise HTTPException(status_code=400, detail="Sahifalar ro'yxati bo'sh")
 
-        def _extract():
-            src = _pike.open(io.BytesIO(data))
-            out = _pike.new()
+        # NOTE: pikepdf.open() + len(pages) is CPU-bound and was previously run
+        # directly in the request coroutine, blocking the event loop (every other
+        # request stalls while a large PDF is parsed). Open + count + extract are
+        # now done together inside ONE executor job — the file is opened once and
+        # the loop stays responsive.
+        def _extract(pages_str: str):
             try:
-                for i in indices:
-                    out.pages.append(src.pages[i])
-                buf = io.BytesIO()
-                out.save(buf, linearize=True)
-                return buf.getvalue()
+                src = _pike.open(io.BytesIO(data))
+            except _pike.PasswordError:
+                raise ValueError("__PASSWORD__")
+            except Exception:
+                raise ValueError("__NOT_PDF__")
+            try:
+                total = len(src.pages)
+                try:
+                    idxs = _parse_page_ranges(pages_str, total)
+                except Exception:
+                    raise ValueError("__BAD_RANGE__")
+                if not idxs:
+                    raise ValueError("__EMPTY__")
+                out = _pike.new()
+                try:
+                    for i in idxs:
+                        out.pages.append(src.pages[i])
+                    buf = io.BytesIO()
+                    out.save(buf, linearize=True)
+                    return buf.getvalue(), len(idxs), total
+                finally:
+                    out.close()
             finally:
-                out.close()
                 src.close()
 
         loop = asyncio.get_running_loop()
         try:
-            out_bytes = await asyncio.wait_for(
-                loop.run_in_executor(_io_pool, _extract),
+            out_bytes, n_selected, total_n = await asyncio.wait_for(
+                loop.run_in_executor(_io_pool, _extract, pages),
                 timeout=30.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail="Sahifa ajratish vaqti tugadi")
-        info = f"{len(indices)} sahifa tanlandi (jami {total_n} dan)"
+        except ValueError as ve:
+            code = str(ve)
+            if code == "__PASSWORD__":
+                raise HTTPException(status_code=422, detail="PDF parol bilan himoyalangan.")
+            if code == "__NOT_PDF__":
+                raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+            if code == "__BAD_RANGE__":
+                raise HTTPException(status_code=400, detail="Sahifa oralig'i noto'g'ri. Format: 1-5,8,10")
+            if code == "__EMPTY__":
+                raise HTTPException(status_code=400, detail="Sahifalar ro'yxati bo'sh")
+            raise
+        info = f"{n_selected} sahifa tanlandi (jami {total_n} dan)"
         return Response(
             content=out_bytes,
             media_type="application/pdf",
@@ -195,7 +211,7 @@ async def pdf_select_pages(
         raise
     except Exception as e:
         logger.error(f"pdfpages xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"pdfpages: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: Text extraction ─────────────────────────────────────────────────────
 
@@ -283,7 +299,7 @@ async def pdf_text(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"pdftext xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"pdftext: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: Lock ────────────────────────────────────────────────────────────────
 
@@ -383,7 +399,7 @@ async def lock_pdf(
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"pdflock xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"pdflock: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: Watermark ───────────────────────────────────────────────────────────
 
@@ -408,8 +424,30 @@ def _get_wm_font() -> str:
     return _wm_font_cached
 
 
+def _parse_hex_color(value: str, default: tuple = (0.5, 0.5, 0.5)) -> tuple:
+    """Parse '#rgb' / '#rrggbb' / 'rrggbb' → (r, g, b) floats in 0..1.
+
+    Returns `default` (gray) for empty/invalid input so the watermark never
+    fails on a bad color string."""
+    if not value:
+        return default
+    s = value.strip().lstrip("#")
+    if len(s) == 3:
+        s = "".join(c * 2 for c in s)
+    if len(s) != 6:
+        return default
+    try:
+        r = int(s[0:2], 16) / 255.0
+        g = int(s[2:4], 16) / 255.0
+        b = int(s[4:6], 16) / 255.0
+        return (r, g, b)
+    except ValueError:
+        return default
+
+
 def _make_wm_bytes(pw: float, ph: float, text: str,
-                   opacity: float = 0.22, angle: int = 42, repeat: bool = True) -> bytes:
+                   opacity: float = 0.22, angle: int = 42, repeat: bool = True,
+                   color_rgb: tuple = (0.5, 0.5, 0.5)) -> bytes:
     """Render a single-page watermark PDF and return its raw bytes.
 
     Returning bytes (not a live pypdf page) lets the caller build a FRESH
@@ -422,12 +460,13 @@ def _make_wm_bytes(pw: float, ph: float, text: str,
     font_size = max(20, min(56, int(pw * 0.07)))
     spacing = max(pw, ph) * 0.38
 
+    r, g, b = color_rgb
     wm_buf = io.BytesIO()
     c = rl_canvas.Canvas(wm_buf, pagesize=(pw, ph))
     c.saveState()
     c.translate(pw / 2, ph / 2)
     c.rotate(angle)
-    c.setFillColor(Color(0.5, 0.5, 0.5, alpha=max(0.05, min(0.9, opacity))))
+    c.setFillColor(Color(r, g, b, alpha=max(0.05, min(0.9, opacity))))
     c.setFont(_get_wm_font(), font_size)
     offsets = (-spacing, 0, spacing) if repeat else (0,)
     for offset in offsets:
@@ -437,7 +476,8 @@ def _make_wm_bytes(pw: float, ph: float, text: str,
     return wm_buf.getvalue()
 
 def _do_watermark(data: bytes, wm_text: str,
-                  opacity: float = 0.22, angle: int = 42, repeat: bool = True) -> tuple:
+                  opacity: float = 0.22, angle: int = 42, repeat: bool = True,
+                  color_rgb: tuple = (0.5, 0.5, 0.5)) -> tuple:
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(io.BytesIO(data))
@@ -458,7 +498,7 @@ def _do_watermark(data: bytes, wm_text: str,
         ph = float(page.mediabox.height)
         key = (round(pw), round(ph))
         if key not in wm_bytes_cache:
-            wm_bytes_cache[key] = _make_wm_bytes(pw, ph, text, opacity, angle, repeat)
+            wm_bytes_cache[key] = _make_wm_bytes(pw, ph, text, opacity, angle, repeat, color_rgb)
         # Fresh overlay page object per merge — prevents content-stream reuse bugs.
         wm_page = PdfReader(io.BytesIO(wm_bytes_cache[key])).pages[0]
         page.merge_page(wm_page)
@@ -479,6 +519,7 @@ async def watermark_pdf(
     opacity: float = Form(0.22),
     angle: int = Form(42),
     repeat: bool = Form(True),
+    color: str = Form(""),
 ):
     t0 = time.time()
     user_id = _get_user_id(request)
@@ -488,12 +529,14 @@ async def watermark_pdf(
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
         opacity = max(0.05, min(0.9, opacity))
         angle   = angle % 360
+        # Optional hex color (e.g. "#c00", "ff0000"); falls back to gray.
+        color_rgb = _parse_hex_color(color)
         loop = asyncio.get_running_loop()
         try:
             out_bytes, info = await asyncio.wait_for(
                 loop.run_in_executor(
                     _io_pool,
-                    functools.partial(_do_watermark, data, text, opacity, angle, repeat),
+                    functools.partial(_do_watermark, data, text, opacity, angle, repeat, color_rgb),
                 ),
                 timeout=45.0,
             )
@@ -515,7 +558,7 @@ async def watermark_pdf(
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"watermark xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"watermark: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: To image ────────────────────────────────────────────────────────────
 
@@ -630,7 +673,7 @@ async def pdf_to_img(
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"pdf2img xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"pdf2img: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 # ─── PDF: Compress ────────────────────────────────────────────────────────────
 
@@ -814,4 +857,4 @@ async def compress_pdf(
     except Exception as e:
         logger.error(f"compresspdf xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
-            detail=f"compresspdf: {type(e).__name__}: {str(e)[:160]}")
+            detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")

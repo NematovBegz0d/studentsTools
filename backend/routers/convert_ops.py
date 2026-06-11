@@ -272,6 +272,31 @@ def _do_pdf2docx_docling(pdf_path: str, docx_path: str) -> None:
         raise RuntimeError("docling DOCX saqlash usuli topilmadi")
 
 
+def _docx_has_content(src) -> bool:
+    """True if the produced DOCX actually has content (text / table / image).
+
+    Replaces the old `getsize() >= 2000` heuristic that wrongly rejected small
+    but valid documents and accepted large-but-empty ones. `src` may be a path
+    or a file-like object.
+    """
+    try:
+        from docx import Document
+        d = Document(src)
+    except Exception:
+        return False
+    if any(p.text.strip() for p in d.paragraphs):
+        return True
+    if d.tables:
+        return True
+    try:
+        for rel in d.part.rels.values():
+            if "image" in getattr(rel, "reltype", ""):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
     def _disabled(name: str) -> bool:
         # marker/docling load multi-GB ML models → instant OOM on Railway's
@@ -328,7 +353,11 @@ def _do_pdf2docx_best(pdf_path: str, docx_path: str, is_scanned: bool) -> str:
     for name, fn in chain:
         try:
             fn()
-            if os.path.exists(docx_path) and os.path.getsize(docx_path) >= 2000:
+            # A valid result must contain real content — a tiny size floor
+            # cheaply rejects broken files before we pay to open them.
+            if (os.path.exists(docx_path)
+                    and os.path.getsize(docx_path) >= 200
+                    and _docx_has_content(docx_path)):
                 return name
         except Exception as e:
             last_err = e
@@ -401,7 +430,7 @@ async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
         with open(docx_path, "rb") as f:
             out = f.read()
 
-        if len(out) < 2000:
+        if not _docx_has_content(io.BytesIO(out)):
             raise HTTPException(status_code=422,
                 detail="Konversiya natijasi bo'sh. PDF tuzilishi qo'llab-quvvatlanmaydi.")
 
@@ -428,7 +457,7 @@ async def pdf_to_docx(request: Request, file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"pdf2docx xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
-            detail=f"pdf2docx: {type(e).__name__}: {str(e)[:160]}")
+            detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
     finally:
         # Wipe the whole tempdir (handles partial writes / subprocess artifacts too)
         import shutil as _shutil
@@ -1015,7 +1044,7 @@ async def docx_to_pdf(request: Request, file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"docx2pdf xato: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500,
-            detail=f"docx2pdf: {type(e).__name__}: {str(e)[:160]}")
+            detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
 
 
 # ─── DOCX Edit ────────────────────────────────────────────────────────────────
@@ -1078,6 +1107,33 @@ def _docxedit_apply_one(doc, find: str, replace: str, case_sensitive: bool) -> i
             for cell in row.cells:
                 for para in cell.paragraphs:
                     _replace_in_para(para)
+
+    # Kolontitullar (header/footer) — bular `doc.paragraphs`/`doc.tables`ga
+    # kirmaydi, shuning uchun alohida qamraladi. Linked (oldingisidan meros
+    # olgan) kolontitullar o'tkazib yuboriladi — ular o'z kontentiga ega emas
+    # va ikki marta ishlanishi mumkin.
+    def _replace_in_container(container):
+        for para in container.paragraphs:
+            _replace_in_para(para)
+        for table in container.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for para in cell.paragraphs:
+                        _replace_in_para(para)
+
+    for section in doc.sections:
+        for hf in (
+            section.header, section.footer,
+            section.first_page_header, section.first_page_footer,
+            section.even_page_header, section.even_page_footer,
+        ):
+            if hf is None or getattr(hf, "is_linked_to_previous", False):
+                continue
+            try:
+                _replace_in_container(hf)
+            except Exception:
+                # Kolontitul tuzilishi kutilmagan bo'lsa — asosiy matnni buzmaymiz.
+                pass
     return count
 
 
@@ -1245,10 +1301,11 @@ async def docx_edit(
                     ),
                 )
             except RuntimeError as e:
+                logger.warning(f"doc2docx aylantirish xatosi: {type(e).__name__}: {str(e)[:200]}")
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        f"Eski .doc faylni aylantirib bo'lmadi: {str(e)[:160]}. "
+                        "Eski .doc faylni aylantirib bo'lmadi. "
                         "Iltimos, faylni Word'da .docx sifatida saqlang va qayta yuklang."
                     ),
                 )
@@ -1478,4 +1535,4 @@ async def imgs2pdf(request: Request, files: List[UploadFile] = File(...)):
         raise
     except Exception as e:
         logger.error(f"imgs2pdf xato: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"imgs2pdf: {type(e).__name__}: {str(e)[:160]}")
+        raise HTTPException(status_code=500, detail="Xizmatda kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring.")
