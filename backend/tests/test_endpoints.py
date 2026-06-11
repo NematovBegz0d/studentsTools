@@ -730,3 +730,53 @@ class TestUserOps:
         r = client.get("/api/history", headers=AUTH)
         _accept(r, 200)
         assert "items" in r.json()
+
+
+
+# ─── Payment endpoints: auth + ownership (IDOR regression) ───────────────────
+
+AUTH2 = {"X-User-Id": "888000222"}
+
+
+class TestPaymentOps:
+    def test_create_requires_auth(self):
+        r = client.post("/api/payment/create", json={"plan": "monthly"})
+        _accept(r, 401)
+
+    def test_create_bad_plan(self):
+        r = client.post("/api/payment/create", json={"plan": "weekly"}, headers=AUTH)
+        _accept(r, 400)
+
+    def test_create_valid(self):
+        r = client.post("/api/payment/create", json={"plan": "monthly"}, headers=AUTH)
+        _accept(r, 200)
+        body = r.json()
+        assert body.get("payment_id") and body.get("checkout_url")
+
+    def test_status_requires_auth(self):
+        rc = client.post("/api/payment/create", json={"plan": "monthly"}, headers=AUTH)
+        _accept(rc, 200)
+        pid = rc.json()["payment_id"]
+        r = client.get(f"/api/payment/status/{pid}")  # no auth header
+        _accept(r, 401)
+
+    def test_owner_can_read_status(self):
+        rc = client.post("/api/payment/create", json={"plan": "yearly"}, headers=AUTH)
+        _accept(rc, 200)
+        pid = rc.json()["payment_id"]
+        r = client.get(f"/api/payment/status/{pid}", headers=AUTH)
+        _accept(r, 200)
+        assert r.json()["status"] == "pending"
+
+    def test_other_user_cannot_read_status(self):
+        # IDOR regression: a different user must NOT see someone else's payment.
+        rc = client.post("/api/payment/create", json={"plan": "monthly"}, headers=AUTH)
+        _accept(rc, 200)
+        pid = rc.json()["payment_id"]
+        r = client.get(f"/api/payment/status/{pid}", headers=AUTH2)
+        _accept(r, 404)
+
+    def test_payme_rpc_requires_basic_auth(self):
+        r = client.post("/api/payment/payme",
+                        json={"method": "CheckPerformTransaction", "params": {}, "id": 1})
+        _accept(r, 401)

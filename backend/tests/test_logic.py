@@ -203,3 +203,95 @@ class TestSafeHeader:
     def test_all_non_ascii_falls_back_to_ok(self):
         from shared import safe_header
         assert safe_header("Привет") == "ok"
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Feature-regression tests (security & quality fixes)
+#  These live here because they assert behaviour introduced by the fix PRs.
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestPaymeIdempotency:
+    """CreateTransaction must bind exactly one Payme tx per order and stay
+    idempotent on retries (one-transaction-per-order rule)."""
+
+    def test_same_tx_is_idempotent_other_tx_rejected(self):
+        import payment as pay
+        db = _FakePaymentDB(); db.add("P1")
+        amt = pay.PLAN_PRICES["monthly"]
+
+        r1 = _rpc("CreateTransaction",
+                  {"id": "TX1", "amount": amt, "account": {"payment_id": "P1"}}, db)
+        ct1 = r1["result"]["create_time"]
+
+        # Same transaction id again → idempotent (stable create_time, no error).
+        r2 = _rpc("CreateTransaction",
+                  {"id": "TX1", "amount": amt, "account": {"payment_id": "P1"}}, db)
+        assert r2["result"]["create_time"] == ct1
+
+        # A DIFFERENT transaction id for the same order → rejected.
+        r3 = _rpc("CreateTransaction",
+                  {"id": "TX2", "amount": amt, "account": {"payment_id": "P1"}}, db)
+        assert r3["error"]["code"] == pay.PaymeError.CANT_PERFORM
+
+
+class TestLikeEscape:
+    """Admin user-search must escape LIKE/ILIKE wildcards (no pattern injection)."""
+
+    def test_percent_escaped(self):
+        from database import _like_escape
+        assert _like_escape("100%") == "100\\%"
+
+    def test_underscore_escaped(self):
+        from database import _like_escape
+        assert _like_escape("a_b") == "a\\_b"
+
+    def test_backslash_escaped(self):
+        from database import _like_escape
+        assert _like_escape("a\\b") == "a\\\\b"
+
+    def test_plain_text_unchanged(self):
+        from database import _like_escape
+        assert _like_escape("john") == "john"
+
+
+class TestParseHexColor:
+    """Watermark color parser must tolerate junk and fall back to gray."""
+
+    def test_full_hex(self):
+        from routers.pdf_ops import _parse_hex_color
+        assert _parse_hex_color("#ff0000") == (1.0, 0.0, 0.0)
+
+    def test_short_hex(self):
+        from routers.pdf_ops import _parse_hex_color
+        r = _parse_hex_color("c00")
+        assert round(r[0], 2) == 0.8 and r[1] == 0.0 and r[2] == 0.0
+
+    def test_empty_defaults_gray(self):
+        from routers.pdf_ops import _parse_hex_color
+        assert _parse_hex_color("") == (0.5, 0.5, 0.5)
+
+    def test_invalid_defaults_gray(self):
+        from routers.pdf_ops import _parse_hex_color
+        assert _parse_hex_color("zzz") == (0.5, 0.5, 0.5)
+
+
+class TestDocxHasContent:
+    """pdf2docx success is decided by real content, not byte size."""
+
+    def test_doc_with_text_is_content(self):
+        docx = pytest.importorskip("docx")
+        import io as _io
+        from routers.convert_ops import _docx_has_content
+        d = docx.Document()
+        d.add_paragraph("Hello world")
+        buf = _io.BytesIO(); d.save(buf); buf.seek(0)
+        assert _docx_has_content(buf) is True
+
+    def test_empty_doc_is_not_content(self):
+        docx = pytest.importorskip("docx")
+        import io as _io
+        from routers.convert_ops import _docx_has_content
+        d = docx.Document()
+        buf = _io.BytesIO(); d.save(buf); buf.seek(0)
+        assert _docx_has_content(buf) is False
