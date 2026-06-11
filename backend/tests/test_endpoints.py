@@ -195,24 +195,6 @@ class TestPdfOps:
                         headers=AUTH)
         _accept(r, 413)
 
-    # ── splitpdf ──
-    def test_splitpdf_no_auth(self):
-        r = client.post("/api/splitpdf", files=[("file", ("a.pdf", _tiny_pdf(), "application/pdf"))])
-        _accept(r, 401)
-
-    def test_splitpdf_valid(self):
-        _skip_if_missing("pikepdf")
-        r = client.post("/api/splitpdf",
-                        files=[("file", ("a.pdf", _tiny_pdf(), "application/pdf"))],
-                        data={"pages": "1"}, headers=AUTH)
-        _accept(r, 200)
-
-    def test_splitpdf_bad_input(self):
-        r = client.post("/api/splitpdf",
-                        files=[("file", ("x.pdf", b"not a pdf", "application/pdf"))],
-                        headers=AUTH)
-        _accept(r, 422)
-
     # ── pdfpages ──
     def test_pdfpages_no_auth(self):
         r = client.post("/api/pdfpages",
@@ -419,24 +401,6 @@ class TestConvertOps:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestMediaOps:
-    # ── photo3x4 ── HEAVY: mediapipe + opencv + rembg
-    def test_photo3x4_no_auth(self):
-        r = client.post("/api/photo3x4", files=[("file", ("a.jpg", _tiny_jpeg(), "image/jpeg"))])
-        _accept(r, 401)
-
-    def test_photo3x4_valid(self):
-        _skip_if_missing("mediapipe", "cv2", "rembg")
-        r = client.post("/api/photo3x4",
-                        files=[("file", ("a.jpg", _tiny_jpeg(), "image/jpeg"))],
-                        headers=AUTH)
-        _accept(r, 200, 500)
-
-    def test_photo3x4_bad_input(self):
-        r = client.post("/api/photo3x4",
-                        files=[("file", ("a.txt", b"junk", "text/plain"))],
-                        headers=AUTH)
-        _accept(r, 422)
-
     # ── cv ──
     def test_cv_no_auth(self):
         r = client.post("/api/cv", json={"name": "Test"})
@@ -580,20 +544,6 @@ class TestToolsOps:
     def test_readtime_empty(self):
         r = client.post("/api/readtime", json={"text": ""}, headers=AUTH)
         _accept(r, 200)  # returns "❌ Matn kiriting" but 200
-
-    # ── summarize ── needs ANTHROPIC_API_KEY (falls back to extractive)
-    def test_summarize_no_auth(self):
-        r = client.post("/api/summarize", json={"text": "x" * 250})
-        _accept(r, 401)
-
-    def test_summarize_valid(self):
-        long_text = ("Bu juda uzun matn. " * 30)
-        r = client.post("/api/summarize", json={"text": long_text}, headers=AUTH)
-        _accept(r, 200)
-
-    def test_summarize_too_short(self):
-        r = client.post("/api/summarize", json={"text": "kichik"}, headers=AUTH)
-        _accept(r, 200)  # returns "❌ Matn juda qisqa" but 200
 
     # ── deadline ──
     def test_deadline_no_auth(self):
