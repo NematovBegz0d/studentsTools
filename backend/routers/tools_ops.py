@@ -294,7 +294,18 @@ async def deadline(request: Request):
             detail="Sana formatini aniqlab bo'lmadi. Misollar: 31.12.2025, 2025-12-31, next Monday",
         )
 
-    now  = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # "Bugun"ni server UTC'da emas, foydalanuvchi mintaqasida (Asia/Tashkent)
+    # hisoblaymiz — aks holda yarim tunga yaqin "necha kun qoldi" ±1 kunga
+    # xato bo'ladi (Railway UTC'da ishlaydi). `d` naive bo'lgani uchun `now`ni
+    # ham tz'siz qilamiz.
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Asia/Tashkent")).replace(
+            tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
+    except Exception:
+        from datetime import timezone, timedelta
+        now = (datetime.now(timezone.utc) + timedelta(hours=5)).replace(
+            tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
     d0   = d.replace(hour=0, minute=0, second=0, microsecond=0)
     days = (d0 - now).days
     emoji = "🔴" if days < 0 else ("🚨" if days <= 3 else ("🟡" if days <= 7 else "🟢"))

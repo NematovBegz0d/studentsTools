@@ -146,43 +146,59 @@ async def pdf_select_pages(
         if data[:4] != b"%PDF":
             raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
         import pikepdf as _pike
-        try:
-            _pdf_tmp = _pike.open(io.BytesIO(data))
-        except _pike.PasswordError:
-            raise HTTPException(status_code=422, detail="PDF parol bilan himoyalangan.")
-        except Exception:
-            raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
-        total_n = len(_pdf_tmp.pages)
-        _pdf_tmp.close()
-        try:
-            indices = _parse_page_ranges(pages, total_n)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Sahifa oralig'i noto'g'ri. Format: 1-5,8,10")
-        if not indices:
-            raise HTTPException(status_code=400, detail="Sahifalar ro'yxati bo'sh")
 
-        def _extract():
-            src = _pike.open(io.BytesIO(data))
-            out = _pike.new()
+        # NOTE: pikepdf.open() + len(pages) is CPU-bound and was previously run
+        # directly in the request coroutine, blocking the event loop (every other
+        # request stalls while a large PDF is parsed). Open + count + extract are
+        # now done together inside ONE executor job — the file is opened once and
+        # the loop stays responsive.
+        def _extract(pages_str: str):
             try:
-                for i in indices:
-                    out.pages.append(src.pages[i])
-                buf = io.BytesIO()
-                out.save(buf, linearize=True)
-                return buf.getvalue()
+                src = _pike.open(io.BytesIO(data))
+            except _pike.PasswordError:
+                raise ValueError("__PASSWORD__")
+            except Exception:
+                raise ValueError("__NOT_PDF__")
+            try:
+                total = len(src.pages)
+                try:
+                    idxs = _parse_page_ranges(pages_str, total)
+                except Exception:
+                    raise ValueError("__BAD_RANGE__")
+                if not idxs:
+                    raise ValueError("__EMPTY__")
+                out = _pike.new()
+                try:
+                    for i in idxs:
+                        out.pages.append(src.pages[i])
+                    buf = io.BytesIO()
+                    out.save(buf, linearize=True)
+                    return buf.getvalue(), len(idxs), total
+                finally:
+                    out.close()
             finally:
-                out.close()
                 src.close()
 
         loop = asyncio.get_running_loop()
         try:
-            out_bytes = await asyncio.wait_for(
-                loop.run_in_executor(_io_pool, _extract),
+            out_bytes, n_selected, total_n = await asyncio.wait_for(
+                loop.run_in_executor(_io_pool, _extract, pages),
                 timeout=30.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail="Sahifa ajratish vaqti tugadi")
-        info = f"{len(indices)} sahifa tanlandi (jami {total_n} dan)"
+        except ValueError as ve:
+            code = str(ve)
+            if code == "__PASSWORD__":
+                raise HTTPException(status_code=422, detail="PDF parol bilan himoyalangan.")
+            if code == "__NOT_PDF__":
+                raise HTTPException(status_code=422, detail="Bu fayl PDF emas.")
+            if code == "__BAD_RANGE__":
+                raise HTTPException(status_code=400, detail="Sahifa oralig'i noto'g'ri. Format: 1-5,8,10")
+            if code == "__EMPTY__":
+                raise HTTPException(status_code=400, detail="Sahifalar ro'yxati bo'sh")
+            raise
+        info = f"{n_selected} sahifa tanlandi (jami {total_n} dan)"
         return Response(
             content=out_bytes,
             media_type="application/pdf",
